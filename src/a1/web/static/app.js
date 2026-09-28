@@ -12,8 +12,23 @@
     currentDb: "",
     databases: [],
     models: {
-      ollama: [],
-      openai: [],
+      ollama: [
+        "gemma4:31b",
+        "llama3.1",
+        "llama3.3",
+        "mistral-large-3:675b",
+        "deepseek-v4-pro:0813",
+        "deepseek-r1",
+        "nemotron-3-nano:30b",
+        "glm-5.3-flash",
+      ],
+      openai: [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o1-mini",
+        "o3-mini",
+        "gpt-4-turbo",
+      ],
     },
     isGenerating: false,
     activeAbortController: null,
@@ -26,7 +41,8 @@
     themeToggleBtn: document.getElementById("themeToggleBtn"),
     sidebar: document.getElementById("sidebar"),
     sidebarCollapseBtn: document.getElementById("sidebarCollapseBtn"),
-    sidebarOpenBtn: document.getElementById("sidebarOpenBtn"),
+    sidebarToggleBtn: document.getElementById("sidebarToggleBtn"),
+    sidebarViewTableBtn: document.getElementById("sidebarViewTableBtn"),
     newChatBtn: document.getElementById("newChatBtn"),
     clearChatBtn: document.getElementById("clearChatBtn"),
     clearHistoryBtn: document.getElementById("clearHistoryBtn"),
@@ -34,6 +50,17 @@
     dbSelect: document.getElementById("dbSelect"),
     headerDbName: document.getElementById("headerDbName"),
     headerDbPill: document.getElementById("headerDbPill"),
+    headerTableBtn: document.getElementById("headerTableBtn"),
+    headerTableBadge: document.getElementById("headerTableBadge"),
+    // Global Table Dialog
+    globalTableDialog: document.getElementById("globalTableDialog"),
+    globalDialogCloseBtn: document.getElementById("globalDialogCloseBtn"),
+    globalDialogCopyBtn: document.getElementById("globalDialogCopyBtn"),
+    globalDialogSearchInput: document.getElementById("globalDialogSearchInput"),
+    globalDialogCountBadge: document.getElementById("globalDialogCountBadge"),
+    globalDialogTableWrap: document.getElementById("globalDialogTableWrap"),
+    globalDialogTitle: document.getElementById("globalDialogTitle"),
+    globalDialogMeta: document.getElementById("globalDialogMeta"),
     // Model Selector Dropdown Elements
     modelDropdownContainer: document.getElementById("modelDropdownContainer"),
     modelSelectorPill: document.getElementById("modelSelectorPill"),
@@ -58,15 +85,20 @@
     systemStatusText: document.getElementById("systemStatusText"),
   };
 
+  let activeEvidenceHandler = null;
+  let latestEvidenceTimeline = null;
+
   // -------------------------------------------------------------------------
   // Initialization
   // -------------------------------------------------------------------------
   async function init() {
     loadTheme();
     loadSavedHistory();
+    loadSidebarState();
     setupEventListeners();
     await fetchInitialStatus();
     await fetchModels();
+    preloadEventCount();
   }
 
   // -------------------------------------------------------------------------
@@ -84,6 +116,228 @@
   function toggleTheme() {
     const isDark = document.body.classList.toggle("theme-dark");
     localStorage.setItem("a1_theme", isDark ? "dark" : "light");
+  }
+
+  // -------------------------------------------------------------------------
+  // Sidebar State & Keyboard Shortcuts
+  // -------------------------------------------------------------------------
+  function loadSidebarState() {
+    const saved = localStorage.getItem("a1_sidebar_collapsed") === "true";
+    if (saved && elements.sidebar) {
+      elements.sidebar.classList.add("collapsed");
+      if (elements.sidebarToggleBtn) {
+        elements.sidebarToggleBtn.title = "Open Sidebar (Ctrl+B)";
+        elements.sidebarToggleBtn.setAttribute("aria-label", "Open Sidebar");
+      }
+    }
+  }
+
+  function toggleSidebar(forceState) {
+    if (!elements.sidebar) return;
+    const isCollapsed = forceState !== undefined ? !forceState : !elements.sidebar.classList.contains("collapsed");
+    if (isCollapsed) {
+      elements.sidebar.classList.add("collapsed");
+      if (elements.sidebarToggleBtn) {
+        elements.sidebarToggleBtn.title = "Open Sidebar (Ctrl+B)";
+        elements.sidebarToggleBtn.setAttribute("aria-label", "Open Sidebar");
+      }
+    } else {
+      elements.sidebar.classList.remove("collapsed");
+      if (elements.sidebarToggleBtn) {
+        elements.sidebarToggleBtn.title = "Collapse Sidebar (Ctrl+B)";
+        elements.sidebarToggleBtn.setAttribute("aria-label", "Collapse Sidebar");
+      }
+    }
+    try {
+      localStorage.setItem("a1_sidebar_collapsed", isCollapsed ? "true" : "false");
+    } catch (e) { }
+  }
+
+  // -------------------------------------------------------------------------
+  // Shared Telemetry Table Renderer & Global Dialog
+  // -------------------------------------------------------------------------
+  let globalTelemetryCache = null;
+
+  function formatActionBadge(action) {
+    const a = (action || "unknown").toLowerCase();
+    let badgeClass = "action-badge-default";
+    if (a.includes("proc")) badgeClass = "action-badge-process";
+    else if (a.includes("net")) badgeClass = "action-badge-network";
+    else if (a.includes("file")) badgeClass = "action-badge-file";
+    else if (a.includes("reg")) badgeClass = "action-badge-registry";
+    return `<span class="action-badge ${badgeClass}">${escapeHtml(action || "unknown")}</span>`;
+  }
+
+  function setupTable(container, events, searchInput, countBadge, copyBtn) {
+    if (!container) return;
+    container.replaceChildren();
+
+    if (!events || events.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "history-empty";
+      empty.textContent = "No telemetry events to display";
+      container.appendChild(empty);
+      if (countBadge) countBadge.textContent = "0 events";
+      return;
+    }
+
+    const table = document.createElement("table");
+    table.className = "evidence-table";
+    table.setAttribute("aria-label", "Telemetry events table");
+    const caption = table.createCaption();
+    caption.className = "sr-only";
+    caption.textContent = "Telemetry events table";
+    const columns = ["Time", "Event ID", "Host", "Action", "Process", "Summary"];
+    const headerRow = table.createTHead().insertRow();
+    columns.forEach((column) => {
+      const header = document.createElement("th");
+      header.scope = "col";
+      header.textContent = column;
+      headerRow.appendChild(header);
+    });
+
+    const tableBody = table.createTBody();
+    const rowEntries = [];
+
+    events.forEach((event) => {
+      const details = event.details && typeof event.details === "object" ? event.details : {};
+      const processName = event.process_name || details.name || details.process_name || "";
+      const processId = event.process_entity_id || details.pid || "";
+      const process = processName && processId
+        ? `${processName} (${processId})`
+        : processName || processId || "Unknown";
+
+      const row = tableBody.insertRow();
+      const timeCell = row.insertCell();
+      timeCell.textContent = event.timestamp || "Time unavailable";
+
+      const eventIdCell = row.insertCell();
+      eventIdCell.textContent = event.event_id || "Unknown event";
+
+      const hostCell = row.insertCell();
+      hostCell.textContent = event.host_id || "Unknown host";
+
+      const actionCell = row.insertCell();
+      actionCell.innerHTML = formatActionBadge(event.action);
+
+      const processCell = row.insertCell();
+      processCell.textContent = process;
+
+      const summaryCell = row.insertCell();
+      summaryCell.textContent = event.summary || details.command_line || details.destination_ip || "No summary available";
+
+      rowEntries.push({
+        row,
+        searchStr: `${event.timestamp || ""} ${event.event_id || ""} ${event.host_id || ""} ${event.action || ""} ${process} ${summaryCell.textContent}`.toLowerCase()
+      });
+    });
+
+    container.appendChild(table);
+
+    function updateFilter() {
+      const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+      let visibleCount = 0;
+      rowEntries.forEach((entry) => {
+        const match = !query || entry.searchStr.includes(query);
+        entry.row.style.display = match ? "" : "none";
+        if (match) visibleCount++;
+      });
+      if (countBadge) {
+        countBadge.textContent = `${visibleCount} of ${events.length} event(s)`;
+      }
+    }
+
+    if (searchInput) {
+      searchInput.oninput = updateFilter;
+      updateFilter();
+    }
+
+    if (copyBtn) {
+      copyBtn.onclick = () => {
+        const headers = ["Time", "Event ID", "Host", "Action", "Process", "Summary"];
+        const csvLines = [headers.join(",")];
+        events.forEach((e) => {
+          const details = e.details && typeof e.details === "object" ? e.details : {};
+          const pName = e.process_name || details.name || details.process_name || "";
+          const pId = e.process_entity_id || details.pid || "";
+          const proc = pName && pId ? `${pName} (${pId})` : pName || pId || "Unknown";
+          const row = [
+            JSON.stringify(e.timestamp || ""),
+            JSON.stringify(e.event_id || ""),
+            JSON.stringify(e.host_id || ""),
+            JSON.stringify(e.action || ""),
+            JSON.stringify(proc),
+            JSON.stringify(e.summary || details.command_line || "")
+          ];
+          csvLines.push(row.join(","));
+        });
+        navigator.clipboard.writeText(csvLines.join("\n"));
+        const span = copyBtn.querySelector("span");
+        if (span) {
+          const orig = span.textContent;
+          span.textContent = "Copied CSV!";
+          setTimeout(() => { span.textContent = orig; }, 2000);
+        }
+      };
+    }
+  }
+
+  async function openGlobalTelemetryTable(eventsToDisplay, customTitle) {
+    if (!elements.globalTableDialog) return;
+
+    if (eventsToDisplay && Array.isArray(eventsToDisplay) && eventsToDisplay.length > 0) {
+      if (elements.globalDialogTitle) elements.globalDialogTitle.textContent = customTitle || "Investigation Telemetry Events";
+      if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = `${eventsToDisplay.length} events retained from investigation`;
+      setupTable(
+        elements.globalDialogTableWrap,
+        eventsToDisplay,
+        elements.globalDialogSearchInput,
+        elements.globalDialogCountBadge,
+        elements.globalDialogCopyBtn
+      );
+      elements.globalTableDialog.showModal();
+      return;
+    }
+
+    // Otherwise, fetch latest events from active database
+    if (elements.globalDialogTitle) elements.globalDialogTitle.textContent = `Database Telemetry: ${state.currentDb || "Active DB"}`;
+    if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = "Loading events from database...";
+    elements.globalTableDialog.showModal();
+
+    try {
+      const res = await fetch("/api/events?limit=200");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const events = data.events || [];
+      globalTelemetryCache = events;
+      if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = `${events.length} events loaded from ${data.db_name || state.currentDb}`;
+      if (elements.headerTableBadge) {
+        elements.headerTableBadge.textContent = `${events.length}`;
+      }
+      setupTable(
+        elements.globalDialogTableWrap,
+        events,
+        elements.globalDialogSearchInput,
+        elements.globalDialogCountBadge,
+        elements.globalDialogCopyBtn
+      );
+    } catch (err) {
+      if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = `Failed to load events: ${err.message}`;
+    }
+  }
+
+  async function preloadEventCount() {
+    try {
+      const res = await fetch("/api/events?limit=50");
+      if (res.ok) {
+        const data = await res.json();
+        if (elements.headerTableBadge && data.total) {
+          elements.headerTableBadge.textContent = `${data.total}`;
+        }
+      }
+    } catch (e) {
+      // silent fallback
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -120,8 +374,17 @@
       const res = await fetch("/api/models");
       if (!res.ok) return;
       const data = await res.json();
-      state.models.ollama = data.ollama || [];
-      state.models.openai = data.openai || [];
+      if (Array.isArray(data.ollama) && data.ollama.length > 0) {
+        state.models.ollama = data.ollama;
+      }
+      if (Array.isArray(data.openai) && data.openai.length > 0) {
+        state.models.openai = data.openai;
+      }
+      if (data.active) {
+        if (data.active.provider) state.activeProvider = data.active.provider;
+        if (data.active.model) state.activeModel = data.active.model;
+        updateModelUI();
+      }
       renderModelList();
     } catch (err) {
       console.warn("fetchModels error:", err);
@@ -168,39 +431,66 @@
   // -------------------------------------------------------------------------
   // Model Selector Dropdown
   // -------------------------------------------------------------------------
+  let currentMenuProvider = null;
+
   function toggleModelMenu(forceState) {
+    const isCurrentlyOpen =
+      elements.modelDropdownContainer.classList.contains("open") ||
+      (elements.modelMenu && elements.modelMenu.classList.contains("open"));
     const shouldOpen =
-      forceState !== undefined
-        ? forceState
-        : !elements.modelDropdownContainer.classList.contains("open");
+      forceState !== undefined ? forceState : !isCurrentlyOpen;
+
     if (shouldOpen) {
+      currentMenuProvider = state.activeProvider || "ollama";
       elements.modelDropdownContainer.classList.add("open");
+      if (elements.modelMenu) elements.modelMenu.classList.add("open");
       elements.modelSelectorPill.setAttribute("aria-expanded", "true");
+      updateMenuTabs();
       renderModelList();
-      elements.modelSearchInput.focus();
+      setTimeout(() => {
+        if (elements.modelSearchInput) elements.modelSearchInput.focus();
+      }, 50);
     } else {
       elements.modelDropdownContainer.classList.remove("open");
+      if (elements.modelMenu) elements.modelMenu.classList.remove("open");
       elements.modelSelectorPill.setAttribute("aria-expanded", "false");
     }
   }
 
-  function updateModelUI() {
-    elements.activeModelName.textContent = state.activeModel;
-    elements.activeProviderBadge.textContent = state.activeProvider;
-    elements.inputMetaModel.textContent = state.activeModel;
-    if (state.activeProvider === "openai") {
-      elements.tabOpenai.classList.add("active");
-      elements.tabOllama.classList.remove("active");
-    } else {
-      elements.tabOllama.classList.add("active");
-      elements.tabOpenai.classList.remove("active");
+  function updateMenuTabs() {
+    const prov = currentMenuProvider || state.activeProvider || "ollama";
+    if (elements.tabOllama) {
+      elements.tabOllama.classList.toggle("active", prov === "ollama");
+    }
+    if (elements.tabOpenai) {
+      elements.tabOpenai.classList.toggle("active", prov === "openai");
     }
   }
 
+  function updateModelUI() {
+    if (elements.activeModelName) {
+      elements.activeModelName.textContent = state.activeModel || "gemma4:31b";
+    }
+    if (elements.activeProviderBadge) {
+      elements.activeProviderBadge.textContent = state.activeProvider || "ollama";
+    }
+    if (elements.inputMetaModel) {
+      elements.inputMetaModel.textContent = state.activeModel || "gemma4:31b";
+    }
+    updateMenuTabs();
+  }
+
   function renderModelList() {
-    const provider = state.activeProvider;
-    const filter = (elements.modelSearchInput.value || "").toLowerCase().trim();
-    const list = state.models[provider] || [];
+    if (!elements.modelList) return;
+    const provider = currentMenuProvider || state.activeProvider || "ollama";
+    const filter = (elements.modelSearchInput?.value || "").toLowerCase().trim();
+    const rawList = state.models[provider] || [];
+    const list = [...rawList];
+
+    // Ensure active model is present in the list if currently browsing its provider
+    if (provider === state.activeProvider && state.activeModel && !list.includes(state.activeModel)) {
+      list.unshift(state.activeModel);
+    }
 
     elements.modelList.innerHTML = "";
     const filtered = list.filter((m) => m.toLowerCase().includes(filter));
@@ -208,15 +498,22 @@
     if (filtered.length === 0) {
       const empty = document.createElement("div");
       empty.className = "history-empty";
-      empty.textContent = `No ${provider} models matching "${filter}"`;
+      empty.style.padding = "16px";
+      empty.textContent = filter
+        ? `No ${provider} models matching "${filter}"`
+        : `No ${provider} models configured`;
       elements.modelList.appendChild(empty);
       return;
     }
 
     filtered.forEach((modelName) => {
+      const isSelected = provider === state.activeProvider && modelName === state.activeModel;
       const item = document.createElement("div");
-      item.className = "model-item" + (modelName === state.activeModel ? " selected" : "");
-      item.onclick = () => selectModel(provider, modelName);
+      item.className = "model-item" + (isSelected ? " selected" : "");
+      item.onclick = (e) => {
+        e.stopPropagation();
+        selectModel(provider, modelName);
+      };
 
       const info = document.createElement("div");
       info.className = "model-item-info";
@@ -244,6 +541,11 @@
   }
 
   async function selectModel(provider, modelName) {
+    state.activeProvider = provider;
+    state.activeModel = modelName;
+    updateModelUI();
+    toggleModelMenu(false);
+
     try {
       const res = await fetch("/api/models/set", {
         method: "POST",
@@ -251,20 +553,26 @@
         body: JSON.stringify({ provider, model: modelName }),
       });
       if (!res.ok) throw new Error("Failed to set model");
-      state.activeProvider = provider;
-      state.activeModel = modelName;
-      updateModelUI();
-      toggleModelMenu(false);
+      const data = await res.json();
+      if (data.active_llm) {
+        state.activeProvider = data.active_llm.provider;
+        state.activeModel = data.active_llm.model;
+        updateModelUI();
+      }
     } catch (err) {
-      alert("Error changing model: " + err.message);
+      console.warn("Could not sync model to backend:", err);
     }
   }
 
   function handleCustomModelApply() {
-    const custom = elements.customModelInput.value.trim();
+    const custom = elements.customModelInput?.value.trim();
     if (!custom) return;
-    selectModel(state.activeProvider, custom);
-    elements.customModelInput.value = "";
+    const provider = currentMenuProvider || state.activeProvider || "ollama";
+    if (state.models[provider] && !state.models[provider].includes(custom)) {
+      state.models[provider].push(custom);
+    }
+    selectModel(provider, custom);
+    if (elements.customModelInput) elements.customModelInput.value = "";
   }
 
   // -------------------------------------------------------------------------
@@ -273,11 +581,25 @@
   function setupEventListeners() {
     elements.themeToggleBtn.addEventListener("click", toggleTheme);
 
-    elements.sidebarCollapseBtn.addEventListener("click", () => {
-      elements.sidebar.classList.add("collapsed");
-    });
-    elements.sidebarOpenBtn.addEventListener("click", () => {
-      elements.sidebar.classList.remove("collapsed");
+    if (elements.sidebarCollapseBtn) {
+      elements.sidebarCollapseBtn.addEventListener("click", () => toggleSidebar(false));
+    }
+    if (elements.sidebarToggleBtn) {
+      elements.sidebarToggleBtn.addEventListener("click", () => toggleSidebar());
+    }
+    if (elements.sidebarViewTableBtn) {
+      elements.sidebarViewTableBtn.addEventListener("click", () => openGlobalTelemetryTable());
+    }
+
+    // Global keyboard shortcuts (Ctrl+B / Cmd+B for sidebar, Esc to close dropdowns)
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        toggleModelMenu(false);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
     });
 
     elements.newChatBtn.addEventListener("click", startNewChat);
@@ -287,35 +609,67 @@
     elements.dbSelect.addEventListener("change", onDatabaseChange);
 
     // Model Dropdown
-    elements.modelSelectorPill.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleModelMenu();
-    });
+    if (elements.modelSelectorPill) {
+      elements.modelSelectorPill.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleModelMenu();
+      });
+    }
+
+    if (elements.modelMenu) {
+      elements.modelMenu.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+    }
 
     document.addEventListener("click", (e) => {
-      if (!elements.modelDropdownContainer.contains(e.target)) {
+      if (
+        elements.modelDropdownContainer &&
+        !elements.modelDropdownContainer.contains(e.target) &&
+        (!elements.modelMenu || !elements.modelMenu.contains(e.target))
+      ) {
         toggleModelMenu(false);
       }
     });
 
-    elements.tabOllama.addEventListener("click", () => {
-      state.activeProvider = "ollama";
-      updateModelUI();
-      renderModelList();
-    });
+    if (elements.tabOllama) {
+      elements.tabOllama.addEventListener("click", (e) => {
+        e.stopPropagation();
+        currentMenuProvider = "ollama";
+        updateMenuTabs();
+        renderModelList();
+      });
+    }
 
-    elements.tabOpenai.addEventListener("click", () => {
-      state.activeProvider = "openai";
-      updateModelUI();
-      renderModelList();
-    });
+    if (elements.tabOpenai) {
+      elements.tabOpenai.addEventListener("click", (e) => {
+        e.stopPropagation();
+        currentMenuProvider = "openai";
+        updateMenuTabs();
+        renderModelList();
+      });
+    }
 
-    elements.modelSearchInput.addEventListener("input", renderModelList);
+    if (elements.modelSearchInput) {
+      elements.modelSearchInput.addEventListener("input", renderModelList);
+    }
 
-    elements.applyCustomModelBtn.addEventListener("click", handleCustomModelApply);
-    elements.customModelInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") handleCustomModelApply();
-    });
+    if (elements.applyCustomModelBtn) {
+      elements.applyCustomModelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handleCustomModelApply();
+      });
+    }
+
+    if (elements.customModelInput) {
+      elements.customModelInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          handleCustomModelApply();
+        }
+      });
+    }
 
     // Prompt Textarea Auto-resize & Enter to send
     elements.promptInput.addEventListener("input", function () {
@@ -338,6 +692,26 @@
       }
     });
 
+    // Telemetry Table Header Button click
+    if (elements.headerTableBtn) {
+      elements.headerTableBtn.addEventListener("click", () => {
+        if (activeEvidenceHandler) {
+          activeEvidenceHandler.toggleOrOpenTable();
+        } else if (latestEvidenceTimeline && latestEvidenceTimeline.length > 0) {
+          openGlobalTelemetryTable(latestEvidenceTimeline, "Retrieved Evidence Events");
+        } else {
+          openGlobalTelemetryTable();
+        }
+      });
+    }
+
+    // Global dialog close button
+    if (elements.globalDialogCloseBtn) {
+      elements.globalDialogCloseBtn.addEventListener("click", () => {
+        if (elements.globalTableDialog) elements.globalTableDialog.close();
+      });
+    }
+
     // Suggestions click
     document.querySelectorAll(".suggestion-card").forEach((card) => {
       card.addEventListener("click", () => {
@@ -357,6 +731,11 @@
     elements.promptInput.value = "";
     elements.promptInput.style.height = "auto";
     state.currentSessionId = null;
+    activeEvidenceHandler = null;
+    latestEvidenceTimeline = null;
+    if (elements.headerTableBadge) {
+      elements.headerTableBadge.textContent = "Telemetry Table";
+    }
     document.querySelectorAll(".history-item").forEach((i) => i.classList.remove("active"));
   }
 
@@ -374,7 +753,7 @@
     // 2. Prepare Assistant Message Box with Live Stepper
     const assistantMsg = createAssistantMessageElement();
     elements.messagesContainer.appendChild(assistantMsg.container);
-    scrollToBottom();
+    scrollToBottom(true);
 
     // 3. Start Investigation SSE Stream
     state.isGenerating = true;
@@ -517,31 +896,22 @@
           <div class="hypotheses-title">Retrieved Evidence</div>
           <div class="evidence-pack-meta"></div>
         </div>
-        <button class="action-pill-btn evidence-table-open" type="button" aria-haspopup="dialog">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M3 15h18M9 3v18m6-18v18"></path></svg>
-          <span>View table</span>
-        </button>
-      </div>
-      <dialog class="evidence-table-dialog" aria-label="Retrieved telemetry events">
-        <div class="evidence-table-dialog-heading">
-          <div>
-            <h2>Retrieved telemetry events</h2>
-            <div class="evidence-dialog-meta"></div>
-          </div>
-          <button class="icon-btn evidence-table-close" type="button" aria-label="Close evidence table" title="Close">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+        <div class="table-option-group" role="group" aria-label="Data table display options">
+          <button class="action-pill-btn evidence-open-table-btn" type="button" title="Open Telemetry Table Modal">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M3 15h18M9 3v18m6-18v18"></path></svg>
+            <span>Telemetry Table</span>
           </button>
         </div>
-        <div class="evidence-table-wrap"></div>
-      </dialog>
+      </div>
       <div class="evidence-hypotheses"></div>
     `;
-    const evidenceDialog = evidenceBox.querySelector(".evidence-table-dialog");
-    evidenceBox.querySelector(".evidence-table-open").addEventListener("click", () => {
-      evidenceDialog.showModal();
-    });
-    evidenceBox.querySelector(".evidence-table-close").addEventListener("click", () => {
-      evidenceDialog.close();
+
+    const btnOpenTable = evidenceBox.querySelector(".evidence-open-table-btn");
+    btnOpenTable.addEventListener("click", () => {
+      const timeline = internalState.evidencePack && Array.isArray(internalState.evidencePack.timeline)
+        ? internalState.evidencePack.timeline
+        : [];
+      openGlobalTelemetryTable(timeline, "Retrieved Evidence Events");
     });
 
     // Telemetry & Steps Accordion
@@ -648,61 +1018,36 @@
         });
       },
       setEvidencePack: (pack) => {
+        internalState.evidencePack = pack;
         const timeline = Array.isArray(pack.timeline) ? pack.timeline : [];
-        evidenceBox.style.display = "block";
-        evidenceBox.querySelector(".evidence-pack-meta").textContent =
-          `${pack.total_kept_events ?? timeline.length} events retained; ${pack.excluded_count ?? 0} rows filtered`;
-        evidenceBox.querySelector(".evidence-dialog-meta").textContent =
-          `${pack.total_kept_events ?? timeline.length} events retained`;
+        latestEvidenceTimeline = timeline;
 
-        const tableWrap = evidenceBox.querySelector(".evidence-table-wrap");
-        tableWrap.replaceChildren();
-        const table = document.createElement("table");
-        table.className = "evidence-table";
-        table.setAttribute("aria-label", "Retrieved telemetry events");
-        const caption = table.createCaption();
-        caption.className = "sr-only";
-        caption.textContent = "Retrieved telemetry events";
-        const columns = ["Time", "Event ID", "Host", "Action", "Process", "Summary"];
-        const headerRow = table.createTHead().insertRow();
-        columns.forEach((column) => {
-          const header = document.createElement("th");
-          header.scope = "col";
-          header.textContent = column;
-          headerRow.appendChild(header);
-        });
-        const tableBody = table.createTBody();
-        timeline.forEach((event) => {
-          const details = event.details && typeof event.details === "object" ? event.details : {};
-          const processName = event.process_name || details.name || "";
-          const processId = event.process_entity_id || "";
-          const process = processName && processId
-            ? `${processName} (${processId})`
-            : processName || processId || "Unknown";
-          const values = [
-            event.timestamp || "Time unavailable",
-            event.event_id || "Unknown event",
-            event.host_id || "Unknown host",
-            event.action || "Unknown",
-            process,
-            event.summary || "No summary available",
-          ];
-          const row = tableBody.insertRow();
-          values.forEach((value) => {
-            const cell = row.insertCell();
-            cell.textContent = value;
-          });
-        });
-        tableWrap.appendChild(table);
+        activeEvidenceHandler = {
+          toggleOrOpenTable: () => {
+            openGlobalTelemetryTable(timeline, "Retrieved Evidence Events");
+          }
+        };
+
+        const totalCount = pack.total_kept_events ?? timeline.length;
+        if (elements.headerTableBadge) {
+          elements.headerTableBadge.textContent = `${totalCount} events`;
+        }
+
+        evidenceBox.style.display = "block";
+        const countText = `${totalCount} events retained; ${pack.excluded_count ?? 0} rows filtered`;
+        const packMeta = evidenceBox.querySelector(".evidence-pack-meta");
+        if (packMeta) packMeta.textContent = countText;
 
         const hypothesisList = evidenceBox.querySelector(".evidence-hypotheses");
-        hypothesisList.replaceChildren();
-        Object.entries(pack.hypotheses_evidence || {}).forEach(([hypothesis, evidence]) => {
-          const row = document.createElement("div");
-          row.className = "evidence-hypothesis";
-          row.textContent = `${evidence.event_count || 0} candidate event(s): ${hypothesis}`;
-          hypothesisList.appendChild(row);
-        });
+        if (hypothesisList) {
+          hypothesisList.replaceChildren();
+          Object.entries(pack.hypotheses_evidence || {}).forEach(([hypothesis, evidence]) => {
+            const row = document.createElement("div");
+            row.className = "evidence-hypothesis";
+            row.textContent = `${evidence.event_count || 0} candidate event(s): ${hypothesis}`;
+            hypothesisList.appendChild(row);
+          });
+        }
       },
       addTraceStep: (toolName, summary) => {
         internalState.stepCount++;
@@ -720,9 +1065,16 @@
         traceBody.scrollTop = traceBody.scrollHeight;
       },
       addReasoning: (text) => {
+        if (!text) return;
+        const cleaned = String(text)
+          .replace(/<\|?channel[^>]*\|?>/gi, "")
+          .replace(/<\/?think>/gi, "")
+          .replace(/<\/?thought>/gi, "")
+          .trim();
+        if (!cleaned) return;
         const rowEl = document.createElement("div");
         rowEl.className = "trace-reasoning";
-        rowEl.textContent = text;
+        rowEl.textContent = cleaned;
         traceBody.appendChild(rowEl);
         traceBody.scrollTop = traceBody.scrollHeight;
       },
@@ -806,14 +1158,26 @@
         if (res.report) {
           assistantMsg.setReport(res.report);
         }
-        scrollToBottom();
+        // Ensure activeEvidenceHandler and top bar button are hooked to the latest evidence
+        if (assistantMsg.state?.evidencePack?.timeline) {
+          latestEvidenceTimeline = assistantMsg.state.evidencePack.timeline;
+          activeEvidenceHandler = {
+            toggleOrOpenTable: () => {
+              openGlobalTelemetryTable(latestEvidenceTimeline, "Retrieved Evidence Events");
+            }
+          };
+          if (elements.headerTableBadge) {
+            elements.headerTableBadge.textContent = `${latestEvidenceTimeline.length} events`;
+          }
+        }
+        scrollToBottom(true);
         break;
 
       case "error":
         assistantMsg.setErrorMessage(event.message || "An unexpected error occurred.");
         break;
     }
-    scrollToBottom();
+    scrollToBottom(false);
   }
 
   // -------------------------------------------------------------------------
@@ -840,6 +1204,8 @@
       report: sessionState.reportMarkdown,
       model: state.activeModel,
       db: state.currentDb,
+      hypotheses: sessionState.hypotheses,
+      evidencePack: sessionState.evidencePack,
     };
     state.history.unshift(item);
     if (state.history.length > 25) state.history.pop();
@@ -908,6 +1274,22 @@
     const assistantMsg = createAssistantMessageElement();
     elements.messagesContainer.appendChild(assistantMsg.container);
 
+    if (item.hypotheses && item.hypotheses.length) {
+      assistantMsg.addHypotheses(item.hypotheses);
+    }
+    if (item.evidencePack) {
+      assistantMsg.setEvidencePack(item.evidencePack);
+      const timeline = Array.isArray(item.evidencePack.timeline) ? item.evidencePack.timeline : [];
+      latestEvidenceTimeline = timeline;
+      activeEvidenceHandler = {
+        toggleOrOpenTable: () => {
+          openGlobalTelemetryTable(timeline, "Retrieved Evidence Events");
+        }
+      };
+      if (elements.headerTableBadge) {
+        elements.headerTableBadge.textContent = `${item.evidencePack.total_kept_events ?? timeline.length} events`;
+      }
+    }
     if (item.verdict) {
       assistantMsg.setVerdict(item.verdict, "", 0.95);
     }
@@ -975,8 +1357,14 @@
       .replace(/'/g, "&#039;");
   }
 
-  function scrollToBottom() {
-    elements.chatStage.scrollTop = elements.chatStage.scrollHeight;
+  function scrollToBottom(force = false) {
+    if (!elements.chatStage) return;
+    const threshold = 180;
+    const isNearBottom =
+      elements.chatStage.scrollHeight - elements.chatStage.scrollTop - elements.chatStage.clientHeight <= threshold;
+    if (force || isNearBottom) {
+      elements.chatStage.scrollTop = elements.chatStage.scrollHeight;
+    }
   }
 
   function formatBytes(bytes) {

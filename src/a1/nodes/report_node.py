@@ -29,12 +29,49 @@ class IncidentVerdict(BaseModel):
 
     @field_validator("verdict", "verdict_boundary", mode="before")
     @classmethod
-    def normalize_verdict_labels(cls, value):
-        return value.strip().lower().replace(" ", "_") if isinstance(value, str) else value
+    def normalize_verdict_labels(cls, value, info):
+        if not isinstance(value, str):
+            return value
+        cleaned = re.sub(r"<\|?channel[^>]*\|?>", "", value, flags=re.IGNORECASE)
+        cleaned = re.sub(r"</?think>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"</?thought>", "", cleaned, flags=re.IGNORECASE)
+        norm = cleaned.strip().lower().replace(" ", "_").strip("`'\"")
+
+        field_name = info.field_name if hasattr(info, "field_name") else "verdict"
+        if field_name == "verdict":
+            valid = {"benign", "suspicious", "malicious", "inconclusive"}
+            if norm in valid:
+                return norm
+            if "malicious" in norm:
+                return "malicious"
+            if "suspicious" in norm:
+                return "suspicious"
+            if "benign" in norm:
+                return "benign"
+            if "inconclusive" in norm:
+                return "inconclusive"
+            return "suspicious"
+        else:
+            valid = {"confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive"}
+            if norm in valid:
+                return norm
+            if "confirmed_malicious" in norm:
+                return "confirmed_malicious"
+            if "unconfirmed_malicious" in norm or "unconfirmed" in norm or "malicious" in norm:
+                return "unconfirmed_malicious"
+            if "benign" in norm:
+                return "benign"
+            if "inconclusive" in norm:
+                return "inconclusive"
+            return "unconfirmed_malicious"
 
     @field_validator("executive_summary", "investigation_reasoning", mode="before")
     @classmethod
     def normalize_report_text(cls, value):
+        if isinstance(value, str):
+            value = re.sub(r"<\|?channel[^>]*\|?>", "", value, flags=re.IGNORECASE)
+            value = re.sub(r"</?think>", "", value, flags=re.IGNORECASE)
+            return value.strip()
         if isinstance(value, list):
             lines = []
             for item in value:
@@ -44,7 +81,9 @@ class IncidentVerdict(BaseModel):
                         lines.append(f"**{title}**: {v}")
                 else:
                     lines.append(str(item))
-            return "\n".join(lines)
+            text = "\n".join(lines)
+            text = re.sub(r"<\|?channel[^>]*\|?>", "", text, flags=re.IGNORECASE)
+            return text.strip()
         if isinstance(value, dict):
             lines = []
             for k, v in value.items():
@@ -59,7 +98,9 @@ class IncidentVerdict(BaseModel):
                         lines.append(f"- **{sub_k.replace('_', ' ').title()}**: {sub_v}")
                 else:
                     lines.append(f"- **{title}**: {v}")
-            return "\n".join(lines).strip()
+            text = "\n".join(lines).strip()
+            text = re.sub(r"<\|?channel[^>]*\|?>", "", text, flags=re.IGNORECASE)
+            return text.strip()
         return value or ""
 
     @field_validator(
@@ -80,9 +121,13 @@ class IncidentVerdict(BaseModel):
             if isinstance(item, dict):
                 for k, v in item.items():
                     title = k.replace("_", " ").title()
-                    result.append(f"{title}: {v}")
+                    cleaned_v = re.sub(r"<\|?channel[^>]*\|?>", "", str(v), flags=re.IGNORECASE)
+                    result.append(f"{title}: {cleaned_v.strip()}")
             else:
-                result.append(str(item))
+                cleaned_item = re.sub(r"<\|?channel[^>]*\|?>", "", str(item), flags=re.IGNORECASE)
+                cleaned_item = re.sub(r"</?think>", "", cleaned_item, flags=re.IGNORECASE).strip()
+                if cleaned_item:
+                    result.append(cleaned_item)
         return result
 
     @field_validator("confidence", mode="before")

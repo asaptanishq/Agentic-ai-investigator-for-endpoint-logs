@@ -61,13 +61,6 @@
 
       <!-- Sidebar Footer -->
       <div class="sidebar-footer">
-        <div class="user-status-card">
-          <div class="status-indicator-dot" id="systemStatusDot"></div>
-          <div class="status-info">
-            <span class="status-title" id="systemStatusText">Ready</span>
-            <span class="status-subtitle" id="systemStatusSub">A1 DFIR v0.1.0</span>
-          </div>
-        </div>
         <div class="footer-actions">
           <button class="theme-toggle-btn" id="themeToggleBtn" title="Switch Light/Dark Theme">
             <svg class="sun-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -96,8 +89,16 @@
       <!-- Top Navigation Header -->
       <header class="top-nav">
         <div class="nav-left">
-          <button class="icon-btn sidebar-open-btn" id="sidebarOpenBtn" title="Open Sidebar">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <!-- Permanent Sidebar Toggle Button (Open/Close) -->
+          <button class="icon-btn sidebar-toggle-btn" id="sidebarToggleBtn" title="Toggle Sidebar (Ctrl+B)"
+            aria-label="Toggle Sidebar">
+            <svg class="sidebar-icon-collapse" width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+            <svg class="sidebar-icon-expand" style="display:none;" width="18" height="18" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="3" y1="12" x2="21" y2="12"></line>
               <line x1="3" y1="6" x2="21" y2="6"></line>
               <line x1="3" y1="18" x2="21" y2="18"></line>
@@ -106,7 +107,7 @@
 
           <!-- Model Selection Dropdown Trigger -->
           <div class="model-dropdown-container" id="modelDropdownContainer">
-            <button class="model-selector-pill" id="modelSelectorPill" aria-haspopup="true" aria-expanded="false">
+            <button class="model-selector-pill" id="modelSelectorPill" aria-haspopup="true" aria-expanded="false" type="button">
               <span class="model-sparkle">✨</span>
               <span class="active-model-name" id="activeModelName">Loading model...</span>
               <span class="provider-badge" id="activeProviderBadge">ollama</span>
@@ -121,8 +122,8 @@
               <div class="model-menu-header">
                 <span class="menu-title">Select LLM Model</span>
                 <div class="provider-switch">
-                  <button class="provider-tab active" data-provider="ollama" id="tabOllama">Ollama</button>
-                  <button class="provider-tab" data-provider="openai" id="tabOpenai">OpenAI</button>
+                  <button class="provider-tab active" data-provider="ollama" id="tabOllama" type="button">Ollama</button>
+                  <button class="provider-tab" data-provider="openai" id="tabOpenai" type="button">OpenAI</button>
                 </div>
               </div>
 
@@ -144,7 +145,7 @@
               <div class="model-menu-footer">
                 <div class="custom-model-form">
                   <input type="text" id="customModelInput" placeholder="Or enter custom model name..." />
-                  <button class="apply-custom-btn" id="applyCustomModelBtn">Apply</button>
+                  <button class="apply-custom-btn" id="applyCustomModelBtn" type="button">Apply</button>
                 </div>
               </div>
             </div>
@@ -152,6 +153,16 @@
         </div>
 
         <div class="nav-right">
+          <!-- Permanent Telemetry Data Table Option Button -->
+          <button class="action-pill-btn header-table-btn" id="headerTableBtn" title="Display Telemetry Data Table">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+              <path d="M3 9h18M3 15h18M9 3v18m6-18v18"></path>
+            </svg>
+            <span>Telemetry Table</span>
+            <span class="header-table-badge" id="headerTableBadge">View</span>
+          </button>
+
           <!-- DB Quick Badge -->
           <div class="header-db-pill" id="headerDbPill" title="Active SQLite Telemetry DB">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -251,15 +262,50 @@
               </div>
             </div>
           </div>
-
-          <div class="disclaimer-text">
-            A1 DFIR Investigator evaluates endpoint telemetry & hypotheses. Verify security conclusions against your
-            organization's environment.
-          </div>
         </div>
       </div>
     </main>
   </div>
+
+  <!-- Global High-Density Telemetry Table Sheet Modal -->
+  <dialog class="evidence-table-dialog" id="globalTableDialog" aria-label="Telemetry events table">
+    <div class="ios-sheet-handle"></div>
+    <div class="evidence-table-dialog-heading">
+      <div>
+        <h2 id="globalDialogTitle">Telemetry Database Events</h2>
+        <div class="evidence-dialog-meta" id="globalDialogMeta">Loading events...</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button type="button" class="table-copy-btn" id="globalDialogCopyBtn" title="Copy events as CSV">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <span>Copy CSV</span>
+        </button>
+        <button class="icon-btn evidence-table-close" id="globalDialogCloseBtn" type="button"
+          aria-label="Close telemetry table" title="Close (Esc)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="table-toolbar" style="border-radius:0; border-left:none; border-right:none;">
+      <div class="table-search-box">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="globalDialogSearchInput" class="table-search-input"
+          placeholder="Search across all columns (host, action, process, summary)..." />
+      </div>
+      <div class="table-toolbar-actions">
+        <span class="table-count-badge" id="globalDialogCountBadge"></span>
+      </div>
+    </div>
+    <div class="evidence-table-wrap dialog-table-wrap" id="globalDialogTableWrap"></div>
+  </dialog>
 
   <script src="/static/app.js"></script>
 </body>

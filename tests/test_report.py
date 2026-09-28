@@ -279,3 +279,22 @@ def test_post_cleanup_interactive_logon_pair_is_separately_identified():
     assert pair[0]["event_id"] == "evt-fail"
     assert pair[1]["event_id"] == "evt-success"
     assert _post_cleanup_interactive_logon_pair(evidence_pack, "2026-09-11T13:00:00Z") is None
+
+
+def test_incident_verdict_handles_leaked_control_tokens():
+    # Model returns raw closing channel token
+    verdict1 = IncidentVerdict(verdict="<channel|>", verdict_boundary="<channel|>")
+    assert verdict1.verdict == "suspicious"
+    assert verdict1.verdict_boundary == "unconfirmed_malicious"
+
+    # Model returns channel token prepended to genuine verdict
+    verdict2 = IncidentVerdict(
+        verdict="<channel|>malicious",
+        verdict_boundary="<channel|>confirmed_malicious",
+        executive_summary="<|channel>thought internal reasoning<channel|> Summary text",
+        evidence_basis=["<channel|> evt-001 procdump execution"]
+    )
+    assert verdict2.verdict == "malicious"
+    assert verdict2.verdict_boundary == "confirmed_malicious"
+    assert "<channel|>" not in verdict2.executive_summary
+    assert "<channel|>" not in verdict2.evidence_basis[0]

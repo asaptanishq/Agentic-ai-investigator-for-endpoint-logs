@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 import threading
 import urllib.request
 from pathlib import Path
@@ -184,6 +185,67 @@ def create_app() -> FastAPI:
             return {"status": "updated", "active_db": active_path}
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
+
+    @app.get("/api/events")
+    async def get_events(limit: int = 100):
+        try:
+            from a1.db import EndpointDatabase
+            db = EndpointDatabase(cfg.DB_PATH)
+            rows = db.execute_query(
+                "SELECT e.event_id, e.timestamp, e.host_id, e.action, e.raw_json FROM events e ORDER BY e.timestamp DESC LIMIT ?",
+                params=(limit,),
+                max_rows=limit,
+            )
+            events = []
+            for r in rows:
+                ev = dict(r)
+                if ev.get("raw_json"):
+                    try:
+                        ev["details"] = json.loads(ev["raw_json"])
+                    except Exception:
+                        pass
+                events.append(ev)
+            return {
+                "db_name": Path(cfg.DB_PATH).name,
+                "total": len(events),
+                "events": events,
+            }
+        except Exception as e:
+            return {"db_name": Path(cfg.DB_PATH).name, "total": 0, "events": [], "error": str(e)}
+
+    def extract_and_clean_thoughts(raw_text: str) -> tuple[Optional[str], str]:
+        """Extract embedded thought/reasoning blocks and return (thought, cleaned_text)."""
+        if not raw_text:
+            return None, ""
+
+        thought_parts = []
+        cleaned = raw_text
+
+        # Match Gemma 4 / ChatML format: <|channel>thought ... <channel|>
+        gemma_matches = list(re.finditer(r"<\|?channel>thought\s*(.*?)\s*<channel\|>", cleaned, re.DOTALL | re.IGNORECASE))
+        for gm in gemma_matches:
+            t = gm.group(1).strip()
+            if t:
+                thought_parts.append(t)
+        if gemma_matches:
+            cleaned = re.sub(r"<\|?channel>thought\s*.*?\s*<channel\|>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+
+        # Match DeepSeek / standard <think> ... </think>
+        think_matches = list(re.finditer(r"<think>\s*(.*?)\s*</think>", cleaned, re.DOTALL | re.IGNORECASE))
+        for tm in think_matches:
+            t = tm.group(1).strip()
+            if t:
+                thought_parts.append(t)
+        if think_matches:
+            cleaned = re.sub(r"<think>\s*.*?\s*</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+
+        # Clean leftover channel / think control tokens
+        cleaned = re.sub(r"<\|?channel[^>]*\|?>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"</?think>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.strip()
+
+        thought = "\n\n".join(thought_parts) if thought_parts else None
+        return thought, cleaned
 
     def summarize_tool_output(content: str) -> str:
         """Produce a clean summary of tool output for frontend telemetry stream."""
@@ -389,16 +451,18 @@ def create_app() -> FastAPI:
                                         or ""
                                     )
                                     text_content = str(getattr(msg, "content", "") or "").strip()
+                                    embedded_thought, cleaned_content = extract_and_clean_thoughts(text_content)
+                                    final_thought = reasoning_content or embedded_thought
 
-                                    if reasoning_content:
+                                    if final_thought:
                                         loop.call_soon_threadsafe(
                                             queue.put_nowait,
-                                            {"type": "thought", "text": reasoning_content}
+                                            {"type": "thought", "text": final_thought}
                                         )
-                                    if text_content and text_content != reasoning_content:
+                                    if cleaned_content and cleaned_content != final_thought:
                                         loop.call_soon_threadsafe(
                                             queue.put_nowait,
-                                            {"type": "reasoning", "text": text_content}
+                                            {"type": "reasoning", "text": cleaned_content}
                                         )
 
                                     tool_calls = getattr(msg, "tool_calls", None) or []
