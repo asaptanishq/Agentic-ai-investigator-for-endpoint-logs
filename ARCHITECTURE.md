@@ -387,12 +387,4 @@ python tests/smoke_test.py    # 17 checks, standalone
 
 ---
 
-## 9. Repository Status (Gaps Before First Commit)
-
-These are documented so the first commit is not misleading:
-
-1. **Default database resolves to a shipped DB.** `config.py` discovers the first existing database (`agent_bundle/agent_endpoint_security.db` -> `attack_lateral_movement.db` -> `attack_data_exfiltration.db`), so CLI and web runs work with no configuration. A `--db` flag or `ENDPOINT_DB_PATH` still overrides it, and `config.set_active_database()` lets the CLI, web API and benchmark switch databases cleanly.
-2. **Benchmark runs against the shipped scenarios.** `benchmark.py` scores two cases (`ATK-A` on `attack_lateral_movement.db`, `ATK-B` on `attack_data_exfiltration.db`, switching databases per case) with labels from `case_labels.json` when present, otherwise derived from the shipped `groundtruth_attack_*.json` files. Scoring caveat: both shipped scenarios expect `malicious`, so the benchmark measures attack-chain discovery, not benign-vs-malicious discrimination.
-3. **Tests discover fixtures at runtime** instead of hard-coding identifiers from the deleted five-scenario bundle: database-backed tests query the active telemetry database for a real host, process pair, indicator or event. Verified result: `pytest tests/` -> **55 passed, 1 skipped** and `python tests/smoke_test.py` -> **17 passed**, both against either shipped attack database.
-4. **`project_overview.html` is a 0-byte placeholder** and is currently untracked.
 
