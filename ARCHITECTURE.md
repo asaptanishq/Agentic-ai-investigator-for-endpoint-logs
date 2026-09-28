@@ -317,27 +317,6 @@ ai-musefix/
 | `--web`                       | Launch the web interface (also available as the `web` subcommand). |
 | `--port`, `--no-browser`      | Web server port and browser auto-open behaviour.                   |
 
-### CLI Examples
-
-```bash
-# Single investigation (DB auto-discovered; override with --db)
-python -m a1.cli "Investigate suspicious activity on WS-OPS-01"
-
-# Verbose mode (shows full tool arguments and outputs)
-python -m a1.cli "Investigate suspicious activity on WS-DEV-02" --verbose
-
-# Point at a database shipped with this repository
-python -m a1.cli "Investigate exfiltration activity" --db endpoint_security_dataset_expanded_corrected/attack_data_exfiltration.db
-
-# Labeled benchmark (ATK-A then ATK-B, switching DBs per case)
-python -m a1.benchmark
-python -m a1.cli --benchmark --limit 2
-
-# Web UI
-python -m a1.cli --web
-a1-web --port 8000
-```
-
 ### Web API (`web/server.py`)
 
 | Endpoint                  | Purpose                                                |
@@ -410,10 +389,5 @@ python tests/smoke_test.py    # 17 checks, standalone
 ```
 
 `tests/conftest.py` prefers `attack_lateral_movement.db` unless `ENDPOINT_DB_PATH` is set. Database-backed tests discover fixtures from the active database at runtime rather than hard-coding dataset identifiers, so the suite passes against either shipped attack database.
-<<<<<<< HEAD
 
 ---
-
-
-=======
->>>>>>> 9788269 (changed readme and architechture .md files)
