@@ -1,0 +1,33 @@
+{
+  "dataset": "attack_data_exfiltration.db",
+  "scenario": "Data staging + scheduled-task persistence + HTTPS exfiltration + cleanup",
+  "summary": "On 2026-09-11, PowerShell on WS-DEV-02 launched 7z.exe which archived the user's Q3 spreadsheets into a password-protected 176 MB stage.7z in Temp. PowerShell then dropped sync.ps1 and created a logon scheduled task 'OneDriveSync' (TaskCache registry entry). Six outbound HTTPS connections followed to 203.0.113.77 (sync-cdn.example) from the same PowerShell process, after which stage.7z was deleted (cleanup).",
+  "kill_chain": [
+    "10:05 powershell.exe spawned by explorer.exe on WS-DEV-02",
+    "10:06 7z.exe spawned by powershell.exe: archiving C:\\Users\\dev02\\Documents\\Q3\\*.xlsx with password",
+    "10:09 stage.7z (176 MB) created in C:\\Users\\dev02\\AppData\\Local\\Temp by 7z.exe",
+    "10:16 sync.ps1 (2 KB) dropped to Temp by powershell.exe",
+    "10:16 schtasks.exe (child of powershell.exe) created scheduled task 'OneDriveSync' (/sc onlogon); TaskCache registry entry",
+    "10:25-10:47 six outbound HTTPS (443/tcp) connections by powershell.exe to 203.0.113.77 (sync-cdn.example)",
+    "10:52 stage.7z deleted by powershell.exe (file_deleted, event 23)"
+  ],
+  "key_iocs": [
+    "7z.exe a -mx9 -pSummer2026 ... stage.7z",
+    "stage.7z 176 MB in Temp, later deleted",
+    "sync.ps1",
+    "scheduled task OneDriveSync (/sc onlogon)",
+    "203.0.113.77 / sync-cdn.example (6x HTTPS)"
+  ],
+  "expected_verdict": "malicious",
+  "verdict_boundary": "confirmed_malicious",
+  "evidence_basis": [
+    "process_parent_child (powershell->7z, powershell->schtasks)",
+    "large staged archive + deletion (anti-forensics)",
+    "scheduled-task persistence",
+    "repeated exfiltration connections to external host"
+  ],
+  "distractors": [
+    "One benign failed-then-successful interactive (type 2, Kerberos) logon pair in the afternoon noise \u2014 tests that the agent does not over-conclude from the SCN-005-style pattern."
+  ],
+  "notes": "All event severities are 1 (as in the original dataset); the agent must correlate behavior, not severity. Byte counts are not in telemetry \u2014 the agent should reason from connection count/timing and archive size/deletion."
+}

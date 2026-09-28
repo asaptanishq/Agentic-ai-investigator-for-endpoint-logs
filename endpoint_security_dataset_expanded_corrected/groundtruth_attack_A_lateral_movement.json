@@ -1,0 +1,35 @@
+{
+  "dataset": "attack_lateral_movement.db",
+  "scenario": "Credential dumping + lateral movement + service persistence",
+  "summary": "On 2026-09-10, PowerShell on WS-OPS-01 launched procdump.exe against lsass.exe (process access, event 10) and wrote lsass.dmp. ~20 min later the same PowerShell session opened SMB connections to SRV-FILE-01; four failed NTLM network logons for CORP\\jdoe (4625, type 3) were followed by a successful one (4624). A remote service 'UpdaterSvc2' was then installed on SRV-FILE-01 (sc.exe, ImagePath registry value under Services) and the binary C:\\Windows\\Temp\\updatersvc2.exe executed as SYSTEM under services.exe.",
+  "kill_chain": [
+    "09:12 powershell.exe spawned by explorer.exe on WS-OPS-01",
+    "09:13 procdump.exe -ma lsass.exe spawned by powershell.exe; granted process access to lsass.exe (pid 720)",
+    "09:14 lsass.dmp (50 MB) written to C:\\Users\\ops01\\AppData\\Local\\Temp",
+    "09:31 two SMB (445/tcp) connections from WS-OPS-01 to SRV-FILE-01 by powershell.exe",
+    "09:32-09:35 four failed NTLM network logons (4625, logon type 3) for CORP\\jdoe from 10.10.2.20",
+    "09:36 successful NTLM network logon (4624) for CORP\\jdoe from 10.10.2.20",
+    "09:40 sc.exe created service UpdaterSvc2 (binPath C:\\Windows\\Temp\\updatersvc2.exe); parent process telemetry missing",
+    "09:40 updatersvc2.exe dropped to C:\\Windows\\Temp; Services\\UpdaterSvc2 ImagePath registry value set",
+    "09:41 updatersvc2.exe running as SYSTEM, parent services.exe (unsigned binary)"
+  ],
+  "key_iocs": [
+    "procdump.exe -ma lsass.exe",
+    "lsass.dmp",
+    "4625 x4 -> 4624 (jdoe, type 3, NTLM)",
+    "SMB 445 WS-OPS-01 -> SRV-FILE-01",
+    "UpdaterSvc2",
+    "C:\\Windows\\Temp\\updatersvc2.exe (unsigned, SYSTEM)"
+  ],
+  "expected_verdict": "malicious",
+  "verdict_boundary": "confirmed_malicious",
+  "evidence_basis": [
+    "process_parent_child (powershell->procdump)",
+    "process_accessed lsass",
+    "credential dump file",
+    "failed->successful network logon sequence",
+    "SMB lateral movement",
+    "service persistence + unsigned SYSTEM binary"
+  ],
+  "notes": "All event severities are 1 (as in the original dataset) so the agent cannot shortcut via severity; it must correlate the chain. The sc.exe parent process is intentionally missing (incomplete telemetry)."
+}

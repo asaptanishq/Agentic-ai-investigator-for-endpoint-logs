@@ -1,0 +1,9 @@
+fastapi>=0.141.1
+langchain>=1.4.2
+langchain-ollama>=1.1.0
+langchain-openai>=1.6.2
+langgraph>=1.2.11
+pydantic>=2.13.5
+pytest>=9.1.1
+python-dotenv>=1.2.3
+uvicorn>=0.54.0

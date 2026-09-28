@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>A1 DFIR Investigator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css" />
+  <!-- Optional CDN for rich Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+</head>
+
+<body class="theme-dark">
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <button class="new-chat-btn" id="newChatBtn" title="Start New Investigation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>New Investigation</span>
+        </button>
+        <button class="icon-btn sidebar-close-btn" id="sidebarCollapseBtn" title="Toggle Sidebar (Ctrl+B)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="9" y1="3" x2="9" y2="21"></line>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Dataset Selector in Sidebar -->
+      <div class="sidebar-section">
+        <label class="section-label">Active Telemetry Database</label>
+        <div class="db-select-wrapper">
+          <select id="dbSelect" class="soft-select" title="Switch Telemetry SQLite DB">
+            <option value="">Loading databases...</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Investigation History -->
+      <div class="sidebar-section history-section">
+        <div class="history-header">
+          <label class="section-label">Recent Investigations</label>
+          <button class="clear-history-btn" id="clearHistoryBtn" title="Clear all saved history">Clear</button>
+        </div>
+        <div class="history-list" id="historyList">
+          <div class="history-empty">No previous investigations</div>
+        </div>
+      </div>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <div class="user-status-card">
+          <div class="status-indicator-dot" id="systemStatusDot"></div>
+          <div class="status-info">
+            <span class="status-title" id="systemStatusText">Ready</span>
+            <span class="status-subtitle" id="systemStatusSub">A1 DFIR v0.1.0</span>
+          </div>
+        </div>
+        <div class="footer-actions">
+          <button class="theme-toggle-btn" id="themeToggleBtn" title="Switch Light/Dark Theme">
+            <svg class="sun-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg class="moon-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Navigation Header -->
+      <header class="top-nav">
+        <div class="nav-left">
+          <button class="icon-btn sidebar-open-btn" id="sidebarOpenBtn" title="Open Sidebar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+
+          <!-- Model Selection Dropdown Trigger -->
+          <div class="model-dropdown-container" id="modelDropdownContainer">
+            <button class="model-selector-pill" id="modelSelectorPill" aria-haspopup="true" aria-expanded="false">
+              <span class="model-sparkle">✨</span>
+              <span class="active-model-name" id="activeModelName">Loading model...</span>
+              <span class="provider-badge" id="activeProviderBadge">ollama</span>
+              <svg class="chevron-down" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2.5">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+
+            <!-- Dropdown Menu -->
+            <div class="model-menu" id="modelMenu">
+              <div class="model-menu-header">
+                <span class="menu-title">Select LLM Model</span>
+                <div class="provider-switch">
+                  <button class="provider-tab active" data-provider="ollama" id="tabOllama">Ollama</button>
+                  <button class="provider-tab" data-provider="openai" id="tabOpenai">OpenAI</button>
+                </div>
+              </div>
+
+              <!-- Search or quick filter -->
+              <div class="model-search-box">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input type="text" id="modelSearchInput" placeholder="Filter models..." />
+              </div>
+
+              <!-- Model List -->
+              <div class="model-list" id="modelList">
+                <!-- Dynamically populated -->
+              </div>
+
+              <!-- Custom model input footer -->
+              <div class="model-menu-footer">
+                <div class="custom-model-form">
+                  <input type="text" id="customModelInput" placeholder="Or enter custom model name..." />
+                  <button class="apply-custom-btn" id="applyCustomModelBtn">Apply</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nav-right">
+          <!-- DB Quick Badge -->
+          <div class="header-db-pill" id="headerDbPill" title="Active SQLite Telemetry DB">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+            </svg>
+            <span id="headerDbName">agent_endpoint_security.db</span>
+          </div>
+
+          <!-- Clear / Reset Chat Button -->
+          <button class="icon-btn" id="clearChatBtn" title="Clear current conversation">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="1 4 1 10 7 10"></polyline>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Chat Messages Scroll Stage -->
+      <div class="chat-stage" id="chatStage">
+        <div class="chat-stage-inner" id="chatStageInner">
+          <!-- Welcome Screen (Shown when empty) -->
+          <div class="welcome-screen" id="welcomeScreen">
+            <div class="welcome-icon">
+              <div class="shield-halo"></div>
+              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <circle cx="12" cy="11" r="3"></circle>
+                <line x1="12" y1="14" x2="12" y2="16"></line>
+              </svg>
+            </div>
+            <h1 class="welcome-title">Where would you like to investigate?</h1>
+            <p class="welcome-desc">A1 agent evaluates hypotheses across endpoint security telemetry, processes,
+              network, and file operations.</p>
+
+            <div class="suggestions-grid">
+              <button class="suggestion-card"
+                data-query="Investigate unusual file-staging and outbound network activity on WS-DEV-02 on 2026-09-11. Trace relevant process, archive, scheduled-task, network, and file-deletion activity. Assess whether the evidence supports data exfiltration, note evidence gaps, and avoid treating unrelated authentication activity as proof.">
+                <div class="suggestion-tag">Exfiltration & PowerShell</div>
+                <div class="suggestion-text">"Investigate suspicious PowerShell execution and data exfiltration on
+                  WS-DEV-02"</div>
+              </button>
+
+              <!-- <button class="suggestion-card"
+                data-query="powershell got spawned and some suspicious activity occured check it out in host-001">
+                <div class="suggestion-tag">host-001 Triage</div>
+                <div class="suggestion-text">"powershell got spawned and some suspicious is occured check it out in
+                  host-001"</div>
+              </button> -->
+
+              <button class="suggestion-card"
+                data-query="Investigate suspicious PowerShell activity on WS-OPS-01 on 2026-09-10. Determine whether there is evidence of credential access or movement to another host. Trace relevant process, file, authentication, network, and service activity; distinguish confirmed evidence from gaps and do not assume maliciousness.">
+                <div class="suggestion-tag">Lateral Movement</div>
+                <div class="suggestion-text">"Investigate potential lateral movement and remote command execution via
+                  WinRM"</div>
+              </button>
+
+              <!-- <button class="suggestion-card"
+                data-query="Detect unauthorized process tree anomalies, staging archives (stage.7z), or deleted scripts in temp folder">
+                <div class="suggestion-tag">Staging & Defense Evasion</div>
+                <div class="suggestion-text">"Detect unauthorized process tree anomalies, staging archives, or deleted
+                  scripts in temp folder"</div>
+              </button> -->
+            </div>
+          </div>
+
+          <!-- Messages List Container -->
+          <div class="messages-container" id="messagesContainer"></div>
+        </div>
+      </div>
+
+      <!-- ChatGPT-Style Floating Input Capsule -->
+      <div class="input-region">
+        <div class="input-capsule-wrapper">
+          <div class="input-capsule" id="inputCapsule">
+            <textarea id="promptInput" class="prompt-textarea" placeholder="Message A1 DFIR Investigator..."
+              rows="1"></textarea>
+
+            <div class="capsule-bottom-bar">
+              <div class="capsule-meta">
+                <span class="meta-pill" id="inputMetaModel">gemma4:31b</span>
+                <span class="meta-pill" id="inputMetaDb">agent_endpoint_security.db</span>
+              </div>
+
+              <div class="capsule-actions">
+                <button class="send-action-btn" id="sendBtn" title="Send message (Enter)">
+                  <svg class="send-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                    <polyline points="5 12 12 5 19 12"></polyline>
+                  </svg>
+                  <span class="stop-icon" style="display: none;">■</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="disclaimer-text">
+            A1 DFIR Investigator evaluates endpoint telemetry & hypotheses. Verify security conclusions against your
+            organization's environment.
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>
