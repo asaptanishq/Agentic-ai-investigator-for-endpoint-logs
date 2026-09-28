@@ -2,15 +2,13 @@
 
 This is an autonomous Digital Forensics and Incident Response (DFIR) investigation agent built with **LangGraph**, **LangChain**, and **SQLite**. It ingests raw security alerts (e.g. suspicious process execution, network beaconing, registry persistence), formulates investigation hypotheses, navigates an endpoint security telemetry database using dedicated forensic tools, correlates findings, and synthesizes structured forensic incident reports with verdicts and confidence scores.
 
-| | |
+| Component | Details |
 | --- | --- |
 | **Language** | Python >= 3.12 |
 | **Interfaces** | Terminal CLI, Web UI (FastAPI + SSE), scenario benchmark |
-| **Agent Stack** | LangGraph , LangChain |
+| **Agent Stack** | LangGraph, LangChain |
 | **Telemetry** | Read-only SQLite endpoint security database |
 | **Model Providers** | Ollama (local or Cloud) and OpenAI, selectable at runtime |
-
----
 
 ## Quick Reference & Documentation
 

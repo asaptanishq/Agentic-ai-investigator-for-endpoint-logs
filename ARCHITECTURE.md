@@ -60,13 +60,14 @@ flowchart TD
 
 ### Routing contract (`should_continue`, in `investigator_node.py`)
 
-| Return value | Meaning | Route taken |
-| :--- | :--- | :--- |
-| `"tools"` | The last assistant message issued tool calls | ToolNode |
-| `"investigator"` | No tool calls yet and `MIN_INVESTIGATION_STEPS` (2) not reached, or a repetition nudge was just injected (circuit breaker allows `MAX_REPEAT_NUDGES` = 2) | Self-loop on the investigator |
-| `"correlate"` | Step cap (`MAX_INVESTIGATION_STEPS` = 12) reached, nudge budget exhausted, or evidence deemed sufficient | Evidence-packing node, then correlation |
+| Return value     | Meaning                                                                                                                                                   | Route taken                             |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `"tools"`        | The last assistant message issued tool calls                                                                                                              | ToolNode                                |
+| `"investigator"` | No tool calls yet and `MIN_INVESTIGATION_STEPS` (2) not reached, or a repetition nudge was just injected (circuit breaker allows `MAX_REPEAT_NUDGES` = 2) | Self-loop on the investigator           |
+| `"correlate"`    | Step cap (`MAX_INVESTIGATION_STEPS` = 12) reached, nudge budget exhausted, or evidence deemed sufficient                                                  | Evidence-packing node, then correlation |
 
 ---
+
 ## 2. Directory Tree with File Labels
 
 ```text
@@ -116,10 +117,10 @@ ai-musefix/
 |   |
 |   |-- web/                           [Web Interface]
 |       |-- __init__.py                [Web Package]          Package marker
-|       |-- server.py                  [Web Server]           FastAPI app, SSE stream, DB/LLM switch endpoints
+|       |-- server.py                  [Web Server]            FastAPI app, SSE stream, DB/LLM switch endpoints
 |       |-- static/index.html          [Web UI]               ChatGPT-style frontend
-|       |-- static/app.js              [Web Client]           SSE rendering, DB/model selectors
-|       |-- static/style.css           [Web Style]            Light/dark theme stylesheet
+|       |-- static/app.js              [Web Client]            SSE rendering, DB/model selectors
+|       |-- static/style.css            [Web Style]             Light/dark theme stylesheet
 |
 |-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data]
 |   |-- attack_lateral_movement.db        Telemetry for ATK-A (credential dumping + lateral movement)
@@ -132,94 +133,100 @@ ai-musefix/
 |-- tests/                             [Test Suite]
     |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
-    |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
+    |-- test_tools.py                  [Test: Tools]           Each forensic tool (fixtures discovered at runtime)
+    |-- test_graph.py                  [Test: Graph]            Graph compilation, investigator nudges
+    |-- test_input_reflection.py       [Test: Reflection]      Alert prep, evidence packing, verdict recovery
+    |-- test_report.py                 [Test: Report]           Verdict normalisation, citations, correlation verdicts
+    |-- test_structured_output.py      [Test: LLM Helper]      Retry-once-then-fail contract
+    |-- test_web.py                    [Test: Web]             FastAPI endpoints
+    |-- smoke_test.py                  [Smoke Script]           Standalone end-to-end script (skipped under pytest)
+```
+
+---
+
 ## 3. File Catalog (Functional Labels)
 
 ### Core (`src/a1/`)
 
-| File Path | Functional Label | Primary Usage & Responsibilities |
-| :--- | :--- | :--- |
-| `src/a1/__init__.py` | `[Package Root]` | Package initialisation. |
-| `src/a1/__main__.py` | `[Entrypoint]` | `python -m a1` module execution handler. |
-| `src/a1/config.py` | `[Configuration]` | `discover_default_db()` (agent-bundle first, then `attack_lateral_movement.db`, `attack_data_exfiltration.db`, any other `*.db`); `set_active_database()` shared by CLI, web and benchmark; env parsing (`LLM_PROVIDER`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12). |
-| `src/a1/db.py` | `[Database Layer]` | `EndpointDatabase`: read-only SQLite access (URI `mode=ro`), single-statement `SELECT`/`PRAGMA`/`WITH` guard, `get_schema()`, temp convenience views over `events`. |
-| `src/a1/state.py` | `[Agent State]` | `InvestigationState` TypedDict: messages, hypotheses, `iteration_count`, `repeat_nudges`, `enriched_alert`, `evidence_pack`, verdict fields, `report_fallback_used`, nudge flags. |
-| `src/a1/graph.py` | `[Graph Assembly]` | Seven nodes (`alert_prep`, `triage`, `investigator`, `tools`, `evidence_packing`, `correlate`, `report`); entry at `alert_prep`; conditional edges from `investigator` (`tools` / `investigator` self-loop / `evidence_packing`). |
-| `src/a1/llm.py` | `[Model Factory]` | `get_llm()` (Ollama `ChatOllama` / OpenAI `ChatOpenAI`), `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`. |
-| `src/a1/cli.py` | `[CLI Interface]` | `run_investigation()` streaming display; `main()` flags: positional alert, `--query/-q`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--benchmark`, `--limit`, `--db`, `--web`, `--port`, `--no-browser`. |
-| `src/a1/server.py` | `[Web Entrypoint]` | Argparse wrapper (`--host`, `--port`, `--no-browser`) around `a1.web.server:start`. |
-| `src/a1/benchmark.py` | `[Benchmark Harness]` | `BENCHMARK_CASES` (`ATK-A` on `attack_lateral_movement.db`, `ATK-B` on `attack_data_exfiltration.db`), per-case DB switching, `load_case_labels()` (prefers `case_labels.json`, else derives from shipped `groundtruth_attack_*.json`), fallback runs counted as automatic failures. |
+| File Path             | Functional Label      | Primary Usage & Responsibilities                                                                                                                                                                                                                                                                      |
+| --------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/a1/__init__.py`  | `[Package Root]`      | Package initialisation.                                                                                                                                                                                                                                                                               |
+| `src/a1/__main__.py`  | `[Entrypoint]`        | `python -m a1` module execution handler.                                                                                                                                                                                                                                                              |
+| `src/a1/config.py`    | `[Configuration]`     | `discover_default_db()` (agent-bundle first, then `attack_lateral_movement.db`, `attack_data_exfiltration.db`, any other `*.db`); `set_active_database()` shared by CLI, web and benchmark; env parsing (`LLM_PROVIDER`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12). |
+| `src/a1/db.py`        | `[Database Layer]`    | `EndpointDatabase`: read-only SQLite access (URI `mode=ro`), single-statement `SELECT`/`PRAGMA`/`WITH` guard, `get_schema()`, temp convenience views over `events`.                                                                                                                                   |
+| `src/a1/state.py`     | `[Agent State]`       | `InvestigationState` TypedDict: messages, hypotheses, `iteration_count`, `repeat_nudges`, `enriched_alert`, `evidence_pack`, verdict fields, `report_fallback_used`, nudge flags.                                                                                                                     |
+| `src/a1/graph.py`     | `[Graph Assembly]`    | Seven nodes (`alert_prep`, `triage`, `investigator`, `tools`, `evidence_packing`, `correlate`, `report`); entry at `alert_prep`; conditional edges from `investigator` (`tools` / `investigator` self-loop / `evidence_packing`).                                                                     |
+| `src/a1/llm.py`       | `[Model Factory]`     | `get_llm()` (`ChatOllama` / `ChatOpenAI`), `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`.                                                                                                                                                                       |
+| `src/a1/cli.py`       | `[CLI Interface]`     | `run_investigation()` streaming display; `main()` flags: positional alert, `--web`, `--benchmark`, `--limit`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--db`, `--port`, `--no-browser`.                                                                                        |
+| `src/a1/server.py`    | `[Web Entrypoint]`    | Argparse wrapper (`--host`, `--port`, `--no-browser`) around `a1.web.server:start`.                                                                                                                                                                                                                   |
+| `src/a1/benchmark.py` | `[Benchmark Harness]` | `BENCHMARK_CASES` (`ATK-A` on `attack_lateral_movement.db`, `ATK-B` on `attack_data_exfiltration.db`), per-case DB switching, `load_case_labels()` (prefers `case_labels.json`, else derives from shipped `groundtruth_attack_*.json`), fallback runs counted as automatic failures.                  |
 
 ### Nodes (`src/a1/nodes/`)
 
-| File Path | Functional Label | Primary Usage & Responsibilities |
-| :--- | :--- | :--- |
-| `src/a1/nodes/__init__.py` | `[Node Registry]` | Re-exports all six nodes plus `should_continue`. |
-| `src/a1/nodes/alert_prep_node.py` | `[Input Reflection 1]` | Deterministic alert enrichment: regex entity extraction, hostname-to-ID resolution against `hosts`, UTC time-window parsing clamped to DB bounds. |
-| `src/a1/nodes/triage_node.py` | `[Triage]` | Structured `TriagePlan` (2-4 hypotheses, initial entities, plan) via `TRIAGE_SYSTEM_PROMPT`; normalising validators; retry-once-then-fail. |
-| `src/a1/nodes/investigator_node.py` | `[Investigator]` | `bind_tools(ALL_INVESTIGATION_TOOLS)` loop; cached per-DB schema hint + alert scope in the system prompt; max 2 tool calls per step; repetition guard (nudge, breaker after `MAX_REPEAT_NUDGES` = 2); `MIN_INVESTIGATION_STEPS` = 2 gate; `should_continue()` routing. |
-| `src/a1/nodes/evidence_packing_node.py` | `[Input Reflection 2]` | Merges tool outputs into a compact structured pack (dedup by event ID, hypothesis coverage, hostname/time sanity) for correlation and report. |
-| `src/a1/nodes/correlation_node.py` | `[Correlation]` | Structured `CorrelationAndGapAnalysis` via `CORRELATION_SYSTEM_PROMPT`: confirmed correlations, relationship types, evidence gaps, inconsistencies; retry-once-then-fail. |
-| `src/a1/nodes/report_node.py` | `[Report]` | Structured `IncidentVerdict` (verdict + boundary + confidence + summary + attack chain + ID-cited evidence basis); fallback tracked in `report_fallback_used`; retry-once-then-fail. |
-| `src/a1/nodes/structured_output.py` | `[LLM Helper]` | `invoke_structured_with_retry()`: one retry, then raise `StructuredOutputRetryError` so callers record an explicit fallback. |
-
----
-
-    |-- test_graph.py                  [Test: Graph]          Graph compilation, investigator nudges
-    |-- test_input_reflection.py       [Test: Reflection]     Alert prep, evidence packing, verdict recovery
-    |-- test_report.py                 [Test: Report]         Verdict normalisation, citations, correlation verdicts
-    |-- test_structured_output.py      [Test: LLM Helper]     Retry-once-then-fail contract
-    |-- test_web.py                    [Test: Web]            FastAPI endpoints
-    |-- smoke_test.py                  [Smoke Script]         Standalone end-to-end script (skipped under pytest)
-```
+| File Path                               | Functional Label       | Primary Usage & Responsibilities                                                                                                                                                                                                                                       |
+| --------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/a1/nodes/__init__.py`              | `[Node Registry]`      | Re-exports all six nodes plus `should_continue`.                                                                                                                                                                                                                       |
+| `src/a1/nodes/alert_prep_node.py`       | `[Input Reflection 1]` | Deterministic alert enrichment: regex entity extraction, hostname-to-ID resolution against `hosts`, UTC time-window parsing clamped to DB bounds.                                                                                                                      |
+| `src/a1/nodes/triage_node.py`           | `[Triage]`             | Structured `TriagePlan` (2–4 hypotheses, initial entities, plan) via `TRIAGE_SYSTEM_PROMPT`; normalising validators; retry-once-then-fail.                                                                                                                             |
+| `src/a1/nodes/investigator_node.py`     | `[Investigator]`       | `bind_tools(ALL_INVESTIGATION_TOOLS)` loop; cached per-DB schema hint + alert scope in the system prompt; max 2 tool calls per step; repetition guard (nudge, breaker after `MAX_REPEAT_NUDGES` = 2); `MIN_INVESTIGATION_STEPS` = 2 gate; `should_continue()` routing. |
+| `src/a1/nodes/evidence_packing_node.py` | `[Input Reflection 2]` | Merges tool outputs into a compact structured pack (dedup by event ID, hypothesis coverage, hostname/time sanity) for correlation and report.                                                                                                                          |
+| `src/a1/nodes/correlation_node.py`      | `[Correlation]`        | Structured `CorrelationAndGapAnalysis` via `CORRELATION_SYSTEM_PROMPT`: confirmed correlations, relationship types, evidence gaps, inconsistencies; retry-once-then-fail.                                                                                              |
+| `src/a1/nodes/report_node.py`           | `[Report]`             | Structured `IncidentVerdict` (verdict + boundary + confidence + summary + attack chain + ID-cited evidence); fallback tracked in `report_fallback_used`; retry-once-then-fail.                                                                                         |
+| `src/a1/nodes/structured_output.py`     | `[LLM Helper]`         | `invoke_structured_with_retry()`: one retry, then raise `StructuredOutputRetryError` so callers record an explicit fallback.                                                                                                                                           |
 
 ---
 
 ### Tools (`src/a1/tools/`)
 
-| File Path | Functional Label | Primary Usage & Responsibilities |
-| :--- | :--- | :--- |
-| `src/a1/tools/__init__.py` | `[Tool Registry]` | `ALL_INVESTIGATION_TOOLS`: the 8 LangChain tools consumed by `ToolNode`. |
-| `src/a1/tools/query.py` | `[Tool: Query]` | `get_database_schema()`; `query_telemetry(sql_query, max_rows=25)` (read-only SELECT, `category`/`event_type` `=` rewritten to `LIKE`, large `raw_json` projected to high-value DFIR keys). |
-| `src/a1/tools/process.py` | `[Tool: Process]` | `find_process_relationships(host_id, child/parent names?, time bounds?)`; `trace_process_tree(process_entity_id, direction=both)` (ancestors to depth 5, descendants). |
-| `src/a1/tools/association.py` | `[Tool: Associations]` | `find_process_associations(process_entity_id)`: network, file, registry, correlated events; resolves process names. |
-| `src/a1/tools/timeline.py` | `[Tool: Timeline]` | `search_timeline(start/end_time?, host_id?, category?, user_id?, keyword?, limit=50)`: chronological events with forensic details; category aliases (`auth`, `net`, `proc`, `reg`, `file`). |
-| `src/a1/tools/entity.py` | `[Tool: Context]` | `get_entity_context(entity_type, entity_id)`: host or user row plus event count. |
-| `src/a1/tools/pivot.py` | `[Tool: Pivot]` | `pivot_on_indicator(indicator_type, indicator_value, max_rows=25)`: `sha256` / `destination_ip` / `executable` / `file_name` plus aliases, across hosts. |
+| File Path                     | Functional Label       | Primary Usage & Responsibilities                                                                                                                                                            |
+| ----------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/a1/tools/__init__.py`    | `[Tool Registry]`      | `ALL_INVESTIGATION_TOOLS`: the 8 LangChain tools consumed by `ToolNode`.                                                                                                                    |
+| `src/a1/tools/query.py`       | `[Tool: Query]`        | `get_database_schema()`; `query_telemetry(sql_query, max_rows=25)` (read-only SELECT, `category`/`event_type` `=` rewritten to `LIKE`, large `raw_json` projected to high-value DFIR keys). |
+| `src/a1/tools/process.py`     | `[Tool: Process]`      | `find_process_relationships(host_id, child/parent names?, time bounds?)`; `trace_process_tree(process_entity_id, direction=both)` (ancestors to depth 5, descendants).                      |
+| `src/a1/tools/association.py` | `[Tool: Associations]` | `find_process_associations(process_entity_id)`: network, file, registry, correlated events; resolves process names.                                                                         |
+| `src/a1/tools/timeline.py`    | `[Tool: Timeline]`     | `search_timeline(start/end_time?, host_id?, category?, user_id?, keyword?, limit=50)`: chronological events with forensic details; category aliases (`auth`, `net`, `proc`, `reg`, `file`). |
+| `src/a1/tools/entity.py`      | `[Tool: Context]`      | `get_entity_context(entity_type, entity_id)`: host or user row plus event count.                                                                                                            |
+| `src/a1/tools/pivot.py`       | `[Tool: Pivot]`        | `pivot_on_indicator(indicator_type, indicator_value, max_rows=25)`: `sha256` / `destination_ip` / `executable` / `file_name` plus aliases, across hosts.                                    |
+
+---
 
 ### Prompts (`src/a1/prompts/`)
 
-| File Path | Functional Label | Primary Usage & Responsibilities |
-| :--- | :--- | :--- |
-| `src/a1/prompts/__init__.py` | `[Prompt Registry]` | Re-exports the four system prompts. |
-| `src/a1/prompts/triage.py` | `[Prompt: Triage]` | `TRIAGE_SYSTEM_PROMPT`: hypothesis + priority-artifact instructions. |
+| File Path                        | Functional Label         | Primary Usage & Responsibilities                                                    |
+| -------------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| `src/a1/prompts/__init__.py`     | `[Prompt Registry]`      | Re-exports the four system prompts.                                                 |
+| `src/a1/prompts/triage.py`       | `[Prompt: Triage]`       | `TRIAGE_SYSTEM_PROMPT`: hypothesis + priority-artifact instructions.                |
 | `src/a1/prompts/investigator.py` | `[Prompt: Investigator]` | `INVESTIGATOR_SYSTEM_PROMPT`: schema discipline, tool-use rules, entity-ID formats. |
-| `src/a1/prompts/correlation.py` | `[Prompt: Correlation]` | `CORRELATION_SYSTEM_PROMPT`: confirm/refute each hypothesis, surface gaps. |
-| `src/a1/prompts/report.py` | `[Prompt: Report]` | `REPORT_SYNTHESIZER_SYSTEM_PROMPT`: verdict + ID-cited evidence instructions. |
+| `src/a1/prompts/correlation.py`  | `[Prompt: Correlation]`  | `CORRELATION_SYSTEM_PROMPT`: confirm/refute each hypothesis, surface gaps.          |
+| `src/a1/prompts/report.py`       | `[Prompt: Report]`       | `REPORT_SYNTHESIZER_SYSTEM_PROMPT`: verdict + evidence-citation instructions.       |
+
+---
 
 ### Web (`src/a1/web/`)
 
-| File Path | Functional Label | Primary Usage & Responsibilities |
-| :--- | :--- | :--- |
-| `src/a1/web/__init__.py` | `[Web Package]` | Package marker. |
-| `src/a1/web/server.py` | `[Web Server]` | `create_app()` (FastAPI): `GET /api/status`, `GET /api/models`, `POST /api/models/set`, `GET /api/databases`, `POST /api/databases/set`, `POST /api/investigate` (SSE), `POST /api/cancel`; `get_available_databases()` repo scan; `set_active_database()` delegates to `config`; `start()` via uvicorn. |
-| `src/a1/web/static/index.html` | `[Web UI]` | ChatGPT-style frontend shell. |
-| `src/a1/web/static/app.js` | `[Web Client]` | SSE rendering, database/model selectors, cancel control. |
-| `src/a1/web/static/style.css` | `[Web Style]` | Light/dark theme stylesheet. |
+| File Path                      | Functional Label | Primary Usage & Responsibilities                                                                                                                                                                                                                                                                         |
+| ------------------------------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/a1/web/__init__.py`       | `[Web Package]`  | Package marker.                                                                                                                                                                                                                                                                                          |
+| `src/a1/web/server.py`         | `[Web Server]`   | `create_app()` (FastAPI): `GET /api/status`, `GET /api/models`, `POST /api/models/set`, `GET /api/databases`, `POST /api/databases/set`, `POST /api/investigate` (SSE), `POST /api/cancel`; `get_available_databases()` repo scan; `set_active_database()` delegates to `config`; `start()` via uvicorn. |
+| `src/a1/web/static/index.html` | `[Web UI]`       | ChatGPT-style frontend shell.                                                                                                                                                                                                                                                                            |
+| `src/a1/web/static/app.js`     | `[Web Client]`   | SSE rendering, database/model selectors, cancel control.                                                                                                                                                                                                                                                 |
+| `src/a1/web/static/style.css`  | `[Web Style]`    | Light/dark theme stylesheet.                                                                                                                                                                                                                                                                             |
+
+---
 
 ### Tests (`tests/`)
 
-| File Path | Functional Label | Primary Usage & Responsibilities |
-| :--- | :--- | :--- |
-| `tests/conftest.py` | `[Test Config]` | Points `ENDPOINT_DB_PATH` at a shipped telemetry DB (preferring `attack_lateral_movement.db`); an externally set value always wins. |
-| `tests/test_db.py` | `[Test: DB]` | Read-only guardrails (mutations blocked, multi-statement blocked), schema inspection. |
-| `tests/test_tools.py` | `[Test: Tools]` | Each forensic tool; database-backed tests discover fixtures from the active DB at runtime. |
-| `tests/test_graph.py` | `[Test: Graph]` | Graph compilation, `should_continue` routing, investigator nudges. |
-| `tests/test_input_reflection.py` | `[Test: Reflection]` | Alert-prep enrichment, evidence packing, verdict JSON recovery. |
-| `tests/test_report.py` | `[Test: Report]` | Verdict normalisation, citation/path sanitisation, correlation-driven verdicts. |
-| `tests/test_structured_output.py` | `[Test: LLM Helper]` | Retry-once-then-fail contract. |
-| `tests/test_web.py` | `[Test: Web]` | FastAPI endpoint coverage. |
-| `tests/smoke_test.py` | `[Smoke Script]` | Standalone end-to-end script (tools, routing, graph, benchmark); skips itself under pytest. |
+| File Path                         | Functional Label     | Primary Usage & Responsibilities                                                                                                    |
+| --------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/conftest.py`               | `[Test Config]`      | Points `ENDPOINT_DB_PATH` at a shipped telemetry DB (preferring `attack_lateral_movement.db`); an externally set value always wins. |
+| `tests/test_db.py`                | `[Test: DB]`         | Read-only guardrails (mutations blocked, multi-statement blocked), schema inspection.                                               |
+| `tests/test_tools.py`             | `[Test: Tools]`      | Each forensic tool; database-backed tests discover fixtures from the active DB at runtime.                                          |
+| `tests/test_graph.py`             | `[Test: Graph]`      | Graph compilation, `should_continue` routing, investigator nudges.                                                                  |
+| `tests/test_input_reflection.py`  | `[Test: Reflection]` | Alert-prep enrichment, evidence packing, verdict JSON recovery.                                                                     |
+| `tests/test_report.py`            | `[Test: Report]`     | Verdict normalisation, citation/path sanitisation, correlation-driven verdicts.                                                     |
+| `tests/test_structured_output.py` | `[Test: LLM Helper]` | Retry-once-then-fail contract.                                                                                                      |
+| `tests/test_web.py`               | `[Test: Web]`        | FastAPI endpoint coverage.                                                                                                          |
+| `tests/smoke_test.py`             | `[Smoke Script]`     | Standalone end-to-end script (tools, routing, graph, benchmark); skips itself under pytest.                                         |
 
 ---
 
@@ -244,8 +251,8 @@ ai-musefix/
              |          - trace_process_tree      |
              |          - find_process_associations
              |          - pivot_on_indicator      |
-             |          - search_timeline         |
-             |          - get_entity_context      |
+             |          - search_timeline           |
+             |          - get_entity_context       |
              |                                    |
              v                                    |
      (Loop Evaluation: should_continue)           |
@@ -270,12 +277,12 @@ ai-musefix/
 
 ## 5. Guardrails & Determinism
 
-- **Read-only telemetry.** `EndpointDatabase` opens SQLite with URI `mode=ro`; `execute_query()` permits only single `SELECT`/`PRAGMA`/`WITH` statements (mutations and `;`-chained statements raise `DatabaseAccessError`). In-memory temp views project timestamps/hosts onto sub-tables without touching disk.
-- **Minimum-evidence gate.** The investigator cannot conclude with zero tool calls before `MIN_INVESTIGATION_STEPS` (2) passes; `should_continue` self-loops in that case.
-- **Repetition circuit breaker.** Identical tool-call repeats are detected (order-insensitive arg key) and replaced with a `[SYSTEM-NOTE: repeated tool call]` nudge; after `MAX_REPEAT_NUDGES` (2) the run is forced to correlation.
-- **Schema discipline.** The real per-database schema is injected into the investigator system prompt (cached per DB), and `category`/`event_type` `=` filters are auto-rewritten to `LIKE` (the `events` table stores categories as JSON arrays).
-- **Structured-output discipline.** Triage, correlation and report use `invoke_structured_with_retry()` (one retry, then `StructuredOutputRetryError`); fallbacks are explicit and flagged (`report_fallback_used`), and the benchmark scores fallback runs as automatic failures.
-- **Context hygiene.** Older oversized tool outputs are trimmed in-history; at most 2 tool calls are issued per investigator step.
+* **Read-only telemetry.** `EndpointDatabase` opens SQLite with URI `mode=ro`; `execute_query()` permits only single `SELECT`/`PRAGMA`/`WITH` statements (mutations and `;`-chained statements raise `DatabaseAccessError`). In-memory temp views project timestamps/hosts onto sub-tables without touching disk.
+* **Minimum-evidence gate.** The investigator cannot conclude with zero tool calls before `MIN_INVESTIGATION_STEPS` (2) passes; `should_continue` self-loops in that case.
+* **Repetition circuit breaker.** Identical tool-call repeats are detected (order-insensitive arg key) and replaced with a `[SYSTEM-NOTE: repeated tool call]` nudge; after `MAX_REPEAT_NUDGES` (2) the run is forced to correlation.
+* **Schema discipline.** The real per-database schema is injected into the investigator system prompt (cached per DB), and `category`/`event_type` `=` filters are auto-rewritten to `LIKE` (the `events` table stores categories as JSON arrays).
+* **Structured-output discipline.** Triage, correlation and report use `invoke_structured_with_retry()` (one retry, then `StructuredOutputRetryError`); fallbacks are explicit and flagged (`report_fallback_used`), and the benchmark scores fallback runs as automatic failures.
+* **Context hygiene.** Older oversized tool outputs are trimmed in-history; at most 2 tool calls are issued per investigator step.
 
 ---
 
@@ -283,32 +290,34 @@ ai-musefix/
 
 ### Environment (`config.py` + `.env.example`)
 
-| Variable | Default | Purpose |
-| :--- | :--- | :--- |
-| `LLM_PROVIDER` | `ollama` | `ollama` or `openai`. |
-| `OLLAMA_MODEL_NAME` | `llama3.1` | Ollama model tag. |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL (a trailing `/api` is stripped). |
-| `OLLAMA_NUM_CTX` | `32768` | Ollama context window. |
-| `OLLAMA_API_KEY` | *(empty)* | Bearer token for Ollama Cloud. |
-| `OPENAI_MODEL_NAME` | `gpt-4o-mini` | OpenAI model. |
-| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | *(empty)* | OpenAI credentials / custom endpoint. |
-| `ENDPOINT_DB_PATH` | First existing DB: `agent_bundle/agent_endpoint_security.db` -> `attack_lateral_movement.db` -> `attack_data_exfiltration.db` | Telemetry database path. |
-| `MAX_INVESTIGATION_STEPS` | `12` | Investigator loop cap before forced correlation. |
+| Variable                             | Default                                                                                                                     | Purpose                                          |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `LLM_PROVIDER`                       | `ollama`                                                                                                                    | `ollama` or `openai`.                            |
+| `OLLAMA_MODEL_NAME`                  | `llama3.1`                                                                                                                  | Ollama model tag.                                |
+| `OLLAMA_BASE_URL`                    | `http://localhost:11434`                                                                                                    | Base URL (a trailing `/api` is stripped).        |
+| `OLLAMA_NUM_CTX`                     | `32768`                                                                                                                     | Ollama context window.                           |
+| `OLLAMA_API_KEY`                     | *(empty)*                                                                                                                   | Bearer token for Ollama Cloud.                   |
+| `OPENAI_MODEL_NAME`                  | `gpt-4o-mini`                                                                                                               | OpenAI model.                                    |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | *(empty)*                                                                                                                   | OpenAI credentials / custom endpoint.            |
+| `ENDPOINT_DB_PATH`                   | First existing DB: `agent_bundle/agent_endpoint_security.db` → `attack_lateral_movement.db` → `attack_data_exfiltration.db` | Telemetry database path.                         |
+| `MAX_INVESTIGATION_STEPS`            | `12`                                                                                                                        | Investigator loop cap before forced correlation. |
 
 ### CLI (`cli.py`)
 
-| Flag | Purpose |
-| :--- | :--- |
-| positional `alert` | Alert text (an `investigate` prefix is stripped if present). |
-| `--query/-q` | Alternative flag for the investigation prompt. |
-| `--provider/-p`, `--model/-m` | One-shot LLM selection (`ollama` / `openai`). |
-| `--select-llm` | Interactive LLM selection. |
-| `--verbose/-v` | Show agent reasoning and tool I/O. |
-| `--benchmark` | Run the labeled-scenario benchmark. |
-| `--limit` | Benchmark case limit (default `5`). |
-| `--db` | Path to a custom SQLite telemetry database. |
-| `--web` | Launch the web interface (also available as the `web` subcommand). |
-| `--port`, `--no-browser` | Web server port and browser auto-open behaviour. |
+| Flag                          | Purpose                                                            |
+| ----------------------------- | ------------------------------------------------------------------ |
+| positional `alert`            | Alert text (an `investigate` prefix is stripped if present).       |
+| `--query/-q`                  | Alternative flag for the investigation prompt.                     |
+| `--provider/-p`, `--model/-m` | One-shot LLM selection (`ollama` / `openai`).                      |
+| `--select-llm`                | Interactive LLM selection.                                         |
+| `--verbose/-v`                | Show agent reasoning and tool I/O.                                 |
+| `--benchmark`                 | Run the labeled-scenario benchmark.                                |
+| `--limit`                     | Benchmark case limit (default `5`).                                |
+| `--db`                        | Path to a custom SQLite telemetry database.                        |
+| `--web`                       | Launch the web interface (also available as the `web` subcommand). |
+| `--port`, `--no-browser`      | Web server port and browser auto-open behaviour.                   |
+
+### CLI Examples
 
 ```bash
 # Single investigation (DB auto-discovered; override with --db)
@@ -331,18 +340,20 @@ a1-web --port 8000
 
 ### Web API (`web/server.py`)
 
-| Endpoint | Purpose |
-| :--- | :--- |
-| `GET /api/status` | Readiness, active LLM, current DB. |
-| `GET /api/models` | Model catalog (live Ollama tags + OpenAI default). |
-| `POST /api/models/set` | Switch active LLM (`provider`, `model`). |
-| `GET /api/databases` | Repo `.db` scan with sizes and the active marker. |
+| Endpoint                  | Purpose                                                |
+| ------------------------- | ------------------------------------------------------ |
+| `GET /api/status`         | Readiness, active LLM, current DB.                     |
+| `GET /api/models`         | Model catalog (live Ollama tags + OpenAI default).     |
+| `POST /api/models/set`    | Switch active LLM (`provider`, `model`).               |
+| `GET /api/databases`      | Repo `.db` scan with sizes and the active marker.      |
 | `POST /api/databases/set` | Switch active telemetry database (resets tool caches). |
-| `POST /api/investigate` | Run an investigation, streamed as SSE. |
-| `POST /api/cancel` | Cancel in-flight investigations. |
-| `GET /` | ChatGPT-style static UI. |
+| `POST /api/investigate`   | Run an investigation, streamed as SSE.                 |
+| `POST /api/cancel`        | Cancel in-flight investigations.                       |
+| `GET /`                   | ChatGPT-style static UI.                               |
 
-SSE event types: `start`, `alert_prep`, `triage`, `loop`, `evidence_pack`, `thought`, `reasoning`, `tool_call`, `tool_result`, `complete`, `cancelled`, `error`.
+**SSE event types:**
+
+`start`, `alert_prep`, `triage`, `loop`, `evidence_pack`, `thought`, `reasoning`, `tool_call`, `tool_result`, `complete`, `cancelled`, `error`.
 
 ---
 
@@ -350,12 +361,14 @@ SSE event types: `start`, `alert_prep`, `triage`, `loop`, `evidence_pack`, `thou
 
 `benchmark.py` scores two shipped scenarios, switching databases per case via `config.set_active_database()` (a `--db` pin overrides the per-case DB):
 
-| Case | Database | Scenario |
-| :--- | :--- | :--- |
-| `ATK-A` | `attack_lateral_movement.db` | Credential dumping (LSASS access + Temp dump file) followed by SMB connections, NTLM logon failures then success, and a new service install. |
-| `ATK-B` | `attack_data_exfiltration.db` | Spreadsheet staging into a password-protected archive, logon scheduled-task persistence, repeated outbound HTTPS, archive deletion. |
+| Case    | Database                      | Scenario                                                                                                                                     |
+| ------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ATK-A` | `attack_lateral_movement.db`  | Credential dumping (LSASS access + Temp dump file) followed by SMB connections, NTLM logon failures then success, and a new service install. |
+| `ATK-B` | `attack_data_exfiltration.db` | Spreadsheet staging into a password-protected archive, logon scheduled-task persistence, repeated outbound HTTPS, archive deletion.          |
 
-Labels come from `case_labels.json` when the original bundle layout is present, otherwise from the shipped `groundtruth_attack_*.json` files. Scoring caveat (also noted in code): both shipped scenarios expect `malicious`, so the benchmark measures attack-chain discovery (and whether a structured-output fallback fired), not benign-vs-malicious discrimination.
+Labels come from `case_labels.json` when the original bundle layout is present, otherwise from the shipped `groundtruth_attack_*.json` files.
+
+**Scoring caveat:** Both shipped scenarios expect `malicious`, so the benchmark measures attack-chain discovery (and whether a structured-output fallback fired), not benign-vs-malicious discrimination.
 
 ---
 
@@ -363,16 +376,29 @@ Labels come from `case_labels.json` when the original bundle layout is present, 
 
 ### Agent-visible schema
 
-Telemetry databases expose `hosts`, `users`, `events`, `processes`, `network_connections`, `files`, `registry_events` plus the `agent_events` view. Full field semantics live in `endpoint_security_dataset_expanded_corrected/schema.md` (which carries a repo-state note: evaluator-only objects from the original five-scenario layout are absent here; per-scenario truth lives in the two `groundtruth_attack_*.json` files).
+Telemetry databases expose:
 
-| Path | Role in this repo | Status |
-| :--- | :--- | :--- |
-| `endpoint_security_dataset_expanded_corrected/attack_lateral_movement.db` | Telemetry for `ATK-A` | Ships with the repo |
-| `endpoint_security_dataset_expanded_corrected/attack_data_exfiltration.db` | Telemetry for `ATK-B` | Ships with the repo |
-| `endpoint_security_dataset_expanded_corrected/groundtruth_attack_A_lateral_movement.json` | Evaluator labels for `ATK-A` | Ships with the repo |
-| `endpoint_security_dataset_expanded_corrected/groundtruth_attack_B_data_exfiltration.json` | Evaluator labels for `ATK-B` | Ships with the repo |
-| `endpoint_security_dataset_expanded_corrected/endpoint_security.db` | Original five-scenario bundle layout only | Evaluator-side full database unavailable |
-| `endpoint_security_dataset_expanded_corrected/case_labels.json` | Original five-scenario bundle layout only | Not needed: `benchmark.py` derives labels from the shipped `groundtruth_attack_*.json` files when it is absent (the smoke test still synthesises a temporary labels file for its benchmark check) |
+* `hosts`
+* `users`
+* `events`
+* `processes`
+* `network_connections`
+* `files`
+* `registry_events`
+* `agent_events` view
+
+Full field semantics live in `endpoint_security_dataset_expanded_corrected/schema.md` (which carries a repo-state note: evaluator-only objects from the original five-scenario layout are absent here; per-scenario truth lives in the two `groundtruth_attack_*.json` files).
+
+### Dataset Files
+
+| Path                                                                                       | Role in this repo                         | Status                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint_security_dataset_expanded_corrected/attack_lateral_movement.db`                  | Telemetry for `ATK-A`                     | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/attack_data_exfiltration.db`                 | Telemetry for `ATK-B`                     | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/groundtruth_attack_A_lateral_movement.json`  | Evaluator labels for `ATK-A`              | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/groundtruth_attack_B_data_exfiltration.json` | Evaluator labels for `ATK-B`              | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/endpoint_security.db`                        | Original five-scenario bundle layout only | Evaluator-side full database unavailable                                                                                                                                                          |
+| `endpoint_security_dataset_expanded_corrected/case_labels.json`                            | Original five-scenario bundle layout only | Not needed: `benchmark.py` derives labels from the shipped `groundtruth_attack_*.json` files when it is absent (the smoke test still synthesises a temporary labels file for its benchmark check) |
 
 The dataset guides (`endpoint_security_dataset_expanded_corrected/README.md`, `schema.md`) open with a dated repository-state note mapping the original five-scenario layout to the two shipped attack databases.
 
@@ -384,7 +410,10 @@ python tests/smoke_test.py    # 17 checks, standalone
 ```
 
 `tests/conftest.py` prefers `attack_lateral_movement.db` unless `ENDPOINT_DB_PATH` is set. Database-backed tests discover fixtures from the active database at runtime rather than hard-coding dataset identifiers, so the suite passes against either shipped attack database.
+<<<<<<< HEAD
 
 ---
 
 
+=======
+>>>>>>> 9788269 (changed readme and architechture .md files)
