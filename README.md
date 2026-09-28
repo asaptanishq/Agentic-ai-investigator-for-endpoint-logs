@@ -1,22 +1,22 @@
-# `a1`: Autonomous DFIR Investigation Agent
+# Investigation Agent Using Agentic Ai 
 
-`a1` is an autonomous Digital Forensics and Incident Response (DFIR) investigation agent built with **LangGraph**, **LangChain**, and **SQLite**. It ingests raw security alerts (e.g. suspicious process execution, network beaconing, registry persistence), formulates investigation hypotheses, navigates an endpoint security telemetry database using dedicated forensic tools, correlates findings, and synthesizes structured forensic incident reports with verdicts and confidence scores.
+This is an autonomous Digital Forensics and Incident Response (DFIR) investigation agent built with **LangGraph**, **LangChain**, and **SQLite**. It ingests raw security alerts (e.g. suspicious process execution, network beaconing, registry persistence), formulates investigation hypotheses, navigates an endpoint security telemetry database using dedicated forensic tools, correlates findings, and synthesizes structured forensic incident reports with verdicts and confidence scores.
 
 | | |
-| :--- | :--- |
+| --- | --- |
 | **Language** | Python >= 3.12 |
-| **Interfaces** | Terminal CLI, ChatGPT-style web UI (FastAPI + SSE), scenario benchmark |
-| **Agent Stack** | LangGraph `StateGraph`, LangChain chat models with `bind_tools` |
-| **Telemetry** | Read-only SQLite endpoint security database (URI `mode=ro`) |
+| **Interfaces** | Terminal CLI, Web UI (FastAPI + SSE), scenario benchmark |
+| **Agent Stack** | LangGraph , LangChain |
+| **Telemetry** | Read-only SQLite endpoint security database |
 | **Model Providers** | Ollama (local or Cloud) and OpenAI, selectable at runtime |
 
 ---
 
 ## Quick Reference & Documentation
 
-- 👉 **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete architectural diagrams, routing contracts, file catalog, and internal guardrails.
-- 📊 **[endpoint_security_dataset_expanded_corrected/README.md](endpoint_security_dataset_expanded_corrected/README.md)** — Dataset provenance and agent/evaluator surface split.
-- 📐 **[endpoint_security_dataset_expanded_corrected/schema.md](endpoint_security_dataset_expanded_corrected/schema.md)** — Telemetry database schema specification.
+-  **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete architectural diagrams, routing contracts, file catalog, and internal guardrails.
+-  **[endpoint_security_dataset_expanded_corrected/README.md](endpoint_security_dataset_expanded_corrected/README.md)** — Dataset provenance and agent/evaluator surface split.
+-  **[endpoint_security_dataset_expanded_corrected/schema.md](endpoint_security_dataset_expanded_corrected/schema.md)** — Telemetry database schema specification.
 
 ---
 
@@ -79,20 +79,9 @@ ai-musefix/
 
 Requires **Python >= 3.12**.
 
-Using **`uv`** (recommended):
+Using **`uv`** :
 ```bash
 uv sync
-```
-
-Or using standard **`pip`**:
-```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
-
-pip install -e .
 ```
 
 ### 2. Configure Environment
@@ -119,12 +108,12 @@ The repository includes two forensic attack telemetry databases with evaluator g
 
 ## Usage Guide
 
-### 1. Web Interface (ChatGPT-Style UI)
+### 1. Web Interface 
 
 Launch the interactive web UI with real-time SSE event streaming, database switching, and model selection:
 
 ```bash
-a1-web
+a1 web
 # or:
 python -m a1.server
 # or:
