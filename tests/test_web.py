@@ -43,3 +43,27 @@ def test_api_databases(client):
     assert res.status_code == 200
     data = res.json()
     assert len(data["databases"]) > 0
+
+
+def test_api_set_database_valid(client):
+    dbs = client.get("/api/databases").json()["databases"]
+    target = dbs[0]["path"]
+    res = client.post("/api/databases/set", json={"db_path": target})
+    assert res.status_code == 200
+    assert res.json()["status"] == "updated"
+
+
+def test_api_set_database_rejects_traversal(client):
+    res = client.post("/api/databases/set", json={"db_path": "../../windows/win.ini"})
+    assert res.status_code == 400
+
+
+def test_api_set_database_rejects_non_db(client):
+    res = client.post("/api/databases/set", json={"db_path": "README.md"})
+    assert res.status_code == 400
+
+
+def test_api_set_database_not_found(client):
+    res = client.post("/api/databases/set", json={"db_path": "endpoint_security_dataset_expanded_corrected/non_existent.db"})
+    assert res.status_code == 404
+

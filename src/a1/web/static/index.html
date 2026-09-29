@@ -40,9 +40,9 @@
 
       <!-- Dataset Selector in Sidebar -->
       <div class="sidebar-section">
-        <label class="section-label">Active Telemetry Database</label>
+        <label class="section-label" for="dbSelect">Active Telemetry Database</label>
         <div class="db-select-wrapper">
-          <select id="dbSelect" class="soft-select" title="Switch Telemetry SQLite DB">
+          <select id="dbSelect" class="soft-select" title="Switch Telemetry SQLite DB" aria-label="Active Telemetry Database">
             <option value="">Loading databases...</option>
           </select>
         </div>
@@ -51,7 +51,7 @@
       <!-- Investigation History -->
       <div class="sidebar-section history-section">
         <div class="history-header">
-          <label class="section-label">Recent Investigations</label>
+          <span class="section-label">Recent Investigations</span>
           <button class="clear-history-btn" id="clearHistoryBtn" title="Clear all saved history">Clear</button>
         </div>
         <div class="history-list" id="historyList">
@@ -133,7 +133,7 @@
                   <circle cx="11" cy="11" r="8"></circle>
                   <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
-                <input type="text" id="modelSearchInput" placeholder="Filter models..." />
+                <input type="text" id="modelSearchInput" placeholder="Filter models..." aria-label="Filter models" />
               </div>
 
               <!-- Model List -->
@@ -144,7 +144,7 @@
               <!-- Custom model input footer -->
               <div class="model-menu-footer">
                 <div class="custom-model-form">
-                  <input type="text" id="customModelInput" placeholder="Or enter custom model name..." />
+                  <input type="text" id="customModelInput" placeholder="Or enter custom model name..." aria-label="Custom model name" />
                   <button class="apply-custom-btn" id="applyCustomModelBtn" type="button">Apply</button>
                 </div>
               </div>
@@ -242,7 +242,7 @@
         <div class="input-capsule-wrapper">
           <div class="input-capsule" id="inputCapsule">
             <textarea id="promptInput" class="prompt-textarea" placeholder="Message A1 DFIR Investigator..."
-              rows="1"></textarea>
+              aria-label="Message A1 DFIR Investigator" rows="1"></textarea>
 
             <div class="capsule-bottom-bar">
               <div class="capsule-meta">
@@ -298,7 +298,8 @@
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
         <input type="text" id="globalDialogSearchInput" class="table-search-input"
-          placeholder="Search across all columns (host, action, process, summary)..." />
+          placeholder="Search across all columns (host, action, process, summary)..."
+          aria-label="Search telemetry events" />
       </div>
       <div class="table-toolbar-actions">
         <span class="table-count-badge" id="globalDialogCountBadge"></span>

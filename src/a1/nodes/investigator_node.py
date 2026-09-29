@@ -196,7 +196,7 @@ def _missing_requested_archive_files(state):
     alert_text = str(state.get("alert_context", "")).casefold()
     archive_names = {
         name.casefold()
-        for name in re.findall(r"[\w.-]+\.(?:7z|zip|rar|tar|gz|cab)\b", alert_text)
+        for name in re.findall(r"\b\w+(?:[.-]\w+)*\.(?:7z|zip|rar|tar|gz|cab)\b", alert_text)
     }
     if not archive_names:
         return []

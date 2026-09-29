@@ -70,7 +70,14 @@ def set_active_database(db_path_str: str) -> str:
     """
     import a1.config as _cfg
 
-    return str(_cfg.set_active_database(db_path_str))
+    candidate = Path(db_path_str).resolve()
+    base_dir = PROJECT_ROOT.resolve()
+    if not candidate.is_relative_to(base_dir):
+        raise ValueError("Invalid database path: access outside permitted directory is prohibited")
+    if candidate.suffix.lower() != ".db":
+        raise ValueError("Invalid database file format: expected a .db file")
+
+    return str(_cfg.set_active_database(candidate, allow_external=False))
 
 def fetch_live_ollama_models() -> List[str]:
     """Query Ollama server for available tags."""
@@ -185,6 +192,8 @@ def create_app() -> FastAPI:
             return {"status": "updated", "active_db": active_path}
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/events")
     async def get_events(limit: int = 100):
@@ -222,22 +231,22 @@ def create_app() -> FastAPI:
         cleaned = raw_text
 
         # Match Gemma 4 / ChatML format: <|channel>thought ... <channel|>
-        gemma_matches = list(re.finditer(r"<\|?channel>thought\s*(.*?)\s*<channel\|>", cleaned, re.DOTALL | re.IGNORECASE))
+        gemma_matches = list(re.finditer(r"<\|?channel>thought(.*?)<channel\|>", cleaned, re.DOTALL | re.IGNORECASE))
         for gm in gemma_matches:
             t = gm.group(1).strip()
             if t:
                 thought_parts.append(t)
         if gemma_matches:
-            cleaned = re.sub(r"<\|?channel>thought\s*.*?\s*<channel\|>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(r"<\|?channel>thought.*?<channel\|>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
 
         # Match DeepSeek / standard <think> ... </think>
-        think_matches = list(re.finditer(r"<think>\s*(.*?)\s*</think>", cleaned, re.DOTALL | re.IGNORECASE))
+        think_matches = list(re.finditer(r"<think>(.*?)</think>", cleaned, re.DOTALL | re.IGNORECASE))
         for tm in think_matches:
             t = tm.group(1).strip()
             if t:
                 thought_parts.append(t)
         if think_matches:
-            cleaned = re.sub(r"<think>\s*.*?\s*</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
 
         # Clean leftover channel / think control tokens
         cleaned = re.sub(r"<\|?channel[^>]*\|?>", "", cleaned, flags=re.IGNORECASE)

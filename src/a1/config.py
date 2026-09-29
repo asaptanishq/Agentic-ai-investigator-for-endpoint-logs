@@ -56,15 +56,23 @@ def get_db_path() -> Path:
 DB_PATH = get_db_path()
 
 
-def set_active_database(db_path) -> Path:
+def set_active_database(db_path, allow_external: bool = False) -> Path:
     """Switch the active telemetry database and reset every tool singleton.
 
-    Raises FileNotFoundError when the requested database does not exist, so
-    callers (CLI, web API, benchmark) can report the problem immediately.
+    Raises FileNotFoundError when the requested database does not exist, or
+    ValueError if the path is invalid or outside permitted directories.
     """
     resolved = Path(db_path).resolve()
-    if not resolved.exists():
-        raise FileNotFoundError(f"Database file not found: {resolved}")
+    if not allow_external:
+        base_dir = BASE_DIR.resolve()
+        if not resolved.is_relative_to(base_dir):
+            raise ValueError(f"Invalid database path: access outside allowed directory is prohibited")
+
+    if resolved.suffix.lower() != ".db":
+        raise ValueError(f"Invalid database file format: expected a .db file")
+
+    if not resolved.is_file():
+        raise FileNotFoundError(f"Database file not found: {resolved.name}")
 
     os.environ["ENDPOINT_DB_PATH"] = str(resolved)
     global DB_PATH
