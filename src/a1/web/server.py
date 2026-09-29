@@ -375,6 +375,7 @@ def create_app() -> FastAPI:
                     alert_prep_sent = False
                     triage_sent = False
                     evidence_pack_sent = False
+                    correlation_sent = False
                     processed_msg_count = 0
                     last_iteration = 0
                     step_num = 0
@@ -473,6 +474,18 @@ def create_app() -> FastAPI:
                                 }
                             )
                             evidence_pack_sent = True
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait,
+                                {"type": "reasoning", "text": "Forensic evidence gathered. Correlating multi-source telemetry and assessing benign hypotheses..."}
+                            )
+
+                        # 4b. Correlation progress
+                        if (event.get("confirmed_correlations") is not None or event.get("evidence_gaps") is not None) and not correlation_sent:
+                            correlation_sent = True
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait,
+                                {"type": "reasoning", "text": "Correlation analysis complete. Synthesizing DFIR incident investigation report and assigning final verdict..."}
+                            )
 
                         # 5. Messages stream (Thoughts & Tool Calls)
                         messages = event.get("messages", [])
@@ -538,9 +551,17 @@ def create_app() -> FastAPI:
                     # Finished graph execution - synthesize complete payload
                     if final_state and not cancel_event.is_set():
                         report_content = ""
-                        report_msgs = [m for m in final_state.get("messages", []) if getattr(m, "type", "") == "human"]
-                        if report_msgs:
-                            report_content = report_msgs[-1].content
+                        # Search backwards for the formatted markdown report
+                        for m in reversed(final_state.get("messages", [])):
+                            if getattr(m, "type", "") == "human":
+                                c = getattr(m, "content", "")
+                                if "DFIR Incident Investigation Report" in c or "## Verdict:" in c:
+                                    report_content = c
+                                    break
+                        if not report_content:
+                            report_msgs = [m for m in final_state.get("messages", []) if getattr(m, "type", "") == "human"]
+                            if report_msgs:
+                                report_content = report_msgs[-1].content
 
                         loop.call_soon_threadsafe(
                             queue.put_nowait,
@@ -572,14 +593,17 @@ def create_app() -> FastAPI:
 
             try:
                 while True:
-                    if await request.is_disconnected():
-                        cancel_event.set()
-                        break
-
-                    item = await queue.get()
-                    if item is None:
-                        break
-                    yield f"data: {json.dumps(item)}\n\n"
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=2.0)
+                        if item is None:
+                            break
+                        yield f"data: {json.dumps(item)}\n\n"
+                    except asyncio.TimeoutError:
+                        if await request.is_disconnected():
+                            cancel_event.set()
+                            break
+                        # Yield SSE comment keepalive to prevent browser or proxy disconnection
+                        yield ": keep-alive\n\n"
             finally:
                 _active_investigations.pop(session_id, None)
 

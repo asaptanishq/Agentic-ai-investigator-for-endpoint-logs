@@ -15,15 +15,36 @@ def _get_db() -> EndpointDatabase:
 
 
 
+def _get_field_val(d: dict, *paths: str) -> Any:
+    for path in paths:
+        if path in d and d[path] is not None:
+            return d[path]
+        cur = d
+        parts = path.split(".")
+        found = True
+        for part in parts:
+            if isinstance(cur, dict) and part in cur:
+                cur = cur[part]
+            else:
+                found = False
+                break
+        if found and cur is not None:
+            return cur
+    return None
+
+
 def _extract_event_details(raw: Optional[str]) -> dict:
     if not raw:
         return {}
     try:
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}
         details = {}
         for k in ("process.name", "process.command_line", "process.executable", "process.pid"):
-            if k in data:
-                details[k.split(".")[-1]] = data[k]
+            val = _get_field_val(data, k)
+            if val is not None:
+                details[k.split(".")[-1]] = val
         for source, target in (
             ("process.parent.entity_id", "parent_process_entity_id"),
             ("process.parent.name", "parent_process_name"),
@@ -33,23 +54,29 @@ def _extract_event_details(raw: Optional[str]) -> dict:
             ("process.target.pid", "target_process_pid"),
             ("user.domain", "user_domain"),
         ):
-            if source in data:
-                details[target] = data[source]
+            val = _get_field_val(data, source)
+            if val is not None:
+                details[target] = val
         for k in ("destination.ip", "destination.port", "destination.domain", "network.direction"):
-            if k in data:
-                details[k.replace(".", "_")] = data[k]
+            val = _get_field_val(data, k)
+            if val is not None:
+                details[k.replace(".", "_")] = val
         for k in ("file.name", "file.path", "file.hash.sha256", "file.size", "file.extension", "file.type"):
-            if k in data:
-                details[k.replace(".", "_")] = data[k]
+            val = _get_field_val(data, k)
+            if val is not None:
+                details[k.replace(".", "_")] = val
         for k in ("registry.key", "registry.path", "registry.value"):
-            if k in data:
-                details[k.replace(".", "_")] = data[k]
+            val = _get_field_val(data, k)
+            if val is not None:
+                details[k.replace(".", "_")] = val
         for k in ("authentication.package", "logon.type", "user.name", "source.ip"):
-            if k in data:
-                details[k.replace(".", "_")] = data[k]
+            val = _get_field_val(data, k)
+            if val is not None:
+                details[k.replace(".", "_")] = val
         return details
     except Exception:
         return {}
+
 
 
 @tool

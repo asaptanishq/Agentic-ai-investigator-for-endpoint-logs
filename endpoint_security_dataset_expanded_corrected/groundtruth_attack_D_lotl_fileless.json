@@ -1,0 +1,41 @@
+{
+  "dataset": "attack_lotl_fileless.db",
+  "scenario": "Fileless In-Memory C2 + Living-off-the-Land (LotL) Execution, Persistence, & Lateral Invocation",
+  "summary": "On 2026-09-22, user finance_lead on WS-EXEC-02 was compromised via an mshta.exe LOLBin execution invoking hidden PowerShell with an encoded in-memory download cradle (IEX Net.WebClient). The PowerShell session established fileless in-memory C2 to 198.51.100.77:8443 (no binary dropped to disk). The attacker then executed discovery LOLBins (wmic.exe, net.exe, nltest.exe), staged secondary payloads via certutil.exe (-urlcache and -decode), established persistence via schtasks.exe and a Run registry key via reg.exe, and performed remote WMI execution against Domain Controller DC-AUTH-01 (10.20.1.10).",
+  "kill_chain": [
+    "08:14:10 mshta.exe executed via VBScript protocol handler on WS-EXEC-02 (parent: explorer.exe)",
+    "08:14:15 hidden powershell.exe (-NoP -NonI -W Hidden -Enc) spawned by mshta.exe",
+    "08:14:18 fileless in-memory C2 connection to 198.51.100.77:8443 by powershell.exe",
+    "08:16:02-08:17:30 discovery LOLBins executed: wmic.exe (process list), net.exe (Domain Admins), nltest.exe (domain controllers)",
+    "08:22:10 certutil.exe LOLBin download of task.b64 from 198.51.100.77:8080 and decode into update.ps1",
+    "08:25:00 schtasks.exe created hourly SYSTEM task MicrosoftEdgeUpdateTaskMachineUA running hidden encoded PowerShell",
+    "08:26:30 reg.exe set Run key OneDriveSync pointing to mshta.exe persistence cradle",
+    "08:30:10 wmic.exe /node:10.20.1.10 invoked remote process creation against DC-AUTH-01",
+    "08:30:45 DC-AUTH-01 WmiPrvSE.exe spawned powershell.exe connecting out to 198.51.100.77:8443"
+  ],
+  "key_iocs": [
+    "mshta.exe vbscript:Close(Execute(...))",
+    "powershell.exe -NoP -NonI -W Hidden -Enc SQBFAFgA...",
+    "198.51.100.77:8443 (C2)",
+    "198.51.100.77:8080 (Staging)",
+    "certutil.exe -urlcache -split -f ... and -decode",
+    "schtasks.exe /create /tn MicrosoftEdgeUpdateTaskMachineUA ... /ru SYSTEM",
+    "HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run\\\\OneDriveSync",
+    "wmic.exe /node:10.20.1.10 process call create"
+  ],
+  "expected_verdict": "malicious",
+  "verdict_boundary": "confirmed_malicious",
+  "evidence_basis": [
+    "process_parent_child (explorer.exe -> mshta.exe -> powershell.exe)",
+    "fileless_memory_execution (encoded PowerShell download cradle, no payload executable on disk)",
+    "lolbin_discovery (wmic, net, nltest)",
+    "lolbin_download_and_decode (certutil.exe)",
+    "persistence_scheduled_task (schtasks.exe hourly SYSTEM task)",
+    "persistence_registry_run_key (reg.exe OneDriveSync)",
+    "lateral_movement_wmi (wmic /node:10.20.1.10 invoking remote PowerShell on DC-AUTH-01)"
+  ],
+  "distractors": [
+    "Normal Chrome, Teams, Outlook, SearchIndexer, and Edge background telemetry across WS-EXEC-02, WS-SALES-02, WS-HR-03, and DC-AUTH-01."
+  ],
+  "notes": "The database contains ONLY a raw single table: events(timestamp, host_id, raw_json). All relational sub-tables (processes, files, network_connections, registry_events, hosts, users) are synthesized on the fly via SQLite in-memory virtual adapter views with zero disk mutation."
+}
