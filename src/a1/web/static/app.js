@@ -305,14 +305,20 @@
     elements.globalTableDialog.showModal();
 
     try {
-      const res = await fetch("/api/events?limit=200");
+      const res = await fetch("/api/events?limit=2500");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const events = data.events || [];
       globalTelemetryCache = events;
-      if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = `${events.length} events loaded from ${data.db_name || state.currentDb}`;
+      if (elements.globalDialogMeta) {
+        if (data.total && data.total > events.length) {
+          elements.globalDialogMeta.textContent = `${events.length} of ${data.total} events loaded from ${data.db_name || state.currentDb}`;
+        } else {
+          elements.globalDialogMeta.textContent = `${events.length} events loaded from ${data.db_name || state.currentDb}`;
+        }
+      }
       if (elements.headerTableBadge) {
-        elements.headerTableBadge.textContent = `${events.length}`;
+        elements.headerTableBadge.textContent = `${data.total || events.length}`;
       }
       setupTable(
         elements.globalDialogTableWrap,
@@ -328,10 +334,10 @@
 
   async function preloadEventCount() {
     try {
-      const res = await fetch("/api/events?limit=50");
+      const res = await fetch("/api/events?limit=1");
       if (res.ok) {
         const data = await res.json();
-        if (elements.headerTableBadge && data.total) {
+        if (elements.headerTableBadge && data.total != null) {
           elements.headerTableBadge.textContent = `${data.total}`;
         }
       }

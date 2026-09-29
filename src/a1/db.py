@@ -25,46 +25,62 @@ class EndpointDatabase:
             if not cur.fetchone():
                 return
 
+            def get_cols(table_name: str) -> set:
+                cur.execute(f"PRAGMA main.table_info({table_name});")
+                return {row[1] for row in cur.fetchall()}
+
             cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = {row[0] for row in cur.fetchall()}
 
             stmts = []
             if "network_connections" in tables:
-                stmts.append("""
-                    CREATE TEMP VIEW IF NOT EXISTS network_connections AS
-                    SELECT nc.network_id, nc.event_id, nc.process_entity_id, nc.source_ip, nc.source_port,
-                           nc.destination_ip, nc.destination_port, nc.protocol, nc.raw_json,
-                           e.timestamp, e.host_id, e.host_id AS source_host_id, NULL AS destination_host_id, e.user_id
-                    FROM main.network_connections nc
-                    LEFT JOIN main.events e ON nc.event_id = e.event_id;
-                """)
+                cols = get_cols("network_connections")
+                expected = {"network_id", "event_id", "process_entity_id", "source_ip", "source_port", "destination_ip", "destination_port", "protocol", "raw_json"}
+                if expected.issubset(cols):
+                    stmts.append("""
+                        CREATE TEMP VIEW IF NOT EXISTS network_connections AS
+                        SELECT nc.network_id, nc.event_id, nc.process_entity_id, nc.source_ip, nc.source_port,
+                               nc.destination_ip, nc.destination_port, nc.protocol, nc.raw_json,
+                               e.timestamp, e.host_id, e.host_id AS source_host_id, NULL AS destination_host_id, e.user_id
+                        FROM main.network_connections nc
+                        LEFT JOIN main.events e ON nc.event_id = e.event_id;
+                    """)
             if "processes" in tables:
-                stmts.append("""
-                    CREATE TEMP VIEW IF NOT EXISTS processes AS
-                    SELECT p.process_entity_id, p.event_id, p.host_id, p.pid, p.process_name,
-                           p.executable, p.parent_entity_id, p.parent_pid, p.raw_json,
-                           e.timestamp, e.user_id
-                    FROM main.processes p
-                    LEFT JOIN main.events e ON p.event_id = e.event_id;
-                """)
+                cols = get_cols("processes")
+                expected = {"process_entity_id", "event_id", "host_id", "pid", "process_name", "executable", "parent_entity_id", "parent_pid", "raw_json"}
+                if expected.issubset(cols):
+                    stmts.append("""
+                        CREATE TEMP VIEW IF NOT EXISTS processes AS
+                        SELECT p.process_entity_id, p.event_id, p.host_id, p.pid, p.process_name,
+                               p.executable, p.parent_entity_id, p.parent_pid, p.raw_json,
+                               e.timestamp, e.user_id
+                        FROM main.processes p
+                        LEFT JOIN main.events e ON p.event_id = e.event_id;
+                    """)
             if "files" in tables:
-                stmts.append("""
-                    CREATE TEMP VIEW IF NOT EXISTS files AS
-                    SELECT f.file_id, f.event_id, f.process_entity_id, f.file_path, f.file_name,
-                           f.extension, f.size, f.sha256, f.raw_json,
-                           e.timestamp, e.host_id, e.user_id
-                    FROM main.files f
-                    LEFT JOIN main.events e ON f.event_id = e.event_id;
-                """)
+                cols = get_cols("files")
+                expected = {"file_id", "event_id", "process_entity_id", "file_path", "file_name", "extension", "size", "sha256", "raw_json"}
+                if expected.issubset(cols):
+                    stmts.append("""
+                        CREATE TEMP VIEW IF NOT EXISTS files AS
+                        SELECT f.file_id, f.event_id, f.process_entity_id, f.file_path, f.file_name,
+                               f.extension, f.size, f.sha256, f.raw_json,
+                               e.timestamp, e.host_id, e.user_id
+                        FROM main.files f
+                        LEFT JOIN main.events e ON f.event_id = e.event_id;
+                    """)
             if "registry_events" in tables:
-                stmts.append("""
-                    CREATE TEMP VIEW IF NOT EXISTS registry_events AS
-                    SELECT r.registry_id, r.event_id, r.process_entity_id, r.registry_path,
-                           r.registry_key, r.registry_value, r.value_type, r.raw_json,
-                           e.timestamp, e.host_id, e.user_id
-                    FROM main.registry_events r
-                    LEFT JOIN main.events e ON r.event_id = e.event_id;
-                """)
+                cols = get_cols("registry_events")
+                expected = {"registry_id", "event_id", "process_entity_id", "registry_path", "registry_key", "registry_value", "value_type", "raw_json"}
+                if expected.issubset(cols):
+                    stmts.append("""
+                        CREATE TEMP VIEW IF NOT EXISTS registry_events AS
+                        SELECT r.registry_id, r.event_id, r.process_entity_id, r.registry_path,
+                               r.registry_key, r.registry_value, r.value_type, r.raw_json,
+                               e.timestamp, e.host_id, e.user_id
+                        FROM main.registry_events r
+                        LEFT JOIN main.events e ON r.event_id = e.event_id;
+                    """)
 
             for s in stmts:
                 cur.execute(s)

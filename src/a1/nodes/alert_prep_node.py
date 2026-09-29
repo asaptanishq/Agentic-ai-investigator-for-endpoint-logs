@@ -16,7 +16,16 @@ def _parse_iso_utc(ts_str: str) -> Optional[datetime]:
     clean = ts_str.strip().replace(" ", "T")
     if clean.endswith("Z"):
         clean = clean[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(clean)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        pass
     for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S.%f",
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%dT%H:%M%z",

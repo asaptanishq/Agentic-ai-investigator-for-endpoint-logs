@@ -10,7 +10,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=2" />
   <!-- Optional CDN for rich Markdown rendering -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
@@ -215,6 +215,12 @@
                 <div class="suggestion-text">"Investigate potential lateral movement and remote command execution via
                   WinRM"</div>
               </button>
+
+              <button class="suggestion-card"
+                data-query="Investigate suspicious Word execution and ransomware file encryption activity on WS-ACCT-01 on 2026-09-20. Trace phishing document invoice_2026-Q3.docx, PowerShell spawning, shadow copy deletion via vssadmin, and LockBit ransomware encryption activity.">
+                <div class="suggestion-tag">Ransomware & LockBit</div>
+                <div class="suggestion-text">"Investigate LockBit ransomware encryption and shadow copy deletion on WS-ACCT-01"</div>
+              </button>
             </div>
           </div>
 
@@ -294,7 +300,7 @@
     <div class="evidence-table-wrap dialog-table-wrap" id="globalDialogTableWrap"></div>
   </dialog>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2"></script>
 </body>
 
 </html>

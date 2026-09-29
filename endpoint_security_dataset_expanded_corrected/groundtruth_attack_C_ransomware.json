@@ -1,0 +1,29 @@
+{
+  "dataset": "ransomware_attack_complete_ecs.db",
+  "scenario": "Phishing execution + shadow copy deletion (vssadmin) + LockBit ransomware encryption",
+  "summary": "On 2026-09-20, user alice on WS-ACCT-01 opened a phishing document invoice_2026-Q3.docx in winword.exe. Word spawned a hidden PowerShell process, which invoked vssadmin.exe to delete shadow copies (/all /quiet) to inhibit system recovery. LockBit ransomware (lockbit.exe, PID 4700) then executed, creating 201 .locked files across Documents and deleting 200 original documents.",
+  "kill_chain": [
+    "10:05 winword.exe opened invoice_2026-Q3.docx on WS-ACCT-01 (user alice)",
+    "10:10 powershell.exe (-NoP -W Hidden) spawned by winword.exe",
+    "10:15 vssadmin.exe delete shadows /all /quiet spawned by powershell.exe (inhibit recovery)",
+    "10:20 lockbit.exe (PID 4700) encrypted 200+ user documents (.locked extension) and deleted original files"
+  ],
+  "key_iocs": [
+    "invoice_2026-Q3.docx",
+    "powershell.exe -NoP -W Hidden",
+    "vssadmin.exe delete shadows /all /quiet",
+    "lockbit.exe",
+    "*.locked file creations with original document deletions"
+  ],
+  "expected_verdict": "malicious",
+  "verdict_boundary": "confirmed_malicious",
+  "evidence_basis": [
+    "process_parent_child (winword.exe -> powershell.exe -> vssadmin.exe)",
+    "shadow copy deletion (inhibit system recovery)",
+    "mass file encryption and replacement by lockbit.exe"
+  ],
+  "distractors": [
+    "Background Office, Chrome, Teams, and Explorer events across WS-ACCT-01, WS-SALES-02, and WS-HR-03."
+  ],
+  "notes": "Evidence gap: the initial execution event for lockbit.exe (PID 4700) is absent from process_started telemetry, but its encryption activity is recorded across 401 file creation and deletion events."
+}

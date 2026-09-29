@@ -214,14 +214,20 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/events")
-    async def get_events(limit: int = 100):
+    async def get_events(limit: int = 2500):
         try:
             from a1.db import EndpointDatabase
             db = EndpointDatabase(cfg.DB_PATH)
+            count_rows = db.execute_query("SELECT COUNT(*) as cnt FROM events", max_rows=1)
+            total_in_db = count_rows[0]["cnt"] if count_rows else 0
+
+            # If client sends legacy limit=200 or 100 from an older cached browser bundle, fetch up to 2500
+            fetch_limit = 2500 if limit in (100, 200) else max(limit, 1)
+
             rows = db.execute_query(
                 "SELECT e.event_id, e.timestamp, e.host_id, e.action, e.raw_json FROM events e ORDER BY e.timestamp DESC LIMIT ?",
-                params=(limit,),
-                max_rows=limit,
+                params=(fetch_limit,),
+                max_rows=fetch_limit,
             )
             events = []
             for r in rows:
@@ -234,11 +240,12 @@ def create_app() -> FastAPI:
                 events.append(ev)
             return {
                 "db_name": Path(cfg.DB_PATH).name,
-                "total": len(events),
+                "total": total_in_db,
+                "loaded": len(events),
                 "events": events,
             }
         except Exception as e:
-            return {"db_name": Path(cfg.DB_PATH).name, "total": 0, "events": [], "error": str(e)}
+            return {"db_name": Path(cfg.DB_PATH).name, "total": 0, "loaded": 0, "events": [], "error": str(e)}
 
     def extract_and_clean_thoughts(raw_text: str) -> tuple[Optional[str], str]:
         """Extract embedded thought/reasoning blocks and return (thought, cleaned_text)."""
