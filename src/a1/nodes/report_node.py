@@ -9,6 +9,10 @@ from a1.llm import get_llm
 from a1.prompts import REPORT_SYNTHESIZER_SYSTEM_PROMPT
 from a1.nodes.structured_output import StructuredOutputRetryError, invoke_structured_with_retry
 
+CHANNEL_TOKEN_PATTERN = r"<\|?channel[^>]*\|?>"
+THINK_TOKEN_PATTERN = r"</?think>"
+NONE_DOCUMENTED = "- None documented"
+
 class IncidentVerdict(BaseModel):
     verdict: Literal["benign", "suspicious", "malicious", "inconclusive"] = "suspicious"
     verdict_boundary: Literal["confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive"] = "unconfirmed_malicious"
@@ -32,8 +36,8 @@ class IncidentVerdict(BaseModel):
     def normalize_verdict_labels(cls, value, info):
         if not isinstance(value, str):
             return value
-        cleaned = re.sub(r"<\|?channel[^>]*\|?>", "", value, flags=re.IGNORECASE)
-        cleaned = re.sub(r"</?think>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(CHANNEL_TOKEN_PATTERN, "", value, flags=re.IGNORECASE)
+        cleaned = re.sub(THINK_TOKEN_PATTERN, "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"</?thought>", "", cleaned, flags=re.IGNORECASE)
         norm = cleaned.strip().lower().replace(" ", "_").strip("`'\"")
 
@@ -69,8 +73,8 @@ class IncidentVerdict(BaseModel):
     @classmethod
     def normalize_report_text(cls, value):
         if isinstance(value, str):
-            value = re.sub(r"<\|?channel[^>]*\|?>", "", value, flags=re.IGNORECASE)
-            value = re.sub(r"</?think>", "", value, flags=re.IGNORECASE)
+            value = re.sub(CHANNEL_TOKEN_PATTERN, "", value, flags=re.IGNORECASE)
+            value = re.sub(THINK_TOKEN_PATTERN, "", value, flags=re.IGNORECASE)
             return value.strip()
         if isinstance(value, list):
             lines = []
@@ -82,7 +86,7 @@ class IncidentVerdict(BaseModel):
                 else:
                     lines.append(str(item))
             text = "\n".join(lines)
-            text = re.sub(r"<\|?channel[^>]*\|?>", "", text, flags=re.IGNORECASE)
+            text = re.sub(CHANNEL_TOKEN_PATTERN, "", text, flags=re.IGNORECASE)
             return text.strip()
         if isinstance(value, dict):
             lines = []
@@ -99,7 +103,7 @@ class IncidentVerdict(BaseModel):
                 else:
                     lines.append(f"- **{title}**: {v}")
             text = "\n".join(lines).strip()
-            text = re.sub(r"<\|?channel[^>]*\|?>", "", text, flags=re.IGNORECASE)
+            text = re.sub(CHANNEL_TOKEN_PATTERN, "", text, flags=re.IGNORECASE)
             return text.strip()
         return value or ""
 
@@ -121,11 +125,11 @@ class IncidentVerdict(BaseModel):
             if isinstance(item, dict):
                 for k, v in item.items():
                     title = k.replace("_", " ").title()
-                    cleaned_v = re.sub(r"<\|?channel[^>]*\|?>", "", str(v), flags=re.IGNORECASE)
+                    cleaned_v = re.sub(CHANNEL_TOKEN_PATTERN, "", str(v), flags=re.IGNORECASE)
                     result.append(f"{title}: {cleaned_v.strip()}")
             else:
-                cleaned_item = re.sub(r"<\|?channel[^>]*\|?>", "", str(item), flags=re.IGNORECASE)
-                cleaned_item = re.sub(r"</?think>", "", cleaned_item, flags=re.IGNORECASE).strip()
+                cleaned_item = re.sub(CHANNEL_TOKEN_PATTERN, "", str(item), flags=re.IGNORECASE)
+                cleaned_item = re.sub(THINK_TOKEN_PATTERN, "", cleaned_item, flags=re.IGNORECASE).strip()
                 if cleaned_item:
                     result.append(cleaned_item)
         return result
@@ -162,22 +166,22 @@ _DEFAULT_CONFIDENCE_FOR_VERDICT = {
 def _format_bullet_points(items: List[str], prefix: str = "- ") -> str:
     """Format a list of strings into clean bullet points without dense paragraphs."""
     if not items:
-        return "- None documented"
+        return NONE_DOCUMENTED
     lines = []
     for item in items:
         clean = item.strip()
         if not clean:
             continue
-        if clean.startswith("- ") or clean.startswith("* ") or (clean[0].isdigit() and clean[1:3] in (". ", ") ")):
+        if clean.startswith(("- ", "* ")) or (clean[0].isdigit() and clean[1:3] in (". ", ") ")):
             lines.append(clean)
         else:
             lines.append(f"{prefix}{clean}")
-    return "\n".join(lines) if lines else "- None documented"
+    return "\n".join(lines) if lines else NONE_DOCUMENTED
 
 def _format_text_as_bullets(text: str) -> str:
     """Ensure multi-line text or paragraphs are rendered as readable bullet points."""
     if not text:
-        return "- None documented"
+        return NONE_DOCUMENTED
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     formatted = []
     for ln in lines:
@@ -269,7 +273,6 @@ def _confirmed_data_exfiltration_chain(evidence_pack: dict):
         ).lower()
         command_line = str(fields.get("command_line") or "")
         file_name = str(fields.get("file_name") or "")
-        file_path = str(fields.get("file_path") or file_name)
 
         if process_name.endswith("7z.exe") and re.search(r"(?:^|\s)-p\S+", command_line, re.IGNORECASE):
             archive_commands.append(record)
@@ -475,7 +478,6 @@ def _confirmed_credential_lateral_service_chain(evidence_pack: dict):
             failures = []
             successes = []
             for record in records:
-                fields = record["fields"]
                 if (
                     record["host_id"] == ""
                     or record["host_id"] == dump_process["host_id"]
@@ -581,9 +583,8 @@ def _parse_evidence_timestamp(value):
 
 def _post_cleanup_interactive_logon_pair(evidence_pack: dict, cleanup_timestamp: str):
     """Find a same-user type-2 Kerberos failure followed by success after cleanup."""
-    try:
-        cleanup_time = datetime.fromisoformat(cleanup_timestamp.replace("Z", "+00:00"))
-    except (AttributeError, ValueError):
+    cleanup_time = _parse_evidence_timestamp(cleanup_timestamp)
+    if cleanup_time is None:
         return None
 
     failures = []
@@ -750,7 +751,7 @@ def report_node(state):
         structured_retry_used = isinstance(e, StructuredOutputRetryError)
 
         # Attempt to recover JSON from completion in exception
-        match = re.search(r"completion\s*(\{.*?\})\.?\s*(?:Got:|$)", err_str, re.DOTALL)
+        match = re.search(r"completion\s*(\{[^\}]*\})\.?\s*(?:Got:|$)", err_str, re.DOTALL)
         if not match:
             match = re.search(r"\{.*\}", err_str, re.DOTALL)
 

@@ -59,7 +59,7 @@ def get_available_databases() -> List[Dict[str, Any]]:
             })
 
     # Sort so default agent db is first
-    dbs.sort(key=lambda d: (not ("agent_endpoint_security.db" in d["name"]), d["display"]))
+    dbs.sort(key=lambda d: ("agent_endpoint_security.db" not in d["name"], d["display"]))
     return dbs
 
 def set_active_database(db_path_str: str) -> str:
@@ -70,14 +70,26 @@ def set_active_database(db_path_str: str) -> str:
     """
     import a1.config as _cfg
 
-    candidate = Path(db_path_str).resolve()
-    base_dir = PROJECT_ROOT.resolve()
-    if not candidate.is_relative_to(base_dir):
-        raise ValueError("Invalid database path: access outside permitted directory is prohibited")
-    if candidate.suffix.lower() != ".db":
-        raise ValueError("Invalid database file format: expected a .db file")
+    # Match against available scanned databases first (safe allowlist lookup)
+    available = get_available_databases()
+    target_path = None
+    clean_name = str(db_path_str).strip()
 
-    return str(_cfg.set_active_database(candidate, allow_external=False))
+    for item in available:
+        if clean_name in (item["path"], item["name"], item["display"]):
+            target_path = Path(item["path"])
+            break
+
+    if target_path is None:
+        safe_base = PROJECT_ROOT.resolve()
+        candidate = (safe_base / clean_name).resolve()
+        if not candidate.is_relative_to(safe_base):
+            raise ValueError("Invalid database path: access outside permitted directory is prohibited")
+        if candidate.suffix.lower() != ".db":
+            raise ValueError("Invalid database file format: expected a .db file")
+        target_path = candidate
+
+    return str(_cfg.set_active_database(target_path, allow_external=False))
 
 def fetch_live_ollama_models() -> List[str]:
     """Query Ollama server for available tags."""
@@ -185,7 +197,13 @@ def create_app() -> FastAPI:
     async def list_databases():
         return {"databases": get_available_databases()}
 
-    @app.post("/api/databases/set")
+    @app.post(
+        "/api/databases/set",
+        responses={
+            400: {"description": "Invalid database path or format"},
+            404: {"description": "Database file not found"},
+        },
+    )
     async def update_database(req: DatabaseConfigRequest):
         try:
             active_path = set_active_database(req.db_path)
@@ -296,7 +314,12 @@ def create_app() -> FastAPI:
             pass
         return str(content)[:200]
 
-    @app.post("/api/investigate")
+    @app.post(
+        "/api/investigate",
+        responses={
+            400: {"description": "Query cannot be empty"},
+        },
+    )
     async def investigate_stream(req: InvestigateRequest, request: Request):
         """Run investigation and stream progressive events via Server-Sent Events (SSE)."""
         if not req.query.strip():
@@ -391,7 +414,7 @@ def create_app() -> FastAPI:
                                 if getattr(m, "type", "") == "human" and "Plan:" in getattr(m, "content", ""):
                                     plan_lines = [
                                         ln.strip() for ln in m.content.splitlines()
-                                        if ln.startswith("Plan:") or ln.startswith("Initial entities:")
+                                        if ln.startswith(("Plan:", "Initial entities:"))
                                     ]
                                     break
                             loop.call_soon_threadsafe(
@@ -585,15 +608,17 @@ def start(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True):
         def _open():
             import time
             time.sleep(1.2)
-            url = f"http://{host}:{port}/"
+            scheme = "http"
+            url = f"{scheme}://{host}:{port}/"
             print(f"[*] Opening browser to {url} ...")
             webbrowser.open(url)
         threading.Thread(target=_open, daemon=True).start()
 
-    print(f"\n=======================================================")
-    print(f" A1 DFIR AI Investigator Web Server")
-    print(f" Web UI available at: http://{host}:{port}/")
-    print(f"=======================================================\n")
+    scheme = "http"
+    print("\n=======================================================")
+    print(" A1 DFIR AI Investigator Web Server")
+    print(f" Web UI available at: {scheme}://{host}:{port}/")
+    print("=======================================================\n")
     uvicorn.run(app, host=host, port=port)
 
 if __name__ == "__main__":

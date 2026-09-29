@@ -67,10 +67,8 @@ def extract_regex_entities(alert_text: str) -> Dict[str, Any]:
     host_ids = list(dict.fromkeys(re.findall(r"\bhost-[\w-]+\b", alert_text, re.IGNORECASE)))
 
     # IPv4 addresses
-    ipv4s = list(dict.fromkeys(re.findall(
-        r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
-        alert_text
-    )))
+    raw_ips = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", alert_text)
+    ipv4s = list(dict.fromkeys(ip for ip in raw_ips if all(0 <= int(x) <= 255 for x in ip.split("."))))
 
     # DOMAIN\user
     domain_users = list(dict.fromkeys(re.findall(
@@ -86,14 +84,14 @@ def extract_regex_entities(alert_text: str) -> Dict[str, Any]:
     uppercase_hostnames = []
     for h in raw_hosts:
         h_upper = h.upper()
-        if h_upper.startswith("HOST-") or h_upper.startswith("CVE-") or h_upper.startswith("NTLM-"):
+        if h_upper.startswith(("HOST-", "CVE-", "NTLM-")):
             continue
         if h_upper not in uppercase_hostnames:
             uppercase_hostnames.append(h_upper)
 
     # Process / artifact names
     artifacts = list(dict.fromkeys(re.findall(
-        r"\b[A-Za-z0-9_.-]+\.(?:exe|dll|ps1|bat|vbs|dmp|sys)\b",
+        r"\b[\w.-]+\.(?:exe|dll|ps1|bat|vbs|dmp|sys)\b",
         alert_text,
         re.IGNORECASE
     )))
@@ -172,7 +170,7 @@ def parse_alert_time_window(
     """
     # Accept date-only values as well as ISO timestamps.
     ts_matches = re.findall(
-        r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b",
+        r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?[Z+-]?\S*)?\b",
         alert_text
     )
     parsed_dts: List[Tuple[datetime, bool]] = []

@@ -66,7 +66,8 @@ def t_query_raw():
     proj = big[0]["raw_json_projected"]
     assert "process.command_line" in proj, f"command_line must survive projection, got {sorted(proj)}"
     assert "process.hash.sha256" in proj, "hash must survive projection"
-    assert "event.id" not in proj and "host.os.version" not in proj, "bulk keys must be dropped"
+    assert "event.id" not in proj, "bulk keys must be dropped"
+    assert "host.os.version" not in proj, "bulk keys must be dropped"
     return (f"{len(big)} projected (kept {sorted(proj)[:5]}...), "
             f"{len(small)} kept whole, full-row chars {len(json.dumps(big[0]))} vs orig ~1600")
 check("query_telemetry raw_json projection", t_query_raw)
@@ -107,17 +108,20 @@ def t_timeline():
     res = json.loads(search_timeline.invoke({
         "start_time": bounds["mn"], "end_time": bounds["mx"],
         "host_id": host[0]["host_id"], "limit": 5}))
-    assert isinstance(res, list) and len(res) > 0
+    assert isinstance(res, list)
+    assert len(res) > 0
     return f"{len(res)} events for {host[0]['host_id']} inside the recorded window"
 check("search_timeline", t_timeline)
 
 def t_entity():
     host = db_rows("SELECT host_id FROM hosts LIMIT 1")
     user = db_rows("SELECT user_id FROM users LIMIT 1")
-    assert host and user, "active telemetry database has no hosts or users"
+    assert host, "active telemetry database has no hosts"
+    assert user, "active telemetry database has no users"
     h = json.loads(get_entity_context.invoke({"entity_type": "host", "entity_id": host[0]["host_id"]}))
     u = json.loads(get_entity_context.invoke({"entity_type": "user", "entity_id": user[0]["user_id"]}))
-    assert h["host_id"] == host[0]["host_id"] and u["user_id"] == user[0]["user_id"]
+    assert h["host_id"] == host[0]["host_id"]
+    assert u["user_id"] == user[0]["user_id"]
     return f"host {host[0]['host_id']} + user {user[0]['user_id']} resolve"
 check("get_entity_context", t_entity)
 
@@ -127,15 +131,19 @@ def t_pivot():
     hash_row = db_rows("SELECT sha256 FROM files WHERE sha256 IS NOT NULL AND sha256 <> '' LIMIT 1")
     exe_row = db_rows("SELECT process_name FROM processes "
                       "WHERE process_name IS NOT NULL AND process_name <> '' LIMIT 1")
-    assert ip_row and hash_row and exe_row, "active telemetry database has no pivotable indicators"
+    assert ip_row, "active telemetry database has no pivotable destination_ip"
+    assert hash_row, "active telemetry database has no pivotable sha256"
+    assert exe_row, "active telemetry database has no pivotable process_name"
     r1 = json.loads(pivot_on_indicator.invoke({"indicator_type": "sha256",
         "indicator_value": hash_row[0]["sha256"]}))
     r2 = json.loads(pivot_on_indicator.invoke({"indicator_type": "destination_ip",
         "indicator_value": ip_row[0]["destination_ip"]}))
     r3 = json.loads(pivot_on_indicator.invoke({"indicator_type": "executable",
         "indicator_value": exe_row[0]["process_name"]}))
-    assert r1["match_count"] >= 1 and "hosts_seen_on" in r1
-    assert r2["match_count"] >= 1 and r3["match_count"] >= 1
+    assert r1["match_count"] >= 1
+    assert "hosts_seen_on" in r1
+    assert r2["match_count"] >= 1
+    assert r3["match_count"] >= 1
     return f"sha256:{r1['match_count']} ip:{r2['match_count']} exe:{r3['match_count']} hosts:{r3['hosts_seen_on'][:3]}"
 check("pivot_on_indicator (new tool)", t_pivot)
 
@@ -233,7 +241,8 @@ def t_empty_tree_note():
         "  WHERE parent_entity_id IS NOT NULL AND parent_entity_id <> '') LIMIT 1")
     assert row, "active telemetry database records no parentless, childless processes"
     res = json.loads(trace_process_tree.invoke({"process_entity_id": row[0]["process_entity_id"]}))
-    assert res["ancestors"] == [] and res["descendants"] == []
+    assert res["ancestors"] == []
+    assert res["descendants"] == []
     assert "repeating" in res.get("note", "").lower(), "note must tell the model not to retry"
     return "empty tree now carries a do-not-repeat note"
 check("trace_process_tree empty-result note", t_empty_tree_note)
@@ -241,7 +250,8 @@ check("trace_process_tree empty-result note", t_empty_tree_note)
 def t_schema_hint():
     from a1.nodes.investigator_node import _get_schema_hint
     hint = _get_schema_hint()
-    assert "processes(" in hint and "process_name" in hint
+    assert "processes(" in hint
+    assert "process_name" in hint
     assert "events(" in hint
     # events must NOT list process_name (the model's exact mistake)
     events_line = [l for l in hint.splitlines() if l.strip().startswith("events(")][0]
@@ -303,7 +313,8 @@ def t_repetition_guard():
              "args": {"process_entity_id": "proc-exp-0000002"}, "id": "call_3", "type": "tool_call"}])
         IN.get_llm = lambda **kw: StubLLM(fresh_resp)
         out3 = IN.investigator_node(state)
-        assert len(out3["messages"]) == 1 and "repeat_nudges" not in out3
+        assert len(out3["messages"]) == 1
+        assert "repeat_nudges" not in out3
         assert IN.should_continue({"messages": state["messages"] + out3["messages"],
                                    "iteration_count": out3["iteration_count"],
                                    "repeat_nudges": 0}) == "tools"

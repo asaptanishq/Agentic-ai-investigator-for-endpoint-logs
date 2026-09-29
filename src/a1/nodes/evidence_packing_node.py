@@ -8,6 +8,12 @@ import re
 from datetime import datetime
 from typing import Dict, Any, List, Set, Optional, Tuple
 
+def _to_utc_datetime(ts_str: str) -> datetime:
+    clean = str(ts_str).strip()
+    if clean.endswith("Z"):
+        clean = clean[:-1] + "+00:00"
+    return datetime.fromisoformat(clean)
+
 def _extract_rows_from_tool_messages(messages: List[Any]) -> Tuple[List[Dict[str, Any]], int]:
     """Parse all ToolMessage contents in the conversation into normalized event records."""
     raw_records: List[Dict[str, Any]] = []
@@ -170,8 +176,8 @@ def _filter_events_to_time_window(
     if not start_time or not end_time:
         return kept_events, [], []
 
-    start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-    end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+    start_dt = _to_utc_datetime(start_time)
+    end_dt = _to_utc_datetime(end_time)
     in_scope = []
     out_of_scope_ids = []
     missing_time_ids = []
@@ -182,7 +188,7 @@ def _filter_events_to_time_window(
             in_scope.append(event)
             continue
         try:
-            event_dt = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+            event_dt = _to_utc_datetime(str(timestamp))
         except ValueError:
             missing_time_ids.append(event["event_id"])
             in_scope.append(event)

@@ -88,7 +88,12 @@ def _labels_from_groundtruth_files() -> list:
         except (OSError, json.JSONDecodeError):
             continue
         dataset = gt.get("dataset", "")
-        case_id = "ATK-A" if "lateral" in dataset else "ATK-B" if "exfiltration" in dataset else gt_path.stem
+        if "lateral" in dataset:
+            case_id = "ATK-A"
+        elif "exfiltration" in dataset:
+            case_id = "ATK-B"
+        else:
+            case_id = gt_path.stem
         labels.append({
             "case_id": case_id,
             "prompt": BENCHMARK_PROMPTS.get(case_id, gt.get("summary", "")),

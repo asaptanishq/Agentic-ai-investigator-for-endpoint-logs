@@ -91,7 +91,7 @@ class EndpointDatabase:
         if first_word in disallowed or ";" in clean_sql.rstrip(";"):
             raise DatabaseAccessError("Security violation: Only single read-only SELECT queries are permitted.")
         
-        if not (first_word.startswith("select") or first_word.startswith("pragma") or first_word.startswith("with")):
+        if not first_word.startswith(("select", "pragma", "with")):
             raise DatabaseAccessError(f"Disallowed query type: '{first_word}'. Only SELECT queries are permitted.")
 
         with self._get_connection() as conn:

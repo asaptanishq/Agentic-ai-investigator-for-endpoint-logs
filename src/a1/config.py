@@ -66,10 +66,10 @@ def set_active_database(db_path, allow_external: bool = False) -> Path:
     if not allow_external:
         base_dir = BASE_DIR.resolve()
         if not resolved.is_relative_to(base_dir):
-            raise ValueError(f"Invalid database path: access outside allowed directory is prohibited")
+            raise ValueError("Invalid database path: access outside allowed directory is prohibited")
 
     if resolved.suffix.lower() != ".db":
-        raise ValueError(f"Invalid database file format: expected a .db file")
+        raise ValueError("Invalid database file format: expected a .db file")
 
     if not resolved.is_file():
         raise FileNotFoundError(f"Database file not found: {resolved.name}")

@@ -1069,7 +1069,8 @@ body:not(.theme-dark) .moon-icon {
   color: var(--text-primary);
   line-height: 1.5;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
   box-shadow: var(--shadow-sm);
 }
 

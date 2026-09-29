@@ -53,7 +53,7 @@ def summarize_tool_output(content: str) -> str:
         return str(data)[:200]
     except Exception:
         pass
-    if content.startswith("Error") or content.startswith("Database query error"):
+    if content.startswith(("Error", "Database query error")):
         return content[:200]
     return content[:200]
 
@@ -110,7 +110,7 @@ def run_investigation(alert: str, verbose: bool = False):
             # If the initial triage message has plan details, print it
             for m in event.get("messages", []):
                 if getattr(m, "type", "") == "human" and "Plan:" in getattr(m, "content", ""):
-                    lines = [ln for ln in m.content.splitlines() if ln.startswith("Plan:") or ln.startswith("Initial entities:")]
+                    lines = [ln for ln in m.content.splitlines() if ln.startswith(("Plan:", "Initial entities:"))]
                     for ln in lines:
                         print(f"  {ln}", flush=True)
                     break
