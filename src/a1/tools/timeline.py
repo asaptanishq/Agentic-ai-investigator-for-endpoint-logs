@@ -41,38 +41,80 @@ def _extract_event_details(raw: Optional[str]) -> dict:
         if not isinstance(data, dict):
             return {}
         details = {}
-        for k in ("process.name", "process.command_line", "process.executable", "process.pid"):
-            val = _get_field_val(data, k)
-            if val is not None:
-                details[k.split(".")[-1]] = val
-        for source, target in (
-            ("process.parent.entity_id", "parent_process_entity_id"),
-            ("process.parent.name", "parent_process_name"),
-            ("process.code_signature.status", "code_signature_status"),
-            ("process.integrity_level", "integrity_level"),
-            ("process.target.name", "target_process_name"),
-            ("process.target.pid", "target_process_pid"),
-            ("user.domain", "user_domain"),
+
+        # Process name, cmdline, executable, pid
+        name_val = _get_field_val(data, "process.name", "data.win.eventdata.processName", "data.win.eventdata.image", "process_name")
+        if name_val is not None:
+            details["name"] = name_val
+        cmd_val = _get_field_val(data, "process.command_line", "data.win.eventdata.commandLine", "process_cmdline")
+        if cmd_val is not None:
+            details["command_line"] = cmd_val
+        exe_val = _get_field_val(data, "process.executable", "data.win.eventdata.image", "process_path")
+        if exe_val is not None:
+            details["executable"] = exe_val
+        pid_val = _get_field_val(data, "process.pid", "data.win.eventdata.processId", "process_id")
+        if pid_val is not None:
+            details["pid"] = pid_val
+
+        # Process Parent & Target
+        for sources, target in (
+            (("process.parent.entity_id", "data.win.eventdata.parentProcessId"), "parent_process_entity_id"),
+            (("process.parent.name", "data.win.eventdata.parentImage", "process_parent_name"), "parent_process_name"),
+            (("process.code_signature.status",), "code_signature_status"),
+            (("process.integrity_level",), "integrity_level"),
+            (("process.target.name",), "target_process_name"),
+            (("process.target.pid",), "target_process_pid"),
+            (("user.domain", "data.win.eventdata.userDomain"), "user_domain"),
         ):
-            val = _get_field_val(data, source)
+            val = _get_field_val(data, *sources)
             if val is not None:
                 details[target] = val
-        for k in ("destination.ip", "destination.port", "destination.domain", "network.direction"):
-            val = _get_field_val(data, k)
+
+        # Network
+        for sources, target in (
+            (("destination.ip", "network_dst"), "destination_ip"),
+            (("destination.port", "network_dst_port"), "destination_port"),
+            (("destination.domain", "dns_query"), "destination_domain"),
+            (("network.direction",), "network_direction"),
+            (("source.ip", "source_ip"), "source_ip"),
+        ):
+            val = _get_field_val(data, *sources)
             if val is not None:
-                details[k.replace(".", "_")] = val
-        for k in ("file.name", "file.path", "file.hash.sha256", "file.size", "file.extension", "file.type"):
-            val = _get_field_val(data, k)
+                details[target] = val
+
+        # Files
+        for sources, target in (
+            (("file.name", "data.win.eventdata.targetFilename", "file_name"), "file_name"),
+            (("file.path", "data.win.eventdata.targetFilename", "file_path"), "file_path"),
+            (("file.hash.sha256", "file_hash"), "file_hash_sha256"),
+            (("file.size",), "file_size"),
+            (("file.extension",), "file_extension"),
+            (("file.type",), "file_type"),
+        ):
+            val = _get_field_val(data, *sources)
             if val is not None:
-                details[k.replace(".", "_")] = val
-        for k in ("registry.key", "registry.path", "registry.value"):
-            val = _get_field_val(data, k)
+                details[target] = val
+
+        # Registry
+        for sources, target in (
+            (("registry.key", "data.win.eventdata.targetObject", "registry_key"), "registry_key"),
+            (("registry.path", "data.win.eventdata.targetObject", "registry_path"), "registry_path"),
+            (("registry.value", "data.win.eventdata.details", "registry_value"), "registry_value"),
+        ):
+            val = _get_field_val(data, *sources)
             if val is not None:
-                details[k.replace(".", "_")] = val
-        for k in ("authentication.package", "logon.type", "user.name", "source.ip"):
-            val = _get_field_val(data, k)
+                details[target] = val
+
+        # Auth & Users
+        for sources, target in (
+            (("authentication.package",), "authentication_package"),
+            (("logon.type",), "logon_type"),
+            (("user.name", "data.win.eventdata.user", "source_user"), "user_name"),
+        ):
+            val = _get_field_val(data, *sources)
             if val is not None:
-                details[k.replace(".", "_")] = val
+                details[target] = val
+
         return details
     except Exception:
         return {}
@@ -111,13 +153,18 @@ def search_timeline(
             params.append(end_time)
         if host_id:
             raw_hosts = [h.strip() for h in host_id.split(",") if h.strip()]
-            if len(raw_hosts) == 1:
-                where_clauses.append("host_id = ?")
-                params.append(raw_hosts[0])
-            elif len(raw_hosts) > 1:
-                placeholders = ",".join("?" * len(raw_hosts))
-                where_clauses.append(f"host_id IN ({placeholders})")
-                params.extend(raw_hosts)
+            host_subclauses = []
+            for h in raw_hosts:
+                host_subclauses.append(
+                    "(host_id = ? "
+                    "OR host_id IN (SELECT host_id FROM hosts WHERE lower(hostname) = lower(?) OR lower(host_name) = lower(?)) "
+                    "OR host_id IN (SELECT hostname FROM hosts WHERE host_id = ?) "
+                    "OR host_id IN (SELECT host_name FROM hosts WHERE host_id = ?) "
+                    "OR host_id IN (SELECT ip_address FROM hosts WHERE host_id = ? OR lower(hostname) = lower(?) OR lower(host_name) = lower(?)))"
+                )
+                params.extend([h, h, h, h, h, h, h, h])
+            if host_subclauses:
+                where_clauses.append("(" + " OR ".join(host_subclauses) + ")")
         if user_id:
             u_clean = user_id.strip()
             where_clauses.append("(user_id = ? OR user_id IN (SELECT user_id FROM users WHERE lower(user_name) = lower(?)))")

@@ -67,8 +67,19 @@ def query_telemetry(sql_query: str, max_rows: int = 25) -> str:
         clean_query
     )
     
+    db = _get_db()
     try:
-        results = _get_db().execute_query(clean_query, max_rows=max_rows)
+        results = db.execute_query(clean_query, max_rows=max_rows)
+        if not results:
+            # Provide gentle diagnostic guidance for 0-result queries
+            schema = db.get_schema()
+            return json.dumps({
+                "status": "zero_records_found",
+                "query": clean_query,
+                "note": "Query executed successfully but returned 0 rows. Verify table/column names, filter values, and time windows.",
+                "available_tables": list(schema.keys())
+            }, indent=2)
+
         cleaned = []
         for r in results:
             item = dict(r)
@@ -80,5 +91,38 @@ def query_telemetry(sql_query: str, max_rows: int = 25) -> str:
             cleaned.append(item)
         return json.dumps(cleaned, indent=2, default=str)
     except Exception as e:
-        return f"Database query error: {str(e)}"
+        err_msg = str(e)
+        schema = db.get_schema()
+        hint = "Check table and column names in schema."
+        
+        # Self-healing column error detection
+        col_match = re.search(r"no such column:\s*([\w.]+)", err_msg, re.IGNORECASE)
+        if col_match:
+            missing_col = col_match.group(1).split(".")[-1]
+            all_cols = {c for cols in schema.values() for c in cols}
+            # Find closest candidate column
+            import difflib
+            matches = difflib.get_close_matches(missing_col, list(all_cols), n=3, cutoff=0.5)
+            if matches:
+                hint = f"Column '{missing_col}' does not exist. Did you mean: {', '.join(matches)}?"
+            else:
+                hint = f"Column '{missing_col}' does not exist. Review available columns per table."
+
+        # Self-healing table error detection
+        tbl_match = re.search(r"no such table:\s*([\w.]+)", err_msg, re.IGNORECASE)
+        if tbl_match:
+            missing_tbl = tbl_match.group(1).split(".")[-1]
+            import difflib
+            matches = difflib.get_close_matches(missing_tbl, list(schema.keys()), n=2, cutoff=0.4)
+            if matches:
+                hint = f"Table '{missing_tbl}' does not exist. Did you mean: {', '.join(matches)}?"
+            else:
+                hint = f"Table '{missing_tbl}' does not exist. Available tables: {list(schema.keys())}"
+
+        return json.dumps({
+            "status": "query_error",
+            "error": err_msg,
+            "diagnostic_hint": hint,
+            "available_tables": list(schema.keys()),
+        }, indent=2)
 

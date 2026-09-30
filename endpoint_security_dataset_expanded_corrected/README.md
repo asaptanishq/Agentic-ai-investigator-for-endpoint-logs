@@ -1,26 +1,19 @@
 # Expanded Endpoint Security Dataset
 
-> **Repository-state note (2026-09):** this guide was written for the original
-> five-scenario generated bundle (`gen-20260920-expanded`, 1,050 events). That
-> full bundle is **not** in this repository. What actually ships here is a
-> reduced two-attack layout:
+> **Repository-state note (2026-10):** This dataset ships six attack telemetry databases with evaluator ground truth isolated in the `groundtruth/` subfolder:
 >
 > | File | Contents |
 > |---|---|
-> | `attack_lateral_movement.db` | ATK-A telemetry: credential dumping + lateral movement + service persistence (127 events; hosts `WS-OPS-01`, `SRV-FILE-01`) |
-> | `attack_data_exfiltration.db` | ATK-B telemetry: data staging + scheduled-task persistence + HTTPS exfiltration + cleanup |
-> | `groundtruth_attack_A_lateral_movement.json` | ATK-A ground truth: kill chain, key IOCs, `expected_verdict: malicious`, `verdict_boundary: confirmed_malicious` |
-> | `groundtruth_attack_B_data_exfiltration.json` | ATK-B ground truth (includes a benign logon distractor), same verdict fields |
-> | `schema.md` | Field/table semantics — still accurate for the shipped `.db` files |
+> | `attack_lateral_movement.db` | **ATK-A** telemetry: credential dumping + lateral movement + service persistence (127 events; hosts `WS-OPS-01`, `SRV-FILE-01`) |
+> | `attack_data_exfiltration.db` | **ATK-B** telemetry: data staging + scheduled-task persistence + HTTPS exfiltration + cleanup |
+> | `ransomware_attack_complete_ecs.db` | **ATK-C** telemetry: phishing document delivery, vssadmin shadow copy deletion, LockBit file encryption |
+> | `attack_lotl_fileless.db` | **ATK-D** telemetry: Living-off-the-Land (mshta, powershell, certutil, wmic) and fileless execution |
+> | `wazuh_lotl_attack_dataset.db` | **ATK-E** telemetry: Wazuh SIEM/EDR, LotL command execution and SAM registry access |
+> | `suricata_c2_intrusion.db` | **ATK-F** telemetry: Suricata NIDS alerts, CobaltStrike C2 beaconing, internal SMB sweeps, and exfiltration |
+> | `groundtruth/` | Ground truth JSON files for ATK-A through ATK-F (`expected_verdict: malicious`, `verdict_boundary: confirmed_malicious`, key IOCs, kill chain) |
+> | `schema.md` | Field and table semantics for the shipped `.db` telemetry files |
 >
-> The artifacts named below (`events.jsonl`, `agent_bundle/`,
-> `endpoint_security.db`, `case_labels.json`, `dataset_summary.json`,
-> `ground_truth.jsonl`, `hosts.json`, `users.json`) belong to the original
-> bundle layout and are **absent** here. The agent queries the two
-> `attack_*.db` files directly through the `agent_events` view (same columns as
-> documented), and the benchmark derives its expected labels from the two
-> `groundtruth_attack_*.json` files. Keep this note until/unless the full
-> bundle is restored.
+> The agent queries the telemetry `.db` files directly through safe read-only connections and convenience views, and the benchmark derives evaluation labels from `groundtruth/groundtruth_attack_*.json`.
 
 Generation ID: `gen-20260920-expanded`
 Seed: `20260920`

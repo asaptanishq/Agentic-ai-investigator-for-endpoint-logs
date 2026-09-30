@@ -227,3 +227,78 @@ def test_tool_pivot_indicator_aliases():
     assert res_hash["indicator_type"] == "sha256"
     assert res_hash["match_count"] > 0
 
+
+def test_tool_query_telemetry_self_healing_diagnostics():
+    """Verify query_telemetry returns actionable schema diagnostics on syntax/column errors."""
+    # Test column typo
+    res_col = json.loads(query_telemetry.invoke({"sql_query": "SELECT process_nam FROM processes LIMIT 1"}))
+    assert res_col["status"] == "query_error"
+    assert "process_name" in res_col["diagnostic_hint"]
+    assert "processes" in res_col["available_tables"]
+
+    # Test table typo
+    res_tbl = json.loads(query_telemetry.invoke({"sql_query": "SELECT * FROM processez LIMIT 1"}))
+    assert res_tbl["status"] == "query_error"
+    assert "processes" in res_tbl["diagnostic_hint"]
+
+    # Test 0-match query returns structured diagnostics
+    res_zero = json.loads(query_telemetry.invoke({"sql_query": "SELECT * FROM hosts WHERE host_id = 'NONEXISTENT_HOST_12345'"}))
+    assert res_zero["status"] == "zero_records_found"
+    assert "available_tables" in res_zero
+
+
+def test_investigation_memory_accumulation():
+    """Verify investigation_memory accumulates forensic entities across iterations."""
+    from a1.nodes.investigator_node import _update_investigation_memory, _format_investigation_memory
+    from langchain_core.messages import ToolMessage
+
+    tool_msg1 = ToolMessage(
+        content=json.dumps({
+            "matches": [
+                {
+                    "process_entity_id": "proc-test-01",
+                    "process_name": "powershell.exe",
+                    "pid": 1234,
+                    "host_id": "host-test-01",
+                    "command_line": "powershell.exe -enc test",
+                }
+            ]
+        }),
+        tool_call_id="call-01",
+        name="find_process_relationships"
+    )
+
+    tool_msg2 = ToolMessage(
+        content=json.dumps([
+            {
+                "action": "network_connection",
+                "source_ip": "10.0.0.1",
+                "destination_ip": "198.51.100.1",
+                "destination_port": 443,
+                "process_entity_id": "proc-test-01",
+                "event_id": "evt-net-01"
+            },
+            {
+                "action": "file_created",
+                "file_name": "payload.exe",
+                "file_path": "C:\\Temp\\payload.exe",
+                "process_entity_id": "proc-test-01",
+                "event_id": "evt-file-01"
+            }
+        ]),
+        tool_call_id="call-02",
+        name="search_timeline"
+    )
+
+    mem = _update_investigation_memory({}, [tool_msg1, tool_msg2])
+    assert "proc-test-01" in mem["discovered_processes"]
+    assert mem["discovered_processes"]["proc-test-01"]["process_name"] == "powershell.exe"
+    assert "host-test-01" in mem["discovered_hosts"]
+    assert any(n["destination_ip"] == "198.51.100.1" for n in mem["discovered_network"])
+    assert any(f["file_name"] == "payload.exe" for f in mem["discovered_files"])
+
+    formatted = _format_investigation_memory(mem)
+    assert "CURRENT INVESTIGATION WORKING MEMORY" in formatted
+    assert "powershell.exe" in formatted
+    assert "198.51.100.1" in formatted
+

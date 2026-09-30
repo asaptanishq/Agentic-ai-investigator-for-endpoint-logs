@@ -1,17 +1,6 @@
 # Schema Specification
 
-> **Repository-state note (2026-09):** this spec was written for the original
-> five-scenario bundle. The table/view semantics below still describe the two
-> shipped databases (`attack_lateral_movement.db`,
-> `attack_data_exfiltration.db`), which contain the same `hosts`, `users`,
-> `events`, `processes`, `network_connections`, `files`, `registry_events`
-> tables plus the `agent_events` view. The evaluator-only objects named below
-> (`ground_truth_events`, `scenario_metadata`, `endpoint_security.db`,
-> `agent_bundle/`, `events.jsonl`, `ground_truth.jsonl`, `case_labels.json`,
-> `dataset_summary.json`) are **not** in this repository; per-scenario ground
-> truth lives in `groundtruth_attack_A_lateral_movement.json` and
-> `groundtruth_attack_B_data_exfiltration.json` instead. Keep this note
-> until/unless the full bundle is restored.
+> **Repository-state note (2026-10):** The table/view semantics below describe the shipped SQLite databases (`attack_lateral_movement.db`, `attack_data_exfiltration.db`, `ransomware_attack_complete_ecs.db`, `attack_lotl_fileless.db`, `wazuh_lotl_attack_dataset.db`, and `suricata_c2_intrusion.db`). Per-scenario evaluator ground truth lives in the `groundtruth/` subfolder (`groundtruth/groundtruth_attack_*.json`).
 
 - **Schema name:** Agentic AI Investigator Endpoint Security Dataset
 - **Schema version:** `1.0.0`

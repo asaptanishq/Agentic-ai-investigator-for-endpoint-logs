@@ -129,7 +129,7 @@ def resolve_hostnames(
     unresolved: List[str] = []
 
     try:
-        hosts_rows = db.execute_query("SELECT host_id, host_name, raw_json FROM hosts", max_rows=100)
+        hosts_rows = db.execute_query("SELECT * FROM hosts", max_rows=100)
     except Exception:
         hosts_rows = []
 
@@ -137,9 +137,12 @@ def resolve_hostnames(
     ip_lookup = {}
     for r in hosts_rows:
         hid = str(r["host_id"])
-        hname = str(r.get("host_name") or "")
+        hname = str(r.get("host_name") or r.get("hostname") or "")
         if hname:
             host_lookup[hname.upper()] = hid
+        ip = str(r.get("ip_address") or "")
+        if ip:
+            ip_lookup[ip.strip()] = hid
         raw_str = r.get("raw_json") or ""
         if raw_str:
             try:

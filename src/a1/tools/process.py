@@ -35,8 +35,13 @@ def find_process_relationships(
     Use this before trace_process_tree when an alert does not provide a process entity ID.
     """
     try:
-        where_clauses = ["child.host_id = ?"]
-        params = [host_id]
+        where_clauses = [
+            "(child.host_id = ? "
+            "OR child.host_id IN (SELECT host_id FROM hosts WHERE lower(hostname) = lower(?) OR lower(host_name) = lower(?)) "
+            "OR child.host_id IN (SELECT hostname FROM hosts WHERE host_id = ?) "
+            "OR child.host_id IN (SELECT host_name FROM hosts WHERE host_id = ?))"
+        ]
+        params = [host_id, host_id, host_id, host_id, host_id]
 
         if child_process_name:
             c_name = child_process_name.strip()
@@ -69,16 +74,22 @@ def find_process_relationships(
             SELECT
                 child.process_entity_id AS child_process_entity_id,
                 child.event_id AS child_event_id,
+                child.event_id AS event_id,
                 event.timestamp AS child_timestamp,
+                event.timestamp AS timestamp,
                 child.host_id,
                 child.pid AS child_pid,
                 child.process_name AS child_process_name,
+                child.process_name AS process_name,
                 child.executable AS child_executable,
+                child.command_line AS child_command_line,
+                child.command_line AS command_line,
                 child.parent_entity_id,
                 child.parent_pid,
                 parent.process_entity_id AS parent_process_entity_id,
                 parent.process_name AS parent_process_name,
-                parent.executable AS parent_executable
+                parent.executable AS parent_executable,
+                parent.command_line AS parent_command_line
             FROM processes AS child
             JOIN events AS event
                 ON event.event_id = child.event_id
@@ -105,11 +116,15 @@ def find_process_relationships(
 def trace_process_tree(process_entity_id: str, direction: str = "both") -> str:
     """Reconstruct the process execution hierarchy for a given process_entity_id.
     - direction: 'ancestors' (parents/grandparents), 'descendants' (spawned children), or 'both' (default).
-    Returns parent-child relationship details (PID, process_name, executable, parent_entity_id, etc.).
+    Returns parent-child relationship details (PID, process_name, executable, command_line, event_id, parent_entity_id, etc.).
     """
     tree_data: Dict[str, Any] = {"process_entity_id": process_entity_id, "ancestors": [], "descendants": []}
     try:
-        target_rows = _get_db().execute_query("SELECT * FROM processes WHERE process_entity_id = ?", (process_entity_id,), max_rows=1)
+        target_rows = _get_db().execute_query(
+            "SELECT * FROM processes WHERE process_entity_id = ? ORDER BY (command_line IS NOT NULL) DESC, timestamp ASC",
+            (process_entity_id,),
+            max_rows=1
+        )
         if not target_rows:
             return json.dumps({"error": f"Process entity '{process_entity_id}' not found in telemetry."}, indent=2)
 
@@ -119,9 +134,12 @@ def trace_process_tree(process_entity_id: str, direction: str = "both") -> str:
             "pid": target.get("pid"),
             "process_name": target.get("process_name"),
             "executable": target.get("executable"),
+            "command_line": target.get("command_line"),
             "parent_entity_id": target.get("parent_entity_id"),
             "parent_pid": target.get("parent_pid"),
-            "host_id": target.get("host_id")
+            "host_id": target.get("host_id"),
+            "event_id": target.get("event_id"),
+            "timestamp": target.get("timestamp"),
         }
 
         # Trace ancestors (parents/grandparents)
@@ -129,7 +147,11 @@ def trace_process_tree(process_entity_id: str, direction: str = "both") -> str:
             current_parent_id = target.get("parent_entity_id")
             depth = 0
             while current_parent_id and depth < 5:
-                p_rows = _get_db().execute_query("SELECT * FROM processes WHERE process_entity_id = ?", (current_parent_id,), max_rows=1)
+                p_rows = _get_db().execute_query(
+                    "SELECT * FROM processes WHERE process_entity_id = ? ORDER BY (command_line IS NOT NULL) DESC, timestamp ASC",
+                    (current_parent_id,),
+                    max_rows=1
+                )
                 if not p_rows:
                     tree_data["ancestors"].append({
                         "process_entity_id": current_parent_id,
@@ -142,22 +164,33 @@ def trace_process_tree(process_entity_id: str, direction: str = "both") -> str:
                     "pid": p.get("pid"),
                     "process_name": p.get("process_name"),
                     "executable": p.get("executable"),
+                    "command_line": p.get("command_line"),
                     "parent_entity_id": p.get("parent_entity_id"),
-                    "host_id": p.get("host_id")
+                    "host_id": p.get("host_id"),
+                    "event_id": p.get("event_id"),
+                    "timestamp": p.get("timestamp"),
                 })
                 current_parent_id = p.get("parent_entity_id")
                 depth += 1
 
         # Trace descendants (spawned children)
         if direction in ("descendants", "both"):
-            c_rows = _get_db().execute_query("SELECT * FROM processes WHERE parent_entity_id = ?", (process_entity_id,), max_rows=20)
+            c_rows = _get_db().execute_query(
+                "SELECT * FROM processes WHERE parent_entity_id = ? ORDER BY timestamp ASC",
+                (process_entity_id,),
+                max_rows=25
+            )
             for c in c_rows:
                 tree_data["descendants"].append({
                     "process_entity_id": c.get("process_entity_id"),
                     "pid": c.get("pid"),
                     "process_name": c.get("process_name"),
                     "executable": c.get("executable"),
-                    "host_id": c.get("host_id")
+                    "command_line": c.get("command_line"),
+                    "parent_entity_id": c.get("parent_entity_id"),
+                    "host_id": c.get("host_id"),
+                    "event_id": c.get("event_id"),
+                    "timestamp": c.get("timestamp"),
                 })
 
         # FIX: instructive empty-result note. In this dataset 251/275 processes

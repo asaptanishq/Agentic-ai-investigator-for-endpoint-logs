@@ -36,4 +36,6 @@ class InvestigationState(TypedDict):
     enriched_alert: Optional[Dict[str, Any]]
     evidence_pack: Optional[Dict[str, Any]]
     input_reflection_status: Optional[Dict[str, Any]]
+    # Accumulated investigation working memory persisting extracted entities across iterations
+    investigation_memory: Optional[Dict[str, Any]]
 

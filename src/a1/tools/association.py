@@ -48,38 +48,77 @@ def find_process_associations(process_entity_id: str) -> str:
 
         placeholders = ",".join(["?"] * len(resolved_ids))
 
-        # Network connections
-        net_rows = _get_db().execute_query(
-            f"SELECT network_id, event_id, source_ip, source_port, destination_ip, destination_port, protocol "
-            f"FROM network_connections WHERE process_entity_id IN ({placeholders})",
+        # 1. Target process details with full command line and metadata
+        target_procs = _get_db().execute_query(
+            f"SELECT process_entity_id, host_id, pid, process_name, command_line, executable, parent_entity_id, parent_process_name, event_id, timestamp "
+            f"FROM processes WHERE process_entity_id IN ({placeholders}) "
+            f"ORDER BY (command_line IS NOT NULL) DESC, timestamp ASC",
             tuple(resolved_ids),
+            max_rows=10,
+        )
+        if target_procs:
+            associations["process_details"] = target_procs
+
+        # 2. Spawned child processes (critical for LOTL/LOLBin execution tracking)
+        child_rows = _get_db().execute_query(
+            f"SELECT process_entity_id, host_id, pid, process_name, command_line, executable, parent_entity_id, event_id, timestamp "
+            f"FROM processes WHERE parent_entity_id IN ({placeholders}) "
+            f"ORDER BY timestamp ASC",
+            tuple(resolved_ids),
+            max_rows=25,
+        )
+        if child_rows:
+            associations["spawned_processes"] = child_rows
+
+        # 3. Parent process details if available
+        parent_rows = _get_db().execute_query(
+            f"SELECT parent.process_entity_id, parent.host_id, parent.pid, parent.process_name, parent.command_line, parent.executable, parent.event_id, parent.timestamp "
+            f"FROM processes child JOIN processes parent ON parent.process_entity_id = child.parent_entity_id "
+            f"WHERE child.process_entity_id IN ({placeholders}) "
+            f"ORDER BY (parent.command_line IS NOT NULL) DESC LIMIT 5",
+            tuple(resolved_ids),
+            max_rows=5,
+        )
+        if parent_rows:
+            associations["parent_process"] = parent_rows
+
+        # Expand search scope to include spawned child processes for network/file/registry telemetry
+        child_ids = [c["process_entity_id"] for c in child_rows if c.get("process_entity_id")]
+        all_scope_ids = list(dict.fromkeys(resolved_ids + child_ids))
+        all_placeholders = ",".join(["?"] * len(all_scope_ids))
+
+        # 4. Network connections
+        net_rows = _get_db().execute_query(
+            f"SELECT network_id, event_id, process_entity_id, host_id, timestamp, source_ip, source_port, destination_ip, destination_port, protocol "
+            f"FROM network_connections WHERE process_entity_id IN ({all_placeholders})",
+            tuple(all_scope_ids),
             max_rows=50
         )
         associations["network_connections"] = net_rows
 
-        # File events
+        # 5. File events
         file_rows = _get_db().execute_query(
-            f"SELECT file_id, event_id, file_path, file_name, extension, size, sha256 "
-            f"FROM files WHERE process_entity_id IN ({placeholders})",
-            tuple(resolved_ids),
+            f"SELECT file_id, event_id, process_entity_id, host_id, timestamp, file_path, file_name, extension, size, sha256 "
+            f"FROM files WHERE process_entity_id IN ({all_placeholders})",
+            tuple(all_scope_ids),
             max_rows=50
         )
         associations["files"] = file_rows
 
-        # Registry events
+        # 6. Registry events
         reg_rows = _get_db().execute_query(
-            f"SELECT registry_id, event_id, registry_path, registry_key, registry_value, value_type "
-            f"FROM registry_events WHERE process_entity_id IN ({placeholders})",
-            tuple(resolved_ids),
+            f"SELECT registry_id, event_id, process_entity_id, host_id, timestamp, registry_path, registry_key, registry_value, value_type "
+            f"FROM registry_events WHERE process_entity_id IN ({all_placeholders})",
+            tuple(all_scope_ids),
             max_rows=50
         )
         associations["registry_events"] = reg_rows
 
-        # Correlated events
+        # 7. Correlated events
         event_rows = _get_db().execute_query(
-            f"SELECT event_id, timestamp, provider, event_code, category, action, outcome, severity "
-            f"FROM events WHERE process_entity_id IN ({placeholders}) ORDER BY timestamp ASC",
-            tuple(resolved_ids),
+            f"SELECT event_id, timestamp, host_id, process_entity_id, provider, event_code, category, action, outcome, severity "
+            f"FROM events WHERE process_entity_id IN ({all_placeholders}) ORDER BY timestamp ASC",
+            tuple(all_scope_ids),
             max_rows=50
         )
         associations["events"] = event_rows

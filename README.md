@@ -66,7 +66,9 @@ ai-musefix/
 │   ├── prompts/       # Per-node system prompts
 │   └── web/           # FastAPI backend + chat UI (HTML/CSS/JS)
 ├── tests/                         # Full pytest suite + conftest DB selection + smoke test
-└── endpoint_security_dataset_expanded_corrected/   # Telemetry DBs + ground truth
+└── endpoint_security_dataset_expanded_corrected/   # Telemetry DBs + groundtruth/ subfolder
+    ├── groundtruth/               # Scenario ground truth files (ATK-A through ATK-F)
+    └── *.db                       # Forensic telemetry SQLite databases
 ```
 
 ---
@@ -93,12 +95,16 @@ The default configuration uses Ollama Cloud with `gemma4:31b` (no local Ollama d
 
 ### 3. Shipped Telemetry Databases
 
-The repository includes two forensic attack telemetry databases with evaluator ground truth:
+The repository includes six forensic attack telemetry databases with evaluator ground truth isolated in `endpoint_security_dataset_expanded_corrected/groundtruth/`:
 
 | Database | Scenario | Hosts | Users | Events | Ground Truth |
 | :--- | :--- | ---: | ---: | ---: | :--- |
-| `attack_lateral_movement.db` | **ATK-A**: Credential access & lateral movement | 2 | 3 | 127 | `groundtruth_attack_A_lateral_movement.json` |
-| `attack_data_exfiltration.db` | **ATK-B**: Data staging, persistence & exfiltration | 1 | 1 | 83 | `groundtruth_attack_B_data_exfiltration.json` |
+| `attack_lateral_movement.db` | **ATK-A**: Credential access & lateral movement | 2 | 3 | 127 | `groundtruth/groundtruth_attack_A_lateral_movement.json` |
+| `attack_data_exfiltration.db` | **ATK-B**: Data staging, persistence & exfiltration | 1 | 1 | 83 | `groundtruth/groundtruth_attack_B_data_exfiltration.json` |
+| `ransomware_attack_complete_ecs.db` | **ATK-C**: Ransomware file encryption (LockBit) | 1 | 1 | 1,450 | `groundtruth/groundtruth_attack_C_ransomware.json` |
+| `attack_lotl_fileless.db` | **ATK-D**: Living-off-the-Land & fileless in-memory C2 | 2 | 2 | 240 | `groundtruth/groundtruth_attack_D_lotl_fileless.json` |
+| `wazuh_lotl_attack_dataset.db` | **ATK-E**: Wazuh SIEM/EDR, LotL & SAM registry access | 2 | 2 | 320 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
+| `suricata_c2_intrusion.db` | **ATK-F**: Suricata NIDS CobaltStrike C2 beaconing & exfil | 3 | 1 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
 
 `config.py` automatically discovers and mounts the first available database out of the box.
 
@@ -142,6 +148,14 @@ python -m a1.cli "Investigate suspicious PowerShell activity on WS-OPS-01 on 202
 python -m a1.cli "Investigate unusual file-staging and outbound network activity on WS-DEV-02 on 2026-09-11. Trace relevant process, archive, scheduled-task, network, and file-deletion activity. Assess whether the evidence supports data exfiltration, note evidence gaps, and avoid treating unrelated authentication activity as proof." --db endpoint_security_dataset_expanded_corrected/attack_data_exfiltration.db
 ```
 
+#### Scenario 3: Suricata NIDS CobaltStrike C2 Intrusion (`ATK-F`)
+
+> **Prompt:** *Investigate critical Suricata NIDS alerts on WS-FINANCE-01 (192.168.1.105): multiple ET MALWARE CobaltStrike C2 beaconing alerts to 203.0.113.88:8443 between 2026-10-16T14:00:00Z and 2026-10-16T16:02:00Z. Determine whether this is a malicious intrusion or benign administrative activity.*
+
+```bash
+python -m a1.cli "Investigate critical Suricata NIDS alerts on WS-FINANCE-01 (192.168.1.105): multiple ET MALWARE CobaltStrike C2 beaconing alerts to 203.0.113.88:8443 between 2026-10-16T14:00:00Z and 2026-10-16T16:02:00Z" --db endpoint_security_dataset_expanded_corrected/suricata_c2_intrusion.db
+```
+
 #### Common CLI Flags
 
 | Flag | Description |
@@ -159,12 +173,12 @@ python -m a1.cli "Investigate unusual file-staging and outbound network activity
 
 ### 3. Benchmark Runner
 
-Evaluate agent accuracy and reasoning against labeled ground truth for both shipped attack scenarios:
+Evaluate agent accuracy and reasoning against labeled ground truth across all 6 shipped attack scenarios (labels loaded from `endpoint_security_dataset_expanded_corrected/groundtruth/`):
 
 ```bash
 python -m a1.benchmark
 # or with a limit:
-python -m a1.cli --benchmark --limit 2
+python -m a1.cli --benchmark --limit 6
 ```
 
 The benchmark switches telemetry databases automatically per scenario, validates verdicts against ground truth, and tracks whether structured-output fallbacks were triggered.

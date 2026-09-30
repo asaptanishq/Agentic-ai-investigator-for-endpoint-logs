@@ -247,10 +247,184 @@ def _missing_requested_archive_files(state):
     return sorted(archive_names - created_names)
 
 
+def _update_investigation_memory(current_memory: dict, messages: list) -> dict:
+    """Accumulate and de-duplicate forensic entities discovered across tool executions."""
+    mem = dict(current_memory) if isinstance(current_memory, dict) else {}
+    processes = dict(mem.get("discovered_processes") or {})
+    hosts = set(mem.get("discovered_hosts") or [])
+    users = set(mem.get("discovered_users") or [])
+    network = list(mem.get("discovered_network") or [])
+    files = list(mem.get("discovered_files") or [])
+    registry = list(mem.get("discovered_registry") or [])
+    key_events = list(mem.get("key_events") or [])
+
+    seen_net = {(n.get("source_ip"), n.get("destination_ip"), str(n.get("destination_port"))) for n in network}
+    seen_files = {(f.get("file_name"), f.get("action")) for f in files}
+    seen_reg = {r.get("registry_path") for r in registry}
+    seen_evt = {e.get("event_id") for e in key_events}
+
+    for m in messages:
+        if getattr(m, "type", "") != "tool":
+            continue
+        content = getattr(m, "content", "")
+        if not content:
+            continue
+        try:
+            payload = json.loads(content)
+        except Exception:
+            continue
+
+        rows = []
+        if isinstance(payload, list):
+            rows.extend(row for row in payload if isinstance(row, dict))
+        elif isinstance(payload, dict):
+            if "target_process" in payload and isinstance(payload["target_process"], dict):
+                tp = payload["target_process"]
+                pid_key = tp.get("process_entity_id")
+                if pid_key:
+                    processes[pid_key] = {
+                        "process_name": tp.get("process_name"),
+                        "pid": tp.get("pid"),
+                        "command_line": tp.get("command_line"),
+                        "parent_entity_id": tp.get("parent_entity_id"),
+                        "host_id": tp.get("host_id"),
+                    }
+            for list_key in ("matches", "events", "processes", "network_connections", "files", "registry_events", "ancestors", "descendants", "spawned_processes", "parent_process", "process_details"):
+                val = payload.get(list_key)
+                if isinstance(val, list):
+                    rows.extend(r for r in val if isinstance(r, dict))
+
+        for row in rows:
+            hid = str(row.get("host_id") or "")
+            if hid and hid not in ("unknown", "N/A", "None", ""):
+                hosts.add(hid)
+            uid = str(row.get("user_id") or row.get("user_name") or row.get("username") or "")
+            if uid and uid not in ("unknown", "N/A", "None", ""):
+                users.add(uid)
+
+            peid = row.get("process_entity_id") or row.get("child_process_entity_id")
+            if peid:
+                p_entry = dict(processes.get(peid, {}))
+                for k in ("process_name", "executable", "pid", "parent_entity_id", "parent_pid", "parent_process_name", "command_line", "host_id"):
+                    val = row.get(k) or row.get(f"child_{k}")
+                    if val is not None and not p_entry.get(k):
+                        p_entry[k] = val
+                processes[peid] = p_entry
+
+            dip = row.get("destination_ip")
+            if dip:
+                sip = row.get("source_ip")
+                dport = str(row.get("destination_port") or "")
+                net_key = (sip, dip, dport)
+                if net_key not in seen_net:
+                    seen_net.add(net_key)
+                    network.append({
+                        "source_ip": sip,
+                        "destination_ip": dip,
+                        "destination_port": dport,
+                        "process_entity_id": peid,
+                        "event_id": row.get("event_id"),
+                    })
+
+            fname = row.get("file_name") or row.get("file_path")
+            if fname and (row.get("file_id") or "file" in str(row.get("action", "")).lower()):
+                act = str(row.get("action") or "file_activity")
+                f_key = (str(fname), act)
+                if f_key not in seen_files:
+                    seen_files.add(f_key)
+                    files.append({
+                        "file_name": str(fname),
+                        "file_path": row.get("file_path"),
+                        "action": act,
+                        "sha256": row.get("sha256"),
+                        "process_entity_id": peid,
+                        "event_id": row.get("event_id"),
+                    })
+
+            rpath = row.get("registry_path") or row.get("registry_key")
+            rkey = row.get("registry_key")
+            if rpath:
+                full_reg = f"{rpath}\\{rkey}" if rkey and rkey not in str(rpath) else str(rpath)
+                if full_reg not in seen_reg:
+                    seen_reg.add(full_reg)
+                    registry.append({
+                        "registry_path": full_reg,
+                        "registry_key": rkey,
+                        "registry_value": row.get("registry_value"),
+                        "process_entity_id": peid,
+                        "event_id": row.get("event_id"),
+                    })
+
+            eid = row.get("event_id")
+            if eid and eid not in seen_evt:
+                seen_evt.add(eid)
+                key_events.append({
+                    "event_id": eid,
+                    "timestamp": row.get("timestamp"),
+                    "host_id": row.get("host_id"),
+                    "action": row.get("action"),
+                    "category": row.get("category"),
+                })
+
+    return {
+        "discovered_processes": processes,
+        "discovered_hosts": sorted(hosts),
+        "discovered_users": sorted(users),
+        "discovered_network": network[:15],
+        "discovered_files": files[:20],
+        "discovered_registry": registry[:15],
+        "key_events": key_events[:30],
+    }
+
+
+def _format_investigation_memory(memory: dict) -> str:
+    """Format persistent working memory into an authoritative prompt section."""
+    lines = ["## CURRENT INVESTIGATION WORKING MEMORY (PERSISTENT FINDINGS ACROSS ALL ITERATIONS):"]
+    if memory.get("discovered_hosts"):
+        lines.append(f"- Active Hosts: {', '.join(memory['discovered_hosts'])}")
+    if memory.get("discovered_users"):
+        lines.append(f"- Observed Accounts: {', '.join(memory['discovered_users'])}")
+
+    procs = memory.get("discovered_processes", {})
+    if procs:
+        lines.append("- Discovered Processes & Lineage:")
+        for peid, p in list(procs.items())[:10]:
+            pname = p.get("process_name") or p.get("executable") or "unknown"
+            pid = p.get("pid") or "?"
+            cmd = p.get("command_line")
+            cmd_str = f" | cmd: {str(cmd)[:60]}..." if cmd else ""
+            parent = f" (parent: {p.get('parent_process_name') or p.get('parent_entity_id')})" if p.get('parent_process_name') or p.get('parent_entity_id') else ""
+            lines.append(f"  * {peid} ({pname}, PID {pid}){parent}{cmd_str}")
+
+    net = memory.get("discovered_network", [])
+    if net:
+        lines.append("- Discovered Network Connections:")
+        for n in net[:5]:
+            lines.append(f"  * {n.get('source_ip') or '?'} -> {n.get('destination_ip')}:{n.get('destination_port')} (proc: {n.get('process_entity_id') or '?'})")
+
+    fls = memory.get("discovered_files", [])
+    if fls:
+        lines.append("- Discovered File Modifications:")
+        for f in fls[:6]:
+            lines.append(f"  * {f.get('action')}: {f.get('file_name')} (path: {f.get('file_path') or '?'})")
+
+    regs = memory.get("discovered_registry", [])
+    if regs:
+        lines.append("- Discovered Registry Activity:")
+        for r in regs[:4]:
+            lines.append(f"  * {r.get('registry_path')} (val: {r.get('registry_value') or '?'})")
+
+    lines.append("Use these confirmed entities to guide subsequent queries and correlate the full attack chain.")
+    return "\n".join(lines)
+
+
 def investigator_node(state):
     llm = get_llm().bind_tools(ALL_INVESTIGATION_TOOLS)
 
     iteration = state.get("iteration_count", 0) + 1
+
+    # Accumulate working memory from all tool messages so far
+    working_memory = _update_investigation_memory(state.get("investigation_memory"), state.get("messages", []))
 
     # Inject active hypotheses into the investigator prompt
     hypos = state.get("hypotheses", [])
@@ -267,6 +441,11 @@ def investigator_node(state):
 
     # FIX: schema hint appended to the system prompt (see _get_schema_hint).
     system = INVESTIGATOR_SYSTEM_PROMPT + "\n\n" + _get_schema_hint() + hypo_block
+
+    # Inject authoritative working memory into prompt
+    if working_memory and any(working_memory.values()):
+        system += "\n\n" + _format_investigation_memory(working_memory)
+
     enriched_alert = state.get("enriched_alert") or {}
     if enriched_alert:
         scope = {
@@ -329,6 +508,7 @@ def investigator_node(state):
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0) + 1,
             "active_hypothesis": active_hypo,
+            "investigation_memory": working_memory,
         }
 
     missing_smb = _missing_smb_auth_correlation(state.get("messages", []))
@@ -356,6 +536,7 @@ def investigator_node(state):
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "lateral_network_nudge_sent": True,
+            "investigation_memory": working_memory,
         }
 
     missing_auth_hosts = _missing_requested_auth_hosts(state)
@@ -387,6 +568,7 @@ def investigator_node(state):
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "requested_auth_nudge_sent": True,
+            "investigation_memory": working_memory,
         }
 
     missing_archives = _missing_requested_archive_files(state)
@@ -420,6 +602,7 @@ def investigator_node(state):
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "requested_archive_nudge_sent": True,
+            "investigation_memory": working_memory,
         }
 
     # FIX: Prevent premature termination before gathering data. If the model outputs text
@@ -438,12 +621,14 @@ def investigator_node(state):
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
+            "investigation_memory": working_memory,
         }
 
     return {
         "messages": [response],
         "iteration_count": iteration,
         "active_hypothesis": active_hypo,
+        "investigation_memory": working_memory,
     }
 
 def should_continue(state):

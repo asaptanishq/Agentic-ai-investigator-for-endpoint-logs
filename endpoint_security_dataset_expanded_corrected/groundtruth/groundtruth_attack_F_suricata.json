@@ -1,0 +1,47 @@
+{
+  "dataset": "suricata_c2_intrusion.db",
+  "scenario": "Suricata NIDS Alert & EVE Telemetry: CobaltStrike C2 Beaconing, Internal SMB Reconnaissance, and High-Volume TLS Exfiltration",
+  "summary": "On 2026-10-16, Suricata NIDS detected an intrusion originating from internal host WS-FINANCE-01 (192.168.1.105). Telemetry captured initial DNS resolution for beacon.apt29-c2.net, periodic TLS C2 beaconing to external C2 IP 203.0.113.88 on port 8443 (matched signature ET MALWARE Win32/CobaltStrike Malleable C2 Beacon with SNI beacon.apt29-c2.net), followed by internal reconnaissance sweeping DC-AUTH-01 (192.168.1.10) over SMB port 445, and high-volume data exfiltration (94.5 MB) to 203.0.113.88 over port 8443.",
+  "target_hosts": [
+    {
+      "asset_id": "asset-finance-01",
+      "hostname": "WS-FINANCE-01",
+      "ip_address": "192.168.1.105",
+      "zone": "Finance"
+    },
+    {
+      "asset_id": "asset-dc-01",
+      "hostname": "DC-AUTH-01",
+      "ip_address": "192.168.1.10",
+      "zone": "IT Infrastructure"
+    }
+  ],
+  "kill_chain": [
+    "14:15:00 DNS query for beacon.apt29-c2.net resolved to 203.0.113.88 (ET DNS Query for Known Suspicious Dynamic DNS / APT C2 Domain)",
+    "14:17:00-14:50:00 Repeated TLS C2 beaconing (12 alerts) from 192.168.1.105 to 203.0.113.88:8443 with TLS SNI beacon.apt29-c2.net and JA3 a0e9f5d64349fb13191bc781f81f42e1 (ET MALWARE Win32/CobaltStrike Malleable C2 Beacon)",
+    "15:00:00-15:01:00 Internal SMB enumeration sweep (5 alerts) from 192.168.1.105 to Domain Controller 192.168.1.10:445 (ET SCAN Potential SMB Sweep to Domain Controller)",
+    "15:25:00 High-volume outbound data exfiltration flow (94.5 MB) from 192.168.1.105 to 203.0.113.88:8443 (ET EXFIL Suspicious High-Volume Encrypted Outbound Data Flow)"
+  ],
+  "key_iocs": [
+    "192.168.1.105",
+    "192.168.1.10",
+    "203.0.113.88",
+    "8443",
+    "445",
+    "beacon.apt29-c2.net",
+    "a0e9f5d64349fb13191bc781f81f42e1",
+    "ET MALWARE Win32/CobaltStrike Malleable C2 Beacon",
+    "ET SCAN Potential SMB Sweep to Domain Controller",
+    "ET EXFIL Suspicious High-Volume Encrypted Outbound Data Flow",
+    "ET DNS Query for Known Suspicious Dynamic DNS / APT C2 Domain"
+  ],
+  "expected_verdict": "malicious",
+  "verdict_boundary": "confirmed_malicious",
+  "evidence_basis": [
+    "suricata_alert (ET MALWARE Win32/CobaltStrike Malleable C2 Beacon)",
+    "dns_query (beacon.apt29-c2.net -> 203.0.113.88)",
+    "tls_handshake (SNI beacon.apt29-c2.net, JA3 a0e9f5d64349fb13191bc781f81f42e1)",
+    "smb_reconnaissance (port 445 probe to DC-AUTH-01 / 192.168.1.10)",
+    "data_exfiltration (94.5 MB outbound payload to 203.0.113.88:8443)"
+  ]
+}

@@ -37,7 +37,7 @@ def _extract_rows_from_tool_messages(messages: List[Any]) -> Tuple[List[Dict[str
                     raw_records.append(item)
         elif isinstance(data, dict):
             # Inspect matches, ancestors, descendants, network_connections, files, registry_events, events
-            for key in ("matches", "events", "network_connections", "files", "registry_events", "resolved_entities"):
+            for key in ("matches", "events", "network_connections", "files", "registry_events", "resolved_entities", "spawned_processes", "parent_process", "process_details", "processes"):
                 if key in data and isinstance(data[key], list):
                     total_raw_rows += len(data[key])
                     for item in data[key]:
@@ -108,8 +108,9 @@ def _extract_rows_from_tool_messages(messages: List[Any]) -> Tuple[List[Dict[str
             summary_parts.append(f"reg:{reg_target}")
         if "parent_process_name" in r and r["parent_process_name"]:
             summary_parts.append(f"(parent: {r['parent_process_name']})")
-        if "command_line" in details:
-            summary_parts.append(f"cmd:{str(details['command_line'])[:60]}")
+        cmd = r.get("command_line") or r.get("child_command_line") or details.get("command_line")
+        if cmd:
+            summary_parts.append(f"cmd:{str(cmd)[:70]}")
         for detail_key in (
             "file_name", "file_path", "file_size", "destination_ip",
             "destination_port", "destination_domain", "registry_path",
@@ -235,6 +236,8 @@ def _build_entity_set(kept_events: List[Dict[str, Any]]) -> Dict[str, List[str]]
             reg_keys.add(r["registry_path"])
         if r.get("registry_key"):
             reg_keys.add(r["registry_key"])
+        if r.get("registry_path") and r.get("registry_key"):
+            reg_keys.add(f"{r['registry_path']}\\{r['registry_key']}")
 
         details = r.get("details", {})
         if isinstance(details, dict):

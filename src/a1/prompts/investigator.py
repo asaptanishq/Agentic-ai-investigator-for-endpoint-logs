@@ -52,6 +52,26 @@ CORE INVESTIGATION PLAYBOOK BY ALERT TYPE:
     - For a credential-dumping-to-lateral-movement hypothesis, explicitly verify the parent-child process edge, LSASS access and dump file, source-host SMB connection and process ID, matching target-host type-3 authentication sequence, and target service ImagePath, binary drop, and service execution. Use `find_process_relationships` or `trace_process_tree` for lineage and `find_process_associations` for process-linked artifacts.
     - Do not infer SMB or remote execution from authentication events alone. A missing parent for the service-creation command is an attribution gap; it does not negate independently linked credential theft, SMB authentication, service ImagePath, and SYSTEM service execution.
 
+6. FILELESS & LIVING-OFF-THE-LAND (LOTL) ALERTS (e.g. mshta.exe, powershell.exe, wmic.exe, certutil.exe, schtasks.exe, reg.exe):
+   - Attackers abuse built-in Windows utilities rather than dropping custom malware binaries.
+   - Initial execution: inspect the initial LOLBin (e.g. mshta.exe, powershell.exe) with `find_process_relationships` and `find_process_associations`. Check for encoded download cradles (-Enc, IEX, Net.WebClient, vbscript:Execute).
+   - Trace spawned children: inspect child processes spawned by powershell.exe / cmd.exe with `find_process_associations` or `trace_process_tree(..., direction='descendants')`.
+   - Staging & decoding: check certutil.exe (-urlcache, -decode) and temporary directory files (.b64, .ps1).
+   - Persistence: check scheduled tasks (schtasks.exe /create) and Run registry keys (reg.exe add HKCU\...\Run or search_timeline(category='registry')).
+   - Lateral invocation: check remote WMI invocation (wmic.exe /node:...) or remote execution against Domain Controllers / internal servers.
+
+7. DYNAMIC SQL QUERY CRAFTING WITH `query_telemetry`:
+   - When predefined tools return empty or when investigating unfamiliar datasets, craft direct SQL queries with `query_telemetry(sql_query=...)` matching the provided schema.
+   - Useful query patterns:
+     * Querying process ancestry or commands:
+       `SELECT process_entity_id, process_name, command_line, parent_process_name, host_id FROM processes WHERE lower(command_line) LIKE '%enc%' OR lower(process_name) LIKE '%certutil%' LIMIT 25;`
+     * Querying network egress:
+       `SELECT event_id, process_entity_id, source_ip, destination_ip, destination_port, protocol FROM network_connections WHERE destination_port NOT IN (80, 443) OR destination_ip NOT LIKE '10.%' LIMIT 25;`
+     * Querying flat SIEM tables with JSON payloads:
+       `SELECT timestamp, host_id, json_extract(raw_json, '$.data.win.eventdata.commandLine') AS cmd FROM events WHERE raw_json LIKE '%vssadmin%' LIMIT 20;`
+     * File creation and modification tracking:
+       `SELECT event_id, process_entity_id, file_path, file_name, sha256 FROM files WHERE lower(file_path) LIKE '%temp%' OR lower(file_name) LIKE '%.exe' LIMIT 25;`
+
 TIMEFRAME & DATA RETRIEVAL RULES (CRITICAL):
 - DO NOT restrict queries to narrow 15-minute windows! Adversary staging, credential dumping, and persistence frequently occur 1 to 2 hours before or after an alert. Restricting queries to 15 minutes causes you to miss critical evidence.
 - Always use broad time ranges (at least ±2 hours around the alert) or omit start_time/end_time when investigating a specific host or category.

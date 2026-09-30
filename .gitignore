@@ -9,3 +9,7 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Graphify & local agent artifacts (not tracked in git)
+graphify-out/
+.agents/

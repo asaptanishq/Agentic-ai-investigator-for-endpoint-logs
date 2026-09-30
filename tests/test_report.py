@@ -297,4 +297,64 @@ def test_incident_verdict_handles_leaked_control_tokens():
     assert verdict2.verdict == "malicious"
     assert verdict2.verdict_boundary == "confirmed_malicious"
     assert "<channel|>" not in verdict2.executive_summary
-    assert "<channel|>" not in verdict2.evidence_basis[0]
+    assert "<channel|>" not in verdict2.evidence_basis[0]
+
+
+def test_evaluate_case_rubric_scoring():
+    """Verify that evaluate_case_rubric calculates correct multi-dimensional points."""
+    from a1.benchmark import evaluate_case_rubric
+    from langchain_core.messages import AIMessage
+
+    mock_case = {
+        "case_label": "malicious",
+        "verdict_boundary": "confirmed_malicious",
+        "evidence_basis": ["powershell.exe", "lsass.dmp", "procdump.exe"]
+    }
+
+    from a1.db import EndpointDatabase
+    db = EndpointDatabase()
+    real_eid_row = db.execute_query("SELECT event_id FROM events LIMIT 1")
+    real_pid_row = db.execute_query("SELECT process_entity_id FROM processes LIMIT 1")
+    real_eid = real_eid_row[0]["event_id"] if real_eid_row else "evt-dummy"
+    real_pid = real_pid_row[0]["process_entity_id"] if real_pid_row else "proc-dummy"
+
+    grounded_report = f"""# DFIR Incident Investigation Report
+## Verdict: MALICIOUS (confirmed_malicious)
+## Executive Summary
+Observed powershell.exe executing procdump.exe creating lsass.dmp.
+
+## Forensic Timeline Matrix
+| Timestamp | Host | Process | Action | Event ID |
+| 2026-09-10T09:00:00Z | host-a01 | powershell.exe | start | {real_eid} |
+
+## Indicator of Compromise (IOC) Matrix
+| Artifact | Type | Value | Status |
+| procdump.exe | Process | {real_pid} | Malicious |
+
+## Next Steps & Playbook
+1. Isolate endpoint host-a01 immediately.
+"""
+
+    mock_state = {
+        "verdict": "malicious",
+        "verdict_boundary": "confirmed_malicious",
+        "report_fallback_used": False,
+        "iteration_count": 3,
+        "repeat_nudges": 0,
+        "messages": [AIMessage(content=grounded_report)],
+        "investigation_memory": {
+            "discovered_processes": {real_pid: {"process_name": "procdump.exe"}},
+            "discovered_hosts": ["host-a01"],
+        }
+    }
+
+    rubric = evaluate_case_rubric(mock_case, mock_state)
+    assert rubric["verdict_score"] == 20.0
+    assert rubric["recall_score"] == 30.0
+    assert rubric["grounding_score"] == 25.0
+    assert rubric["efficiency_score"] == 15.0
+    assert rubric["report_score"] == 10.0
+    assert rubric["composite_score"] == 100.0
+    assert "A+" in rubric["grade"]
+
+

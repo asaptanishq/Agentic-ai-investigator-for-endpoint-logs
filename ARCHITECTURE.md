@@ -125,8 +125,11 @@ ai-musefix/
 |-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data]
 |   |-- attack_lateral_movement.db        Telemetry for ATK-A (credential dumping + lateral movement)
 |   |-- attack_data_exfiltration.db       Telemetry for ATK-B (staging + persistence + exfiltration)
-|   |-- groundtruth_attack_A_lateral_movement.json   Evaluator labels for ATK-A
-|   |-- groundtruth_attack_B_data_exfiltration.json  Evaluator labels for ATK-B
+|   |-- ransomware_attack_complete_ecs.db Telemetry for ATK-C (phishing + LockBit encryption)
+|   |-- attack_lotl_fileless.db           Telemetry for ATK-D (fileless + in-memory C2)
+|   |-- wazuh_lotl_attack_dataset.db      Telemetry for ATK-E (Wazuh SIEM/EDR + SAM registry access)
+|   |-- suricata_c2_intrusion.db          Telemetry for ATK-F (Suricata NIDS C2 beaconing + exfil)
+|   |-- groundtruth/                      Evaluator labels for ATK-A through ATK-F
 |   |-- README.md                         Dataset provenance (with repo-state note)
 |   |-- schema.md                         Telemetry schema spec (with repo-state note)
 |
@@ -366,7 +369,7 @@ Telemetry databases expose:
 * `registry_events`
 * `agent_events` view
 
-Full field semantics live in `endpoint_security_dataset_expanded_corrected/schema.md` (which carries a repo-state note: evaluator-only objects from the original five-scenario layout are absent here; per-scenario truth lives in the two `groundtruth_attack_*.json` files).
+Full field semantics live in `endpoint_security_dataset_expanded_corrected/schema.md` (which documents table and view schemas). Per-scenario evaluator ground truth lives in the `endpoint_security_dataset_expanded_corrected/groundtruth/` subfolder.
 
 ### Dataset Files
 
@@ -374,10 +377,12 @@ Full field semantics live in `endpoint_security_dataset_expanded_corrected/schem
 | ------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `endpoint_security_dataset_expanded_corrected/attack_lateral_movement.db`                  | Telemetry for `ATK-A`                     | Ships with the repo                                                                                                                                                                               |
 | `endpoint_security_dataset_expanded_corrected/attack_data_exfiltration.db`                 | Telemetry for `ATK-B`                     | Ships with the repo                                                                                                                                                                               |
-| `endpoint_security_dataset_expanded_corrected/groundtruth_attack_A_lateral_movement.json`  | Evaluator labels for `ATK-A`              | Ships with the repo                                                                                                                                                                               |
-| `endpoint_security_dataset_expanded_corrected/groundtruth_attack_B_data_exfiltration.json` | Evaluator labels for `ATK-B`              | Ships with the repo                                                                                                                                                                               |
-| `endpoint_security_dataset_expanded_corrected/endpoint_security.db`                        | Original five-scenario bundle layout only | Evaluator-side full database unavailable                                                                                                                                                          |
-| `endpoint_security_dataset_expanded_corrected/case_labels.json`                            | Original five-scenario bundle layout only | Not needed: `benchmark.py` derives labels from the shipped `groundtruth_attack_*.json` files when it is absent (the smoke test still synthesises a temporary labels file for its benchmark check) |
+| `endpoint_security_dataset_expanded_corrected/ransomware_attack_complete_ecs.db`            | Telemetry for `ATK-C`                     | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/attack_lotl_fileless.db`                      | Telemetry for `ATK-D`                     | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/wazuh_lotl_attack_dataset.db`                 | Telemetry for `ATK-E`                     | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/suricata_c2_intrusion.db`                     | Telemetry for `ATK-F`                     | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/groundtruth/`                                | Evaluator labels for `ATK-A` to `ATK-F`   | Ships with the repo                                                                                                                                                                               |
+| `endpoint_security_dataset_expanded_corrected/case_labels.json`                            | Original five-scenario bundle layout only | Not needed: `benchmark.py` derives labels from the shipped `groundtruth/groundtruth_attack_*.json` files when it is absent |
 
 The dataset guides (`endpoint_security_dataset_expanded_corrected/README.md`, `schema.md`) open with a dated repository-state note mapping the original five-scenario layout to the two shipped attack databases.
 

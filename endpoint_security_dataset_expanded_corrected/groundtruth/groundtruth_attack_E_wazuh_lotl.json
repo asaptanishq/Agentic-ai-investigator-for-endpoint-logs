@@ -1,0 +1,47 @@
+{
+  "dataset": "wazuh_lotl_attack_dataset.db",
+  "scenario": "Wazuh SIEM Living-off-the-Land (LotL) Attack with In-Memory PowerShell, SAM Dump, WMI Persistence, and C2 Exfiltration",
+  "summary": "On 2026-10-15, an adversary executed a multi-stage Living-off-the-Land attack across WS-DEV-01 (Agent ID 001) and WS-ADMIN-01 (Agent ID 002). The attacker leveraged hidden in-memory PowerShell (PID 4512) to enumerate local administrators, access the SAM registry hive, and inspect LSASS process handles. The adversary established WMI event consumer persistence, staged credentials in C:\\Temp\\credentials.txt, connected to C2 infrastructure (attacker.com:80 and 198.51.100.45:4444), moved laterally via SMB to 10.10.2.51, and exfiltrated data to exfil.attacker.com.",
+  "target_hosts": [
+    {
+      "agent_id": "001",
+      "hostname": "WS-DEV-01",
+      "ip_address": "10.10.2.50",
+      "os": "Windows 11 Enterprise Build 23H2"
+    },
+    {
+      "agent_id": "002",
+      "hostname": "WS-ADMIN-01",
+      "ip_address": "10.10.2.51",
+      "os": "Windows 11 Enterprise Build 23H2"
+    }
+  ],
+  "kill_chain": [
+    "08:05 powershell.exe -NoP -W Hidden invoked on WS-DEV-01 (user developer)",
+    "08:06 SAM hive discovery via Get-ItemProperty HKLM:\\SAM",
+    "08:10 WMI event consumer persistence (__EventFilter, Win32_ProcessStartup)",
+    "08:15 Credential inspection via LSASS process handle request",
+    "08:20 Outbound C2 beaconing to attacker.com (port 80) and registry Run key persistence",
+    "09:05 Lateral movement probing from 10.10.2.50 to 10.10.2.51 via RPC (port 135) and SMB (port 445)",
+    "09:20 Staging stolen credentials to C:\\Temp\\credentials.txt and clipboard.txt",
+    "10:00 Exfiltration of staged data to exfil.attacker.com"
+  ],
+  "key_iocs": [
+    "powershell.exe -NoP -W Hidden",
+    "HKLM:\\SAM",
+    "Win32_ProcessStartup",
+    "attacker.com",
+    "198.51.100.45",
+    "exfil.attacker.com",
+    "C:\\Temp\\credentials.txt",
+    "C:\\Temp\\clipboard.txt"
+  ],
+  "expected_verdict": "malicious",
+  "verdict_boundary": "confirmed_malicious",
+  "evidence_basis": [
+    "process_execution (hidden unquoted PowerShell LOLBin)",
+    "registry_access (SAM hive discovery and registry persistence)",
+    "network_connection (outbound C2 and exfiltration beacons)",
+    "file_creation (credential staging in C:\\Temp)"
+  ]
+}
