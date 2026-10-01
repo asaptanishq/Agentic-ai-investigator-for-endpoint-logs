@@ -78,7 +78,7 @@ ai-musefix/
 |-- ARCHITECTURE.md                    [Architecture Guide]   Complete system visualization & file catalog
 |
 |-- scripts/                           [Operational Scripts]
-|   |-- generate_large_dataset.py      [Data Generator]       Synthetic enterprise telemetry generator (50k+ events, 31 hosts)
+|   |-- generate_large_dataset.py      [Data Generator]       Synthetic enterprise telemetry generator (1,890 events, 32 hosts)
 |   |-- smoke_test.py                  [Smoke Script]         Standalone 17-point end-to-end verification script
 |
 |-- src/a1/                            [Core Package]
@@ -134,7 +134,7 @@ ai-musefix/
 |   |-- attack_lotl_fileless.db           Telemetry for ATK-D (fileless + in-memory C2)
 |   |-- wazuh_lotl_attack_dataset.db      Telemetry for ATK-E (Wazuh SIEM/EDR + SAM registry access)
 |   |-- suricata_c2_intrusion.db          Telemetry for ATK-F (Suricata NIDS C2 beaconing + exfil)
-|   |-- attack_supply_chain.db            Telemetry for ATK-G (Supply chain compromise across 31 endpoints)
+|   |-- attack_supply_chain.db            Telemetry for ATK-G (Supply chain compromise across 32 endpoints, 1,890 events)
 |   |-- groundtruth/                      Evaluator labels for ATK-A through ATK-G
 |   |-- README.md                         Dataset provenance (with repo-state note)
 |   |-- schema.md                         Telemetry schema spec (with repo-state note)

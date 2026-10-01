@@ -10,7 +10,7 @@
 > | `attack_lotl_fileless.db` | **ATK-D** telemetry: Living-off-the-Land (mshta, powershell, certutil, wmic) and fileless execution |
 > | `wazuh_lotl_attack_dataset.db` | **ATK-E** telemetry: Wazuh SIEM/EDR, LotL command execution and SAM registry access |
 > | `suricata_c2_intrusion.db` | **ATK-F** telemetry: Suricata NIDS alerts, CobaltStrike C2 beaconing, internal SMB sweeps, and exfiltration |
-> | `attack_supply_chain.db` | **ATK-G** telemetry: Enterprise supply chain software compromise across 31 endpoints (50,000+ events) |
+> | `attack_supply_chain.db` | **ATK-G** telemetry: Enterprise supply chain software compromise across 32 endpoints (1,890 events) |
 > | `groundtruth/` | Ground truth JSON files for ATK-A through ATK-G (`expected_verdict: malicious`, `verdict_boundary: confirmed_malicious`, key IOCs, kill chain) |
 > | `schema.md` | Field and table semantics for the shipped `.db` telemetry files |
 >

@@ -47,5 +47,5 @@
     "Windows Update, Defender, SCCM background processes",
     "Normal SMB file share access to FS-CORP-01/02"
   ],
-  "notes": "50,000+ events across 30+ hosts with 2-week time window. Attack is ~2-3% of total events spread across 5 hosts on a single day. Tests agent's ability to find a needle in a haystack."
+  "notes": "1,890 events across 32 hosts with 14-day time window. Attack is spread across 5 hosts on a single day. Tests agent's ability to find a needle in a haystack."
 }

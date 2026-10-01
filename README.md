@@ -105,7 +105,7 @@ The repository includes seven forensic attack telemetry databases with evaluator
 | `attack_lotl_fileless.db` | **ATK-D**: Living-off-the-Land & fileless in-memory C2 | 2 | 2 | 240 | `groundtruth/groundtruth_attack_D_lotl_fileless.json` |
 | `wazuh_lotl_attack_dataset.db` | **ATK-E**: Wazuh SIEM/EDR, LotL & SAM registry access | 2 | 2 | 320 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
 | `suricata_c2_intrusion.db` | **ATK-F**: Suricata NIDS CobaltStrike C2 beaconing & exfil | 3 | 1 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
-| `attack_supply_chain.db` | **ATK-G**: Enterprise Supply Chain software compromise | 31 | 16 | 50,000+ | `groundtruth/groundtruth_attack_G_supply_chain.json` |
+| `attack_supply_chain.db` | **ATK-G**: Enterprise Supply Chain software compromise | 32 | 32 | 1,890 | `groundtruth/groundtruth_attack_G_supply_chain.json` |
 
 `config.py` automatically discovers and mounts the first available database out of the box.
 
