@@ -1,5 +1,5 @@
 fastapi>=0.141.1
-langchain>=1.4.2
+langchain-core>=1.0.0
 langchain-ollama>=1.1.0
 langchain-openai>=1.6.2
 langgraph>=1.2.11

@@ -526,13 +526,10 @@ def create_app() -> FastAPI:
                                 if report_msgs:
                                     report_content = getattr(report_msgs[-1], "content", "")
 
-                        raw_conf = final_state.get("confidence", 0.85)
                         try:
-                            if isinstance(raw_conf, str):
-                                raw_conf = raw_conf.replace("%", "").strip()
-                            conf_val = float(raw_conf)
+                            conf_val = float(final_state.get("confidence", 0.85))
                             if conf_val > 1.0:
-                                conf_val = conf_val / 100.0
+                                conf_val /= 100.0
                         except Exception:
                             conf_val = 0.85
                         conf_val = max(0.05, min(1.0, conf_val))

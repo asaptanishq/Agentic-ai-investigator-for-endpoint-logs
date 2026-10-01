@@ -136,7 +136,7 @@ def test_search_timeline_comma_separated_keywords_are_alternatives(monkeypatch):
                 }),
             }]
 
-    monkeypatch.setattr(timeline, "_get_db", lambda: FakeDatabase())
+    monkeypatch.setattr(timeline, "get_active_db", lambda: FakeDatabase())
 
     data = json.loads(search_timeline.invoke({"keyword": "procdump,lsass,dmp"}))
 

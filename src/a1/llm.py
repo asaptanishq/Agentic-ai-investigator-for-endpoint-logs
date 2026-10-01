@@ -112,3 +112,25 @@ def check_llm_status() -> Dict[str, Any]:
         }
     return {"status": "unknown", "provider": provider}
 
+
+def invoke_with_network_retry(runnable: Any, messages: Any, max_attempts: int = 3) -> Any:
+    """Invoke an LLM or runnable with automatic backoff retry on transient network errors."""
+    import time
+    import logging
+
+    logger = logging.getLogger("a1.llm")
+    for attempt in range(max_attempts):
+        try:
+            return runnable.invoke(messages)
+        except Exception as e:
+            err_str = f"{type(e).__name__} {str(e)}".lower()
+            is_net = any(k in err_str for k in ("disconnect", "protocol", "timeout", "connection", "remote", "reset"))
+            if is_net and attempt < max_attempts - 1:
+                delay = 1.5 * (attempt + 1)
+                logger.warning(
+                    f"Transient LLM network issue ({type(e).__name__}: {e}). Retrying attempt {attempt + 2}/{max_attempts} in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+                continue
+            raise
+

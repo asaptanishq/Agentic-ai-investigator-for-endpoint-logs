@@ -72,22 +72,25 @@ flowchart TD
 
 ```text
 ai-musefix/
-|-- pyproject.toml                     [Build / Config]       Project metadata, entrypoints & dependencies
+|-- pyproject.toml                     [Build / Config]       Project metadata, entrypoints (a1, a1-web) & dependencies
 |-- .env.example                       [Environment Template] Default LLM and telemetry database configuration
 |-- README.md                          [Project Overview]     Quickstart, usage instructions, and summary
 |-- ARCHITECTURE.md                    [Architecture Guide]   Complete system visualization & file catalog
+|
+|-- scripts/                           [Operational Scripts]
+|   |-- generate_large_dataset.py      [Data Generator]       Synthetic enterprise telemetry generator (50k+ events, 31 hosts)
+|   |-- smoke_test.py                  [Smoke Script]         Standalone 17-point end-to-end verification script
 |
 |-- src/a1/                            [Core Package]
 |   |-- __init__.py                    [Package Root]         Package initialization
 |   |-- __main__.py                    [Entrypoint]           Module execution handler (`python -m a1`)
 |   |-- config.py                      [Configuration]        Path resolution, env parsing, and model config
-|   |-- db.py                          [Database Layer]       Read-only SQLite wrapper (URI mode=ro) + temp views
+|   |-- db.py                          [Database Layer]       Read-only SQLite wrapper (URI mode=ro) + temp views + get_active_db
 |   |-- state.py                       [Agent State]          InvestigationState TypedDict shared across the graph
 |   |-- graph.py                       [Graph Assembly]       StateGraph nodes, edges, and routing
-|   |-- llm.py                         [Model Factory]        Ollama / OpenAI chat-model factory + runtime override
+|   |-- llm.py                         [Model Factory]        Ollama / OpenAI chat-model factory + invoke_with_network_retry
 |   |-- cli.py                         [CLI Interface]        Single investigations, --web, --benchmark, --db
-|   |-- server.py                      [Web Entrypoint]       Argparse wrapper around a1.web.server:start
-|   |-- benchmark.py                   [Benchmark Harness]    ATK-A / ATK-B labeled-scenario evaluation
+|   |-- benchmark.py                   [Benchmark Harness]    ATK-A through ATK-G labeled-scenario evaluation
 |   |
 |   |-- nodes/                         [Graph Nodes]
 |   |   |-- __init__.py                [Node Registry]        Re-exports all six nodes + should_continue
@@ -97,7 +100,7 @@ ai-musefix/
 |   |   |-- evidence_packing_node.py   [Input Reflection 2]   Compact structured pack for correlation/report
 |   |   |-- correlation_node.py        [Correlation]          Confirmed correlations, gaps, inconsistencies
 |   |   |-- report_node.py             [Report]               IncidentVerdict: verdict, confidence, attack chain
-|   |   |-- structured_output.py       [LLM Helper]           Retry-once-then-fail wrapper for structured calls
+|   |   |-- structured_output.py       [LLM Helper]           Retry repair wrapper + fast raw_decode outer JSON extractor
 |   |
 |   |-- tools/                         [DFIR Tools]
 |   |   |-- __init__.py                [Tool Registry]        ALL_INVESTIGATION_TOOLS list for ToolNode
@@ -107,6 +110,7 @@ ai-musefix/
 |   |   |-- timeline.py                [Tool: Timeline]       search_timeline
 |   |   |-- entity.py                  [Tool: Context]        get_entity_context (host / user)
 |   |   |-- pivot.py                   [Tool: Pivot]          pivot_on_indicator (hash / IP / exe / file)
+|   |   |-- summary.py                 [Tool: Summary]        summarize_tool_output for CLI and web telemetry
 |   |
 |   |-- prompts/                       [System Prompts]
 |   |   |-- __init__.py                [Prompt Registry]      Re-exports the four system prompts
@@ -117,10 +121,11 @@ ai-musefix/
 |   |
 |   |-- web/                           [Web Interface]
 |       |-- __init__.py                [Web Package]          Package marker
-|       |-- server.py                  [Web Server]            FastAPI app, SSE stream, DB/LLM switch endpoints
-|       |-- static/index.html          [Web UI]               ChatGPT-style frontend
-|       |-- static/app.js              [Web Client]            SSE rendering, DB/model selectors
-|       |-- static/style.css            [Web Style]             Light/dark theme stylesheet
+|       |-- server.py                  [Web Server]           FastAPI app, SSE stream, DB/LLM switch endpoints
+|       |-- static/index.html          [Web UI]               Responsive DFIR workbench frontend
+|       |-- static/app.js              [Web Client]           SSE rendering, DB/model selectors, graph orchestration
+|       |-- static/forensic-graph.js   [Forensic DAG]         Interactive SVG DAG and Process Tree engine
+|       |-- static/style.css           [Web Style]            Light/dark theme stylesheet
 |
 |-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data]
 |   |-- attack_lateral_movement.db        Telemetry for ATK-A (credential dumping + lateral movement)
@@ -129,20 +134,20 @@ ai-musefix/
 |   |-- attack_lotl_fileless.db           Telemetry for ATK-D (fileless + in-memory C2)
 |   |-- wazuh_lotl_attack_dataset.db      Telemetry for ATK-E (Wazuh SIEM/EDR + SAM registry access)
 |   |-- suricata_c2_intrusion.db          Telemetry for ATK-F (Suricata NIDS C2 beaconing + exfil)
-|   |-- groundtruth/                      Evaluator labels for ATK-A through ATK-F
+|   |-- attack_supply_chain.db            Telemetry for ATK-G (Supply chain compromise across 31 endpoints)
+|   |-- groundtruth/                      Evaluator labels for ATK-A through ATK-G
 |   |-- README.md                         Dataset provenance (with repo-state note)
 |   |-- schema.md                         Telemetry schema spec (with repo-state note)
 |
 |-- tests/                             [Test Suite]
     |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
-    |-- test_tools.py                  [Test: Tools]           Each forensic tool (fixtures discovered at runtime)
-    |-- test_graph.py                  [Test: Graph]            Graph compilation, investigator nudges
-    |-- test_input_reflection.py       [Test: Reflection]      Alert prep, evidence packing, verdict recovery
-    |-- test_report.py                 [Test: Report]           Verdict normalisation, citations, correlation verdicts
-    |-- test_structured_output.py      [Test: LLM Helper]      Retry-once-then-fail contract
-    |-- test_web.py                    [Test: Web]             FastAPI endpoints
-    |-- smoke_test.py                  [Smoke Script]           Standalone end-to-end script (skipped under pytest)
+    |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
+    |-- test_graph.py                  [Test: Graph]          Graph compilation, investigator nudges
+    |-- test_input_reflection.py       [Test: Reflection]     Alert prep, evidence packing, verdict recovery
+    |-- test_report.py                 [Test: Report]         Verdict normalisation, citations, correlation verdicts
+    |-- test_structured_output.py      [Test: LLM Helper]     Retry-once-then-fail contract
+    |-- test_web.py                    [Test: Web]            FastAPI endpoints
 ```
 
 ---
@@ -155,14 +160,13 @@ ai-musefix/
 | --------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/a1/__init__.py`  | `[Package Root]`      | Package initialisation.                                                                                                                                                                                                                                                                               |
 | `src/a1/__main__.py`  | `[Entrypoint]`        | `python -m a1` module execution handler.                                                                                                                                                                                                                                                              |
-| `src/a1/config.py`    | `[Configuration]`     | `discover_default_db()` (agent-bundle first, then `attack_lateral_movement.db`, `attack_data_exfiltration.db`, any other `*.db`); `set_active_database()` shared by CLI, web and benchmark; env parsing (`LLM_PROVIDER`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12). |
-| `src/a1/db.py`        | `[Database Layer]`    | `EndpointDatabase`: read-only SQLite access (URI `mode=ro`), single-statement `SELECT`/`PRAGMA`/`WITH` guard, `get_schema()`, temp convenience views over `events`.                                                                                                                                   |
+| `src/a1/config.py`    | `[Configuration]`     | `discover_default_db()`, `set_active_database()` shared by CLI, web and benchmark; env parsing (`LLM_PROVIDER`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12).                                                                                                      |
+| `src/a1/db.py`        | `[Database Layer]`    | `EndpointDatabase`: read-only SQLite access (URI `mode=ro`), single-statement `SELECT`/`PRAGMA`/`WITH` guard, `get_schema()`, in-memory virtual adapter temp views over `events`, centralized `get_active_db()`.                                                                                       |
 | `src/a1/state.py`     | `[Agent State]`       | `InvestigationState` TypedDict: messages, hypotheses, `iteration_count`, `repeat_nudges`, `enriched_alert`, `evidence_pack`, verdict fields, `report_fallback_used`, nudge flags.                                                                                                                     |
 | `src/a1/graph.py`     | `[Graph Assembly]`    | Seven nodes (`alert_prep`, `triage`, `investigator`, `tools`, `evidence_packing`, `correlate`, `report`); entry at `alert_prep`; conditional edges from `investigator` (`tools` / `investigator` self-loop / `evidence_packing`).                                                                     |
-| `src/a1/llm.py`       | `[Model Factory]`     | `get_llm()` (`ChatOllama` / `ChatOpenAI`), `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`.                                                                                                                                                                       |
+| `src/a1/llm.py`       | `[Model Factory]`     | `get_llm()` (`ChatOllama` / `ChatOpenAI`), `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`, centralized `invoke_with_network_retry()`.                                                                                                                           |
 | `src/a1/cli.py`       | `[CLI Interface]`     | `run_investigation()` streaming display; `main()` flags: positional alert, `--web`, `--benchmark`, `--limit`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--db`, `--port`, `--no-browser`.                                                                                        |
-| `src/a1/server.py`    | `[Web Entrypoint]`    | Argparse wrapper (`--host`, `--port`, `--no-browser`) around `a1.web.server:start`.                                                                                                                                                                                                                   |
-| `src/a1/benchmark.py` | `[Benchmark Harness]` | `BENCHMARK_CASES` (`ATK-A` on `attack_lateral_movement.db`, `ATK-B` on `attack_data_exfiltration.db`), per-case DB switching, `load_case_labels()` (prefers `case_labels.json`, else derives from shipped `groundtruth_attack_*.json`), fallback runs counted as automatic failures.                  |
+| `src/a1/benchmark.py` | `[Benchmark Harness]` | `BENCHMARK_CASES` (ATK-A through ATK-G), per-case DB switching, `load_case_labels()` (prefers `case_labels.json`, else derives from shipped `groundtruth_attack_*.json`), fallback runs counted as automatic failures.                                                                               |
 
 ### Nodes (`src/a1/nodes/`)
 

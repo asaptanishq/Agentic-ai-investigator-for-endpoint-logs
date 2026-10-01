@@ -3,8 +3,6 @@ from typing import Optional, List, Any
 from langchain_core.tools import tool
 from a1.db import get_active_db
 
-def _get_db():
-    return get_active_db()
 
 
 
@@ -205,7 +203,7 @@ def search_timeline(
             f"FROM events{where_sql} ORDER BY timestamp ASC"
         )
 
-        rows = _get_db().execute_query(query, tuple(params), max_rows=limit)
+        rows = get_active_db().execute_query(query, tuple(params), max_rows=limit)
         results = []
         for r in rows:
             item = dict(r)

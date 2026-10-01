@@ -1,5 +1,3 @@
-import importlib
-
 from a1.nodes.report_node import (
     IncidentVerdict,
     _remove_contradicted_timestamp_gaps,
@@ -8,7 +6,6 @@ from a1.nodes.report_node import (
     _unsupported_citations,
     _validation_warnings,
 )
-report_module = importlib.import_module("a1.nodes.report_node")
 from a1.nodes.triage_node import TriagePlan
 from a1.nodes.correlation_node import CorrelationAndGapAnalysis
 

@@ -1,7 +1,7 @@
 import json
 import re
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage
-from a1.llm import get_llm
+from a1.llm import get_llm, invoke_with_network_retry
 from a1.tools import ALL_INVESTIGATION_TOOLS
 from a1.prompts import INVESTIGATOR_SYSTEM_PROMPT
 from a1.config import MAX_INVESTIGATION_STEPS
@@ -473,26 +473,7 @@ def investigator_node(state):
             pruned_history.append(m)
 
     messages = [SystemMessage(content=system)] + pruned_history
-
-    import time
-    max_retries = 3
-    response = None
-    for attempt in range(max_retries):
-        try:
-            response = llm.invoke(messages)
-            break
-        except Exception as e:
-            err_str = f"{type(e).__name__} {str(e)}".lower()
-            if attempt < max_retries - 1 and any(
-                k in err_str for k in ("disconnect", "protocol", "timeout", "connection", "remote", "reset")
-            ):
-                import logging
-                logging.getLogger("a1.investigator").warning(
-                    f"Transient LLM network glitch ({type(e).__name__}: {e}). Retrying attempt {attempt + 2}/{max_retries} in {1.5 * (attempt + 1)}s..."
-                )
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            raise
+    response = invoke_with_network_retry(llm, messages)
 
     # Prevent speculative over-generation: cap at 2 tool calls per step so the agent
     # investigates iteratively with real data instead of hallucinating forward

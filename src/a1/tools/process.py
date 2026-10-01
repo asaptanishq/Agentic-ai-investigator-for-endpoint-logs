@@ -3,8 +3,6 @@ from typing import Dict, Any, Optional
 from langchain_core.tools import tool
 from a1.db import get_active_db
 
-def _get_db():
-    return get_active_db()
 
 
 
@@ -91,7 +89,7 @@ def find_process_relationships(
             WHERE {where_sql}
             ORDER BY event.timestamp ASC
         """
-        rows = _get_db().execute_query(sql, tuple(params), max_rows=50)
+        rows = get_active_db().execute_query(sql, tuple(params), max_rows=50)
         return json.dumps(
             {
                 "host_id": host_id,
@@ -113,7 +111,7 @@ def trace_process_tree(process_entity_id: str, direction: str = "both") -> str:
     """
     tree_data: Dict[str, Any] = {"process_entity_id": process_entity_id, "ancestors": [], "descendants": []}
     try:
-        target_rows = _get_db().execute_query(
+        target_rows = get_active_db().execute_query(
             "SELECT * FROM processes WHERE process_entity_id = ? ORDER BY (command_line IS NOT NULL) DESC, timestamp ASC",
             (process_entity_id,),
             max_rows=1
@@ -140,7 +138,7 @@ def trace_process_tree(process_entity_id: str, direction: str = "both") -> str:
             current_parent_id = target.get("parent_entity_id")
             depth = 0
             while current_parent_id and depth < 5:
-                p_rows = _get_db().execute_query(
+                p_rows = get_active_db().execute_query(
                     "SELECT * FROM processes WHERE process_entity_id = ? ORDER BY (command_line IS NOT NULL) DESC, timestamp ASC",
                     (current_parent_id,),
                     max_rows=1
@@ -168,7 +166,7 @@ def trace_process_tree(process_entity_id: str, direction: str = "both") -> str:
 
         # Trace descendants (spawned children)
         if direction in ("descendants", "both"):
-            c_rows = _get_db().execute_query(
+            c_rows = get_active_db().execute_query(
                 "SELECT * FROM processes WHERE parent_entity_id = ? ORDER BY timestamp ASC",
                 (process_entity_id,),
                 max_rows=25

@@ -431,7 +431,6 @@ class EndpointDatabase:
             except Exception:
                 pass
             self._conn = None
-            self._adapter = None
 
     def execute_query(self, sql: str, params: tuple = (), max_rows: int = 50) -> List[Dict[str, Any]]:
         """Execute a read-only SQL query safely."""

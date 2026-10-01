@@ -1,6 +1,6 @@
 # Expanded Endpoint Security Dataset
 
-> **Repository-state note (2026-10):** This dataset ships six attack telemetry databases with evaluator ground truth isolated in the `groundtruth/` subfolder:
+> **Repository-state note (2026-10):** This dataset ships seven attack telemetry databases with evaluator ground truth isolated in the `groundtruth/` subfolder:
 >
 > | File | Contents |
 > |---|---|
@@ -10,7 +10,8 @@
 > | `attack_lotl_fileless.db` | **ATK-D** telemetry: Living-off-the-Land (mshta, powershell, certutil, wmic) and fileless execution |
 > | `wazuh_lotl_attack_dataset.db` | **ATK-E** telemetry: Wazuh SIEM/EDR, LotL command execution and SAM registry access |
 > | `suricata_c2_intrusion.db` | **ATK-F** telemetry: Suricata NIDS alerts, CobaltStrike C2 beaconing, internal SMB sweeps, and exfiltration |
-> | `groundtruth/` | Ground truth JSON files for ATK-A through ATK-F (`expected_verdict: malicious`, `verdict_boundary: confirmed_malicious`, key IOCs, kill chain) |
+> | `attack_supply_chain.db` | **ATK-G** telemetry: Enterprise supply chain software compromise across 31 endpoints (50,000+ events) |
+> | `groundtruth/` | Ground truth JSON files for ATK-A through ATK-G (`expected_verdict: malicious`, `verdict_boundary: confirmed_malicious`, key IOCs, kill chain) |
 > | `schema.md` | Field and table semantics for the shipped `.db` telemetry files |
 >
 > The agent queries the telemetry `.db` files directly through safe read-only connections and convenience views, and the benchmark derives evaluation labels from `groundtruth/groundtruth_attack_*.json`.

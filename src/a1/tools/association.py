@@ -3,8 +3,6 @@ from typing import Dict, Any
 from langchain_core.tools import tool
 from a1.db import get_active_db
 
-def _get_db():
-    return get_active_db()
 
 
 
@@ -24,7 +22,7 @@ def find_process_associations(process_entity_id: str) -> str:
         resolved_ids = [target_id]
         if not target_id.startswith("proc-"):
             clean_name = target_id[:-4] if target_id.lower().endswith(".exe") else target_id
-            p_rows = _get_db().execute_query(
+            p_rows = get_active_db().execute_query(
                 "SELECT DISTINCT process_entity_id, host_id, process_name, executable FROM processes "
                 "WHERE lower(process_name) = lower(?) OR lower(process_name) = lower(?) || '.exe' "
                 "OR lower(executable) LIKE '%' || lower(?) || '%' LIMIT 10",
@@ -42,7 +40,7 @@ def find_process_associations(process_entity_id: str) -> str:
         placeholders = ",".join(["?"] * len(resolved_ids))
 
         # 1. Target process details with full command line and metadata
-        target_procs = _get_db().execute_query(
+        target_procs = get_active_db().execute_query(
             f"SELECT process_entity_id, host_id, pid, process_name, command_line, executable, parent_entity_id, parent_process_name, event_id, timestamp "
             f"FROM processes WHERE process_entity_id IN ({placeholders}) "
             f"ORDER BY (command_line IS NOT NULL) DESC, timestamp ASC",
@@ -53,7 +51,7 @@ def find_process_associations(process_entity_id: str) -> str:
             associations["process_details"] = target_procs
 
         # 2. Spawned child processes (critical for LOTL/LOLBin execution tracking)
-        child_rows = _get_db().execute_query(
+        child_rows = get_active_db().execute_query(
             f"SELECT process_entity_id, host_id, pid, process_name, command_line, executable, parent_entity_id, event_id, timestamp "
             f"FROM processes WHERE parent_entity_id IN ({placeholders}) "
             f"ORDER BY timestamp ASC",
@@ -64,7 +62,7 @@ def find_process_associations(process_entity_id: str) -> str:
             associations["spawned_processes"] = child_rows
 
         # 3. Parent process details if available
-        parent_rows = _get_db().execute_query(
+        parent_rows = get_active_db().execute_query(
             f"SELECT parent.process_entity_id, parent.host_id, parent.pid, parent.process_name, parent.command_line, parent.executable, parent.event_id, parent.timestamp "
             f"FROM processes child JOIN processes parent ON parent.process_entity_id = child.parent_entity_id "
             f"WHERE child.process_entity_id IN ({placeholders}) "
@@ -81,7 +79,7 @@ def find_process_associations(process_entity_id: str) -> str:
         all_placeholders = ",".join(["?"] * len(all_scope_ids))
 
         # 4. Network connections
-        net_rows = _get_db().execute_query(
+        net_rows = get_active_db().execute_query(
             f"SELECT network_id, event_id, process_entity_id, host_id, timestamp, source_ip, source_port, destination_ip, destination_port, protocol "
             f"FROM network_connections WHERE process_entity_id IN ({all_placeholders})",
             tuple(all_scope_ids),
@@ -90,7 +88,7 @@ def find_process_associations(process_entity_id: str) -> str:
         associations["network_connections"] = net_rows
 
         # 5. File events
-        file_rows = _get_db().execute_query(
+        file_rows = get_active_db().execute_query(
             f"SELECT file_id, event_id, process_entity_id, host_id, timestamp, file_path, file_name, extension, size, sha256 "
             f"FROM files WHERE process_entity_id IN ({all_placeholders})",
             tuple(all_scope_ids),
@@ -99,7 +97,7 @@ def find_process_associations(process_entity_id: str) -> str:
         associations["files"] = file_rows
 
         # 6. Registry events
-        reg_rows = _get_db().execute_query(
+        reg_rows = get_active_db().execute_query(
             f"SELECT registry_id, event_id, process_entity_id, host_id, timestamp, registry_path, registry_key, registry_value, value_type "
             f"FROM registry_events WHERE process_entity_id IN ({all_placeholders})",
             tuple(all_scope_ids),
@@ -108,7 +106,7 @@ def find_process_associations(process_entity_id: str) -> str:
         associations["registry_events"] = reg_rows
 
         # 7. Correlated events
-        event_rows = _get_db().execute_query(
+        event_rows = get_active_db().execute_query(
             f"SELECT event_id, timestamp, host_id, process_entity_id, provider, event_code, category, action, outcome, severity "
             f"FROM events WHERE process_entity_id IN ({all_placeholders}) ORDER BY timestamp ASC",
             tuple(all_scope_ids),

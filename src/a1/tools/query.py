@@ -3,8 +3,6 @@ import re
 from langchain_core.tools import tool
 from a1.db import get_active_db
 
-def _get_db():
-    return get_active_db()
 
 
 
@@ -40,7 +38,7 @@ def _project_raw_json(raw: str) -> dict:
 def get_database_schema() -> str:
     """Returns the database schema (tables, views, and column names) available in the endpoint security telemetry database.
     Use this to inspect available fields before querying."""
-    schema = _get_db().get_schema()
+    schema = get_active_db().get_schema()
     return json.dumps(schema, indent=2)
 
 @tool
@@ -60,7 +58,7 @@ def query_telemetry(sql_query: str, max_rows: int = 25) -> str:
         clean_query
     )
     
-    db = _get_db()
+    db = get_active_db()
     try:
         results = db.execute_query(clean_query, max_rows=max_rows)
         if not results:

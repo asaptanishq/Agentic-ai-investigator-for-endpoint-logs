@@ -64,9 +64,10 @@ ai-musefix/
 │   ├── tools/         # query, process, association, timeline, entity, pivot
 │   ├── prompts/       # Per-node system prompts
 │   └── web/           # FastAPI backend + chat UI (HTML/CSS/JS)
-├── tests/                         # Full pytest suite + conftest DB selection + smoke test
+├── scripts/                       # Operational scripts (generate_large_dataset.py, smoke_test.py)
+├── tests/                         # Full pytest suite + conftest DB selection
 └── endpoint_security_dataset_expanded_corrected/   # Telemetry DBs + groundtruth/ subfolder
-    ├── groundtruth/               # Scenario ground truth files (ATK-A through ATK-F)
+    ├── groundtruth/               # Scenario ground truth files (ATK-A through ATK-G)
     └── *.db                       # Forensic telemetry SQLite databases
 ```
 
@@ -94,7 +95,7 @@ The default configuration uses Ollama Cloud with `gemma4:31b` (no local Ollama d
 
 ### 3. Shipped Telemetry Databases
 
-The repository includes six forensic attack telemetry databases with evaluator ground truth isolated in `endpoint_security_dataset_expanded_corrected/groundtruth/`:
+The repository includes seven forensic attack telemetry databases with evaluator ground truth isolated in `endpoint_security_dataset_expanded_corrected/groundtruth/`:
 
 | Database | Scenario | Hosts | Users | Events | Ground Truth |
 | :--- | :--- | ---: | ---: | ---: | :--- |
@@ -104,6 +105,7 @@ The repository includes six forensic attack telemetry databases with evaluator g
 | `attack_lotl_fileless.db` | **ATK-D**: Living-off-the-Land & fileless in-memory C2 | 2 | 2 | 240 | `groundtruth/groundtruth_attack_D_lotl_fileless.json` |
 | `wazuh_lotl_attack_dataset.db` | **ATK-E**: Wazuh SIEM/EDR, LotL & SAM registry access | 2 | 2 | 320 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
 | `suricata_c2_intrusion.db` | **ATK-F**: Suricata NIDS CobaltStrike C2 beaconing & exfil | 3 | 1 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
+| `attack_supply_chain.db` | **ATK-G**: Enterprise Supply Chain software compromise | 31 | 16 | 50,000+ | `groundtruth/groundtruth_attack_G_supply_chain.json` |
 
 `config.py` automatically discovers and mounts the first available database out of the box.
 
@@ -172,12 +174,12 @@ python -m a1.cli "Investigate critical Suricata NIDS alerts on WS-FINANCE-01 (19
 
 ### 3. Benchmark Runner
 
-Evaluate agent accuracy and reasoning against labeled ground truth across all 6 shipped attack scenarios (labels loaded from `endpoint_security_dataset_expanded_corrected/groundtruth/`):
+Evaluate agent accuracy and reasoning against labeled ground truth across all 7 shipped attack scenarios (labels loaded from `endpoint_security_dataset_expanded_corrected/groundtruth/`):
 
 ```bash
 python -m a1.benchmark
 # or with a limit:
-python -m a1.cli --benchmark --limit 6
+python -m a1.cli --benchmark --limit 7
 ```
 
 The benchmark switches telemetry databases automatically per scenario, validates verdicts against ground truth, and tracks whether structured-output fallbacks were triggered.
@@ -193,7 +195,7 @@ Run the full pytest suite and standalone smoke tests:
 pytest tests/
 
 # Run standalone smoke test (17 end-to-end checks)
-python tests/smoke_test.py
+python scripts/smoke_test.py
 ```
 
 Test fixtures dynamically query the active database at runtime to support any valid dataset schema.
