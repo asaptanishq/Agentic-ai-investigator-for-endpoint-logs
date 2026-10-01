@@ -3,11 +3,6 @@ import json, os, sys
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
-
-if "pytest" in sys.modules:
-    import pytest
-    pytest.skip("smoke_test.py is a standalone script; run it directly", allow_module_level=True)
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATASET_DIR = PROJECT_ROOT / "endpoint_security_dataset_expanded_corrected"
 
@@ -324,4 +319,5 @@ def t_repetition_guard():
 check("repetition guard + circuit breaker", t_repetition_guard)
 
 print(f"\n{len(passed)} passed, {len(failed)} failed")
-sys.exit(1 if failed else 0)
+if __name__ == "__main__":
+    sys.exit(1 if failed else 0)

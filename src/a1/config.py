@@ -78,17 +78,12 @@ def set_active_database(db_path, allow_external: bool = False) -> Path:
     global DB_PATH
     DB_PATH = resolved
 
-    # Deferred imports: the a1.tools modules import this module at load time.
-    import a1.tools.query as t_query
-    import a1.tools.process as t_proc
-    import a1.tools.association as t_assoc
-    import a1.tools.pivot as t_pivot
-    import a1.tools.entity as t_entity
-    import a1.tools.timeline as t_time
-
-    for module in (t_query, t_proc, t_assoc, t_pivot, t_entity, t_time):
-        if hasattr(module, "_db"):
-            module._db = None
+    # Reset the centralized active database instance
+    try:
+        from a1.db import reset_active_db
+        reset_active_db()
+    except ImportError:
+        pass
 
     return resolved
 

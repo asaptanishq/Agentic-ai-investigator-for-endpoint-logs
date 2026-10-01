@@ -17,6 +17,7 @@ from pydantic import BaseModel
 import a1.config as cfg
 from a1.graph import create_investigation_graph
 from a1.llm import get_active_llm_info, set_active_llm
+from a1.tools import summarize_tool_output
 
 logger = logging.getLogger("a1.web")
 logging.basicConfig(level=logging.INFO)
@@ -215,9 +216,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/events")
     async def get_events(limit: int = 2500):
+        active_db_path = cfg.get_db_path()
         try:
-            from a1.db import EndpointDatabase
-            db = EndpointDatabase(cfg.DB_PATH)
+            from a1.db import get_active_db
+            db = get_active_db(active_db_path)
             count_rows = db.execute_query("SELECT COUNT(*) as cnt FROM events", max_rows=1)
             total_in_db = count_rows[0]["cnt"] if count_rows else 0
 
@@ -239,13 +241,13 @@ def create_app() -> FastAPI:
                         pass
                 events.append(ev)
             return {
-                "db_name": Path(cfg.DB_PATH).name,
+                "db_name": Path(active_db_path).name,
                 "total": total_in_db,
                 "loaded": len(events),
                 "events": events,
             }
         except Exception as e:
-            return {"db_name": Path(cfg.DB_PATH).name, "total": 0, "loaded": 0, "events": [], "error": str(e)}
+            return {"db_name": Path(active_db_path).name, "total": 0, "loaded": 0, "events": [], "error": str(e)}
 
     def extract_and_clean_thoughts(raw_text: str) -> tuple[Optional[str], str]:
         """Extract embedded thought/reasoning blocks and return (thought, cleaned_text)."""
@@ -280,46 +282,6 @@ def create_app() -> FastAPI:
 
         thought = "\n\n".join(thought_parts) if thought_parts else None
         return thought, cleaned
-
-    def summarize_tool_output(content: str) -> str:
-        """Produce a clean summary of tool output for frontend telemetry stream."""
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict):
-                if "matches" in data:
-                    count = len(data.get("matches", []))
-                    details = ", ".join(
-                        str(m.get("child_process_name", m.get("process_entity_id", "?")))
-                        for m in data.get("matches", [])[:3]
-                    )
-                    return f"{count} process match(es): {details}" if details else f"{count} match(es)"
-                if "ancestors" in data or "descendants" in data:
-                    a = len(data.get("ancestors", []))
-                    d = len(data.get("descendants", []))
-                    return f"Process tree: {a} ancestor(s), {d} descendant(s)"
-                if "network_connections" in data:
-                    return (
-                        f"{len(data.get('network_connections', []))} net conns, "
-                        f"{len(data.get('files', []))} file ops, "
-                        f"{len(data.get('registry_events', []))} reg events"
-                    )
-                parts = []
-                for k, v in data.items():
-                    if isinstance(v, list):
-                        parts.append(f"{k}: {len(v)} item(s)")
-                    elif isinstance(v, dict):
-                        parts.append(f"{k}: object")
-                    else:
-                        parts.append(f"{k}={v}")
-                    if len(parts) >= 6:
-                        break
-                return "; ".join(parts) if parts else "(empty result)"
-            if isinstance(data, list):
-                return f"{len(data)} row(s) returned"
-            return str(data)[:200]
-        except Exception:
-            pass
-        return str(content)[:200]
 
     @app.post(
         "/api/investigate",
@@ -550,18 +512,30 @@ def create_app() -> FastAPI:
 
                     # Finished graph execution - synthesize complete payload
                     if final_state and not cancel_event.is_set():
-                        report_content = ""
-                        # Search backwards for the formatted markdown report
-                        for m in reversed(final_state.get("messages", [])):
-                            if getattr(m, "type", "") == "human":
-                                c = getattr(m, "content", "")
-                                if "DFIR Incident Investigation Report" in c or "## Verdict:" in c:
-                                    report_content = c
-                                    break
+                        report_content = final_state.get("report") or ""
                         if not report_content:
-                            report_msgs = [m for m in final_state.get("messages", []) if getattr(m, "type", "") == "human"]
-                            if report_msgs:
-                                report_content = report_msgs[-1].content
+                            # Search backwards for the formatted markdown report
+                            for m in reversed(final_state.get("messages", [])):
+                                if getattr(m, "type", "") == "human":
+                                    c = getattr(m, "content", "")
+                                    if "DFIR Incident Investigation Report" in c or "## Verdict:" in c:
+                                        report_content = c
+                                        break
+                            if not report_content:
+                                report_msgs = [m for m in final_state.get("messages", []) if getattr(m, "type", "") == "human"]
+                                if report_msgs:
+                                    report_content = getattr(report_msgs[-1], "content", "")
+
+                        raw_conf = final_state.get("confidence", 0.85)
+                        try:
+                            if isinstance(raw_conf, str):
+                                raw_conf = raw_conf.replace("%", "").strip()
+                            conf_val = float(raw_conf)
+                            if conf_val > 1.0:
+                                conf_val = conf_val / 100.0
+                        except Exception:
+                            conf_val = 0.85
+                        conf_val = max(0.05, min(1.0, conf_val))
 
                         loop.call_soon_threadsafe(
                             queue.put_nowait,
@@ -570,7 +544,7 @@ def create_app() -> FastAPI:
                                 "data": {
                                     "verdict": final_state.get("verdict", "UNKNOWN"),
                                     "verdict_boundary": final_state.get("verdict_boundary", ""),
-                                    "confidence": final_state.get("confidence", 0.0),
+                                    "confidence": conf_val,
                                     "hypotheses": final_state.get("hypotheses", []),
                                     "report": report_content,
                                     "report_fallback_used": bool(final_state.get("report_fallback_used", False)),

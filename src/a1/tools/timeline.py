@@ -1,17 +1,10 @@
 import json
 from typing import Optional, List, Any
 from langchain_core.tools import tool
-from a1.db import EndpointDatabase
-from a1.config import get_db_path
+from a1.db import get_active_db
 
-_db = None
-
-def _get_db() -> EndpointDatabase:
-    global _db
-    current_path = get_db_path()
-    if _db is None or _db.db_path != current_path:
-        _db = EndpointDatabase(current_path)
-    return _db
+def _get_db():
+    return get_active_db()
 
 
 
@@ -70,13 +63,20 @@ def _extract_event_details(raw: Optional[str]) -> dict:
             if val is not None:
                 details[target] = val
 
-        # Network
+        # Network & NIDS
         for sources, target in (
-            (("destination.ip", "network_dst"), "destination_ip"),
-            (("destination.port", "network_dst_port"), "destination_port"),
-            (("destination.domain", "dns_query"), "destination_domain"),
+            (("destination.ip", "network_dst", "dest_ip", "dst_ip"), "destination_ip"),
+            (("destination.port", "network_dst_port", "dest_port", "dst_port"), "destination_port"),
+            (("destination.domain", "dns_query", "dns.rrname", "dns.query", "tls.sni", "http.hostname"), "destination_domain"),
             (("network.direction",), "network_direction"),
-            (("source.ip", "source_ip"), "source_ip"),
+            (("source.ip", "source_ip", "src_ip"), "source_ip"),
+            (("source.port", "source_port", "src_port"), "source_port"),
+            (("network.protocol", "proto", "app_proto"), "protocol"),
+            (("alert.signature", "alert_signature", "signature"), "alert_signature"),
+            (("alert.category", "alert_category"), "alert_category"),
+            (("alert.severity", "alert_severity"), "alert_severity"),
+            (("http.http_method", "http.method"), "http_method"),
+            (("http.url",), "http_url"),
         ):
             val = _get_field_val(data, *sources)
             if val is not None:
@@ -86,7 +86,7 @@ def _extract_event_details(raw: Optional[str]) -> dict:
         for sources, target in (
             (("file.name", "data.win.eventdata.targetFilename", "file_name"), "file_name"),
             (("file.path", "data.win.eventdata.targetFilename", "file_path"), "file_path"),
-            (("file.hash.sha256", "file_hash"), "file_hash_sha256"),
+            (("file.hash.sha256", "file_hash", "sha256", "hash"), "file_hash_sha256"),
             (("file.size",), "file_size"),
             (("file.extension",), "file_extension"),
             (("file.type",), "file_type"),

@@ -2,7 +2,6 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 from a1.config import get_db_path
-from a1.schema_adapter import SchemaAdapter
 
 class DatabaseAccessError(Exception):
     pass
@@ -14,7 +13,7 @@ class EndpointDatabase:
         self.db_path = Path(db_path or get_db_path())
         if not self.db_path.exists():
             raise FileNotFoundError(f"Database not found at: {self.db_path}")
-        self._adapter: Optional[SchemaAdapter] = None
+        self._conn: Optional[sqlite3.Connection] = None
 
     def _init_temp_views(self, conn: sqlite3.Connection) -> None:
         """Create in-memory virtual adapter views.
@@ -130,7 +129,7 @@ class EndpointDatabase:
                         {get_field(["event_code", "rule_id", "code", "alert_signature_id", "signature_id"], '$."event.code"', '$.event.code', '$.event_code', '$."rule.id"', default="'1'")} AS event_code,
                         {get_field(["category", "rule_groups", "alert_category"], '$."event.category"', '$.event.category', '$.category', default="'network'")} AS category,
                         {get_field(["event_type", "subcategory", "app_proto"], '$."event.type"', '$.event.type', '$.type', default="'alert'")} AS event_type,
-                        {get_field(["action", "event_action", "rule_description", "alert_signature", "signature"], '$."event.action"', '$.event.action', '$.action', default="'alert'")} AS action,
+                        {get_field(["action", "event_action", "rule_description", "alert_signature", "signature"], '$."event.action"', '$.event.action', '$.action', default=get_field(["event_type", "app_proto"], default="'alert'"))} AS action,
                         {get_field(["outcome", "status"], '$."event.outcome"', '$.event.outcome', '$.outcome', default="'success'")} AS outcome,
                         {get_field(["severity", "rule_level", "alert_severity"], '$."event.severity"', '$.event.severity', '$.severity', default="0")} AS severity,
                         {get_field(["host_id", "agent_id", "agent_name", "hostname", "asset_id", "src_ip"], '$."host.id"', '$.host.id', '$.host_id', '$."agent.id"', '$.agent.id', '$."agent.name"', '$.agent.name', '$.src_ip', default="'unknown'")} AS host_id,
@@ -146,14 +145,14 @@ class EndpointDatabase:
                 eid_expr = "p.event_id" if "event_id" in proc_cols else "NULL AS event_id"
                 hid_expr = "p.host_id" if "host_id" in proc_cols else ("e.host_id" if ("events" in main_objects and "host_id" in event_cols) else "NULL AS host_id")
                 exe_expr = "p.executable" if "executable" in proc_cols else "NULL AS executable"
-                peid_expr = "p.parent_entity_id" if "parent_entity_id" in proc_cols else "NULL AS parent_entity_id"
-                ppid_expr = "p.parent_pid" if "parent_pid" in proc_cols else "NULL AS parent_pid"
-                p_pname_expr = "p.parent_process_name" if "parent_process_name" in proc_cols else "NULL AS parent_process_name"
-                cmd_expr = "p.command_line" if "command_line" in proc_cols else "NULL AS command_line"
+                peid_expr = "COALESCE(p.parent_entity_id, json_extract(p.raw_json, '$.\"process.parent.entity_id\"'), json_extract(p.raw_json, '$.process.parent.entity_id'), json_extract(p.raw_json, '$.parent_entity_id')) AS parent_entity_id" if "parent_entity_id" in proc_cols else "COALESCE(json_extract(p.raw_json, '$.\"process.parent.entity_id\"'), json_extract(p.raw_json, '$.process.parent.entity_id'), json_extract(p.raw_json, '$.parent_entity_id')) AS parent_entity_id"
+                ppid_expr = "COALESCE(p.parent_pid, CAST(json_extract(p.raw_json, '$.\"process.parent.pid\"') AS INTEGER), CAST(json_extract(p.raw_json, '$.process.parent.pid') AS INTEGER), CAST(json_extract(p.raw_json, '$.parent_pid') AS INTEGER)) AS parent_pid" if "parent_pid" in proc_cols else "COALESCE(CAST(json_extract(p.raw_json, '$.\"process.parent.pid\"') AS INTEGER), CAST(json_extract(p.raw_json, '$.process.parent.pid') AS INTEGER), CAST(json_extract(p.raw_json, '$.parent_pid') AS INTEGER)) AS parent_pid"
+                p_pname_expr = "COALESCE(p.parent_process_name, json_extract(p.raw_json, '$.\"process.parent.name\"'), json_extract(p.raw_json, '$.process.parent.name'), json_extract(p.raw_json, '$.process_parent_name')) AS parent_process_name" if "parent_process_name" in proc_cols else "COALESCE(json_extract(p.raw_json, '$.\"process.parent.name\"'), json_extract(p.raw_json, '$.process.parent.name'), json_extract(p.raw_json, '$.process_parent_name')) AS parent_process_name"
+                cmd_expr = "COALESCE(p.command_line, json_extract(p.raw_json, '$.\"process.command_line\"'), json_extract(p.raw_json, '$.process.command_line'), json_extract(p.raw_json, '$.process_cmdline')) AS command_line" if "command_line" in proc_cols else "COALESCE(json_extract(p.raw_json, '$.\"process.command_line\"'), json_extract(p.raw_json, '$.process.command_line'), json_extract(p.raw_json, '$.process_cmdline')) AS command_line"
                 raw_expr = "p.raw_json" if "raw_json" in proc_cols else "'{}' AS raw_json"
                 join_clause = "LEFT JOIN main.events e ON p.event_id = e.event_id" if ("events" in main_objects and "event_id" in proc_cols and "event_id" in event_cols) else ""
-                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("p.timestamp" if "timestamp" in proc_cols else "NULL AS timestamp")
-                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("p.user_id" if "user_id" in proc_cols else "NULL AS user_id")
+                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("p.timestamp" if "timestamp" in proc_cols else "COALESCE(json_extract(p.raw_json, '$.\"@timestamp\"'), json_extract(p.raw_json, '$.@timestamp'), json_extract(p.raw_json, '$.timestamp')) AS timestamp")
+                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("p.user_id" if "user_id" in proc_cols else "COALESCE(json_extract(p.raw_json, '$.\"user.id\"'), json_extract(p.raw_json, '$.user.id'), json_extract(p.raw_json, '$.user_id')) AS user_id")
 
                 stmts.append(f"""
                     CREATE TEMP VIEW IF NOT EXISTS processes AS
@@ -197,14 +196,14 @@ class EndpointDatabase:
                 fid_expr = "f.file_id" if "file_id" in file_cols else "f.rowid AS file_id"
                 eid_expr = "f.event_id" if "event_id" in file_cols else "NULL AS event_id"
                 peid_expr = "f.process_entity_id" if "process_entity_id" in file_cols else "NULL AS process_entity_id"
-                ext_expr = "f.extension" if "extension" in file_cols else "NULL AS extension"
-                sz_expr = "f.size" if "size" in file_cols else "NULL AS size"
-                sha_expr = "f.sha256" if "sha256" in file_cols else "NULL AS sha256"
+                ext_expr = "COALESCE(f.extension, json_extract(f.raw_json, '$.\"file.extension\"'), json_extract(f.raw_json, '$.file.extension'), json_extract(f.raw_json, '$.extension')) AS extension" if "extension" in file_cols else "COALESCE(json_extract(f.raw_json, '$.\"file.extension\"'), json_extract(f.raw_json, '$.file.extension'), json_extract(f.raw_json, '$.extension')) AS extension"
+                sz_expr = "COALESCE(f.size, CAST(json_extract(f.raw_json, '$.\"file.size\"') AS INTEGER), CAST(json_extract(f.raw_json, '$.file.size') AS INTEGER), CAST(json_extract(f.raw_json, '$.size') AS INTEGER)) AS size" if "size" in file_cols else "COALESCE(CAST(json_extract(f.raw_json, '$.\"file.size\"') AS INTEGER), CAST(json_extract(f.raw_json, '$.file.size') AS INTEGER), CAST(json_extract(f.raw_json, '$.size') AS INTEGER)) AS size"
+                sha_expr = "COALESCE(f.sha256, json_extract(f.raw_json, '$.\"file.hash.sha256\"'), json_extract(f.raw_json, '$.file.hash.sha256'), json_extract(f.raw_json, '$.file.sha256'), json_extract(f.raw_json, '$.sha256'), json_extract(f.raw_json, '$.file_hash')) AS sha256" if "sha256" in file_cols else "COALESCE(json_extract(f.raw_json, '$.\"file.hash.sha256\"'), json_extract(f.raw_json, '$.file.hash.sha256'), json_extract(f.raw_json, '$.file.sha256'), json_extract(f.raw_json, '$.sha256'), json_extract(f.raw_json, '$.file_hash')) AS sha256"
                 raw_expr = "f.raw_json" if "raw_json" in file_cols else "'{}' AS raw_json"
                 join_clause = "LEFT JOIN main.events e ON f.event_id = e.event_id" if ("events" in main_objects and "event_id" in file_cols and "event_id" in event_cols) else ""
-                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("f.timestamp" if "timestamp" in file_cols else "NULL AS timestamp")
-                hid_expr = "e.host_id" if join_clause and "host_id" in event_cols else ("f.host_id" if "host_id" in file_cols else "NULL AS host_id")
-                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("f.user_id" if "user_id" in file_cols else "NULL AS user_id")
+                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("f.timestamp" if "timestamp" in file_cols else "COALESCE(json_extract(f.raw_json, '$.\"@timestamp\"'), json_extract(f.raw_json, '$.@timestamp'), json_extract(f.raw_json, '$.timestamp')) AS timestamp")
+                hid_expr = "e.host_id" if join_clause and "host_id" in event_cols else ("f.host_id" if "host_id" in file_cols else "COALESCE(json_extract(f.raw_json, '$.\"host.id\"'), json_extract(f.raw_json, '$.host.id'), json_extract(f.raw_json, '$.host_id'), 'unknown') AS host_id")
+                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("f.user_id" if "user_id" in file_cols else "COALESCE(json_extract(f.raw_json, '$.\"user.id\"'), json_extract(f.raw_json, '$.user.id'), json_extract(f.raw_json, '$.user_id')) AS user_id")
 
                 stmts.append(f"""
                     CREATE TEMP VIEW IF NOT EXISTS files AS
@@ -242,14 +241,14 @@ class EndpointDatabase:
                 nid_expr = "nc.network_id" if "network_id" in net_cols else "nc.rowid AS network_id"
                 eid_expr = "nc.event_id" if "event_id" in net_cols else "NULL AS event_id"
                 peid_expr = "nc.process_entity_id" if "process_entity_id" in net_cols else "NULL AS process_entity_id"
-                sport_expr = "nc.source_port" if "source_port" in net_cols else "NULL AS source_port"
-                dport_expr = "nc.destination_port" if "destination_port" in net_cols else "NULL AS destination_port"
+                sport_expr = "COALESCE(nc.source_port, CAST(json_extract(nc.raw_json, '$.\"source.port\"') AS INTEGER), CAST(json_extract(nc.raw_json, '$.source.port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.source_port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.src_port') AS INTEGER)) AS source_port" if "source_port" in net_cols else "COALESCE(CAST(json_extract(nc.raw_json, '$.\"source.port\"') AS INTEGER), CAST(json_extract(nc.raw_json, '$.source.port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.source_port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.src_port') AS INTEGER)) AS source_port"
+                dport_expr = "COALESCE(nc.destination_port, CAST(json_extract(nc.raw_json, '$.\"destination.port\"') AS INTEGER), CAST(json_extract(nc.raw_json, '$.destination.port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.destination_port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.dest_port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.dst_port') AS INTEGER)) AS destination_port" if "destination_port" in net_cols else "COALESCE(CAST(json_extract(nc.raw_json, '$.\"destination.port\"') AS INTEGER), CAST(json_extract(nc.raw_json, '$.destination.port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.destination_port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.dest_port') AS INTEGER), CAST(json_extract(nc.raw_json, '$.dst_port') AS INTEGER)) AS destination_port"
                 proto_expr = "nc.protocol" if "protocol" in net_cols else "'tcp' AS protocol"
                 raw_expr = "nc.raw_json" if "raw_json" in net_cols else "'{}' AS raw_json"
                 join_clause = "LEFT JOIN main.events e ON nc.event_id = e.event_id" if ("events" in main_objects and "event_id" in net_cols and "event_id" in event_cols) else ""
-                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("nc.timestamp" if "timestamp" in net_cols else "NULL AS timestamp")
-                hid_expr = "e.host_id" if join_clause and "host_id" in event_cols else ("nc.host_id" if "host_id" in net_cols else "NULL AS host_id")
-                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("nc.user_id" if "user_id" in net_cols else "NULL AS user_id")
+                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("nc.timestamp" if "timestamp" in net_cols else "COALESCE(json_extract(nc.raw_json, '$.\"@timestamp\"'), json_extract(nc.raw_json, '$.@timestamp'), json_extract(nc.raw_json, '$.timestamp')) AS timestamp")
+                hid_expr = "e.host_id" if join_clause and "host_id" in event_cols else ("nc.host_id" if "host_id" in net_cols else "COALESCE(json_extract(nc.raw_json, '$.\"host.id\"'), json_extract(nc.raw_json, '$.host.id'), json_extract(nc.raw_json, '$.host_id'), 'unknown') AS host_id")
+                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("nc.user_id" if "user_id" in net_cols else "COALESCE(json_extract(nc.raw_json, '$.\"user.id\"'), json_extract(nc.raw_json, '$.user.id'), json_extract(nc.raw_json, '$.user_id')) AS user_id")
 
                 stmts.append(f"""
                     CREATE TEMP VIEW IF NOT EXISTS network_connections AS
@@ -278,9 +277,9 @@ class EndpointDatabase:
                         NULL AS destination_host_id,
                         {get_field(["user_id", "source_user", "username"], '$."user.id"', '$.user.id', '$.user_id')} AS user_id
                     FROM main.{source_table}
-                    WHERE {safe_coalesce(*[c for c in ["destination_ip", "dest_ip", "network_dst", "source_ip", "src_ip"] if c in event_cols], *jextract('$."destination.ip"', '$.destination.ip', '$.dest_ip', '$."source.ip"', '$.source.ip', '$.src_ip'))} IS NOT NULL
-                       OR {get_field(["category"], '$."event.category"', '$.category')} LIKE '%network%'
-                       OR {get_field(["action", "event_action"], '$."event.action"', '$.action')} LIKE '%network%';
+                    WHERE {safe_coalesce(*[c for c in ["destination_ip", "dest_ip", "network_dst", "dst_ip"] if c in event_cols], *jextract('$."destination.ip"', '$.destination.ip', '$.dest_ip', '$.dst_ip'))} IS NOT NULL
+                       OR ({get_field(["category"], '$."event.category"', '$.category')} LIKE '%network%' AND {safe_coalesce(*[c for c in ["source_ip", "src_ip"] if c in event_cols], *jextract('$."source.ip"', '$.source.ip', '$.src_ip'))} IS NOT NULL)
+                       OR ({get_field(["action", "event_action"], '$."event.action"', '$.action')} LIKE '%network%' AND {safe_coalesce(*[c for c in ["source_ip", "src_ip"] if c in event_cols], *jextract('$."source.ip"', '$.source.ip', '$.src_ip'))} IS NOT NULL);
                 """)
 
             # 4. REGISTRY_EVENTS
@@ -289,14 +288,14 @@ class EndpointDatabase:
                 rid_expr = "r.registry_id" if "registry_id" in reg_cols else "r.rowid AS registry_id"
                 eid_expr = "r.event_id" if "event_id" in reg_cols else "NULL AS event_id"
                 peid_expr = "r.process_entity_id" if "process_entity_id" in reg_cols else "NULL AS process_entity_id"
-                rkey_expr = "r.registry_key" if "registry_key" in reg_cols else "NULL AS registry_key"
-                rval_expr = "r.registry_value" if "registry_value" in reg_cols else "NULL AS registry_value"
-                vtype_expr = "r.value_type" if "value_type" in reg_cols else "NULL AS value_type"
+                rkey_expr = "COALESCE(r.registry_key, json_extract(r.raw_json, '$.\"registry.key\"'), json_extract(r.raw_json, '$.registry.key'), json_extract(r.raw_json, '$.registry_key')) AS registry_key" if "registry_key" in reg_cols else "COALESCE(json_extract(r.raw_json, '$.\"registry.key\"'), json_extract(r.raw_json, '$.registry.key'), json_extract(r.raw_json, '$.registry_key')) AS registry_key"
+                rval_expr = "COALESCE(r.registry_value, json_extract(r.raw_json, '$.\"registry.value\"'), json_extract(r.raw_json, '$.registry.value'), json_extract(r.raw_json, '$.registry_value')) AS registry_value" if "registry_value" in reg_cols else "COALESCE(json_extract(r.raw_json, '$.\"registry.value\"'), json_extract(r.raw_json, '$.registry.value'), json_extract(r.raw_json, '$.registry_value')) AS registry_value"
+                vtype_expr = "COALESCE(r.value_type, json_extract(r.raw_json, '$.\"registry.value_type\"'), json_extract(r.raw_json, '$.registry.value_type'), json_extract(r.raw_json, '$.value_type')) AS value_type" if "value_type" in reg_cols else "COALESCE(json_extract(r.raw_json, '$.\"registry.value_type\"'), json_extract(r.raw_json, '$.registry.value_type'), json_extract(r.raw_json, '$.value_type')) AS value_type"
                 raw_expr = "r.raw_json" if "raw_json" in reg_cols else "'{}' AS raw_json"
                 join_clause = "LEFT JOIN main.events e ON r.event_id = e.event_id" if ("events" in main_objects and "event_id" in reg_cols and "event_id" in event_cols) else ""
-                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("r.timestamp" if "timestamp" in reg_cols else "NULL AS timestamp")
-                hid_expr = "e.host_id" if join_clause and "host_id" in event_cols else ("r.host_id" if "host_id" in reg_cols else "NULL AS host_id")
-                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("r.user_id" if "user_id" in reg_cols else "NULL AS user_id")
+                ts_expr = "e.timestamp" if join_clause and "timestamp" in event_cols else ("r.timestamp" if "timestamp" in reg_cols else "COALESCE(json_extract(r.raw_json, '$.\"@timestamp\"'), json_extract(r.raw_json, '$.@timestamp'), json_extract(r.raw_json, '$.timestamp')) AS timestamp")
+                hid_expr = "e.host_id" if join_clause and "host_id" in event_cols else ("r.host_id" if "host_id" in reg_cols else "COALESCE(json_extract(r.raw_json, '$.\"host.id\"'), json_extract(r.raw_json, '$.host.id'), json_extract(r.raw_json, '$.host_id'), 'unknown') AS host_id")
+                uid_expr = "e.user_id" if join_clause and "user_id" in event_cols else ("r.user_id" if "user_id" in reg_cols else "COALESCE(json_extract(r.raw_json, '$.\"user.id\"'), json_extract(r.raw_json, '$.user.id'), json_extract(r.raw_json, '$.user_id')) AS user_id")
 
                 stmts.append(f"""
                     CREATE TEMP VIEW IF NOT EXISTS registry_events AS
@@ -379,6 +378,18 @@ class EndpointDatabase:
                         {raw_expr}
                     FROM main.users;
                 """)
+            elif "network_assets" in main_objects and has_rows("network_assets"):
+                # Extract asset owners from network_assets in NIDS/Suricata schemas
+                stmts.append(f"""
+                    CREATE TEMP VIEW IF NOT EXISTS users AS
+                    SELECT 
+                        COALESCE(json_extract(raw_json, '$.owner'), 'user-' || rowid) AS user_id,
+                        COALESCE(json_extract(raw_json, '$.owner'), 'Asset Owner ' || rowid) AS user_name,
+                        COALESCE(json_extract(raw_json, '$.owner'), 'Asset Owner ' || rowid) AS username,
+                        raw_json
+                    FROM main.network_assets
+                    WHERE json_extract(raw_json, '$.owner') IS NOT NULL;
+                """)
             else:
                 target_uid = get_field(["user_id", "source_user", "username"], '$."user.id"', '$.user.id', '$.user_id')
                 stmts.append(f"""
@@ -403,12 +414,24 @@ class EndpointDatabase:
             pass
 
     def _get_connection(self) -> sqlite3.Connection:
-        # Open in SQLite URI read-only mode to prevent any writes at the file driver level
-        uri = f"file:{self.db_path.resolve().as_posix()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
-        conn.row_factory = sqlite3.Row
-        self._init_temp_views(conn)
-        return conn
+        if self._conn is None:
+            # Open in SQLite URI read-only mode to prevent any writes at the file driver level
+            uri = f"file:{self.db_path.resolve().as_posix()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            self._init_temp_views(conn)
+            self._conn = conn
+        return self._conn
+
+    def close(self) -> None:
+        """Close active cached connection if open."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+            self._adapter = None
 
     def execute_query(self, sql: str, params: tuple = (), max_rows: int = 50) -> List[Dict[str, Any]]:
         """Execute a read-only SQL query safely."""
@@ -425,34 +448,49 @@ class EndpointDatabase:
         if not first_word.startswith(("select", "pragma", "with")):
             raise DatabaseAccessError(f"Disallowed query type: '{first_word}'. Only SELECT queries are permitted.")
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(clean_sql, params)
-            rows = cursor.fetchmany(max_rows)
-            return [dict(row) for row in rows]
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(clean_sql, params)
+        rows = cursor.fetchmany(max_rows)
+        return [dict(row) for row in rows]
 
     def get_schema(self) -> Dict[str, List[str]]:
         """Return table and view names along with their column names."""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
-                UNION
-                SELECT name FROM sqlite_temp_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%';
-            """)
-            items = cursor.fetchall()
-            schema_info = {}
-            for item in items:
-                name = item["name"]
-                c_cursor = conn.cursor()
-                c_cursor.execute(f"PRAGMA table_info({name});")
-                cols = [col["name"] for col in c_cursor.fetchall()]
-                schema_info[name] = cols
-            return schema_info
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
+            UNION
+            SELECT name FROM sqlite_temp_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%';
+        """)
+        items = cursor.fetchall()
+        schema_info = {}
+        for item in items:
+            name = item["name"]
+            c_cursor = conn.cursor()
+            c_cursor.execute(f"PRAGMA table_info('{name}');")
+            cols = [col["name"] for col in c_cursor.fetchall()]
+            schema_info[name] = cols
+        return schema_info
 
-    def get_adapter(self) -> SchemaAdapter:
-        """Return cached SchemaAdapter for dynamic schema introspection."""
-        if self._adapter is None:
-            with self._get_connection() as conn:
-                self._adapter = SchemaAdapter(conn)
-        return self._adapter
+
+_active_db: Optional[EndpointDatabase] = None
+
+
+def get_active_db(db_path: Optional[Any] = None) -> EndpointDatabase:
+    """Return the cached EndpointDatabase for the currently active DB path (or specified path)."""
+    global _active_db
+    current_path = Path(db_path) if db_path else get_db_path()
+    if _active_db is None or _active_db.db_path != current_path:
+        if _active_db is not None:
+            _active_db.close()
+        _active_db = EndpointDatabase(current_path)
+    return _active_db
+
+
+def reset_active_db() -> None:
+    """Reset and close the cached active database instance."""
+    global _active_db
+    if _active_db is not None:
+        _active_db.close()
+        _active_db = None

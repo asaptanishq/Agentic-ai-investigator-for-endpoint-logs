@@ -54,7 +54,6 @@ ai-musefix/
 ├── README.md / ARCHITECTURE.md    # Project documentation / full architecture guide
 ├── src/a1/
 │   ├── cli.py         # CLI investigations, --web launch, --benchmark, LLM & DB selection
-│   ├── server.py      # Web server entrypoint (`python -m a1.server`)
 │   ├── config.py      # Env parsing, path resolution, step limits
 │   ├── db.py          # Read-only SQLite wrapper + temporary convenience views
 │   ├── llm.py         # Ollama / OpenAI chat-model factory + runtime override
@@ -119,7 +118,7 @@ Launch the interactive web UI with real-time SSE event streaming, database switc
 ```bash
 a1 web
 # or:
-python -m a1.server
+python -m a1.web.server
 # or:
 python -m a1.cli --web
 ```

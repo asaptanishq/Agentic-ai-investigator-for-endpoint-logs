@@ -5,6 +5,7 @@ from a1.tools.timeline import search_timeline
 from a1.tools.entity import get_entity_context
 # FIX: register the new indicator-pivot tool.
 from a1.tools.pivot import pivot_on_indicator
+from a1.tools.summary import summarize_tool_output
 
 ALL_INVESTIGATION_TOOLS = [
     get_database_schema,
@@ -26,5 +27,6 @@ __all__ = [
     "search_timeline",
     "get_entity_context",
     "pivot_on_indicator",
+    "summarize_tool_output",
     "ALL_INVESTIGATION_TOOLS",
 ]

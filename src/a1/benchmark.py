@@ -89,6 +89,17 @@ BENCHMARK_CASES = {
         ),
         "database": "suricata_c2_intrusion.db",
     },
+    "ATK-G": {
+        "prompt": (
+            "Investigate a potential supply chain compromise on WS-DEV-07: "
+            "the CorpTools application auto-updated and shortly after, discovery "
+            "commands were executed, a new local administrator account appeared, "
+            "Kerberos ticket requests targeted SQL service accounts, and WinRM "
+            "sessions were established to WS-DBA-03 and DC-CORP-01. Determine "
+            "whether this is a supply chain attack or legitimate software activity."
+        ),
+        "database": "attack_supply_chain.db",
+    },
 }
 
 # Case id -> prompt, kept as a flat mapping for existing tooling/tests.
@@ -130,21 +141,31 @@ def _labels_from_groundtruth_files() -> list:
                 gt = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
-        dataset = gt.get("dataset", "")
-        if "lateral" in dataset:
-            case_id = "ATK-A"
-        elif "exfiltration" in dataset:
-            case_id = "ATK-B"
-        elif "ransomware" in dataset:
-            case_id = "ATK-C"
-        elif "attack_lotl_fileless" in dataset:
-            case_id = "ATK-D"
-        elif "wazuh" in dataset:
-            case_id = "ATK-E"
-        elif "suricata" in dataset:
-            case_id = "ATK-F"
+        # Dynamically extract canonical case_id from filename (attack_A -> ATK-A) or JSON
+        case_match = re.search(r"attack_([A-Za-z0-9]+)", gt_path.name, re.IGNORECASE)
+        if case_match:
+            case_id = f"ATK-{case_match.group(1).upper()}"
+        elif gt.get("case_id"):
+            case_id = str(gt["case_id"])
         else:
-            case_id = gt_path.stem
+            dataset = gt.get("dataset", "")
+            if "lateral" in dataset:
+                case_id = "ATK-A"
+            elif "exfiltration" in dataset:
+                case_id = "ATK-B"
+            elif "ransomware" in dataset:
+                case_id = "ATK-C"
+            elif "lotl" in dataset:
+                case_id = "ATK-D"
+            elif "wazuh" in dataset:
+                case_id = "ATK-E"
+            elif "suricata" in dataset:
+                case_id = "ATK-F"
+            elif "supply_chain" in dataset:
+                case_id = "ATK-G"
+            else:
+                case_id = gt_path.stem
+
         labels.append({
             "case_id": case_id,
             "prompt": BENCHMARK_PROMPTS.get(case_id, gt.get("summary", "")),
@@ -153,9 +174,9 @@ def _labels_from_groundtruth_files() -> list:
             "confidence": "high",
             "evidence_basis": gt.get("evidence_basis", []),
         })
-    # Keep canonical ATK-A through ATK-F ordering.
-    order = {"ATK-A": 0, "ATK-B": 1, "ATK-C": 2, "ATK-D": 3, "ATK-E": 4, "ATK-F": 5}
-    labels.sort(key=lambda item: order.get(item.get("case_id"), 99))
+
+    # Sort naturally by case_id (ATK-A, ATK-B, ..., ATK-G)
+    labels.sort(key=lambda item: item.get("case_id", "ZZ"))
     return labels
 
 def activate_case_database(database_name) -> None:

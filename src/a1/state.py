@@ -15,6 +15,7 @@ class InvestigationState(TypedDict):
     verdict: Optional[str]
     verdict_boundary: Optional[str]
     confidence: Optional[float]
+    report: Optional[str]
     # FIX: tracks whether report_node fell back to its hardcoded verdict after a
     # structured-output failure. benchmark.py counts fallback runs as automatic
     # FAILs so a lucky fallback can never score points.

@@ -5,7 +5,7 @@ from typing import List
 
 from a1.llm import get_llm
 from a1.prompts import TRIAGE_SYSTEM_PROMPT
-from a1.nodes.structured_output import StructuredOutputRetryError, invoke_structured_with_retry
+from a1.nodes.structured_output import StructuredOutputRetryError, invoke_structured_with_retry, extract_outer_json
 
 class TriagePlan(BaseModel):
     hypotheses: List[str] = Field(default_factory=list, description="2-4 concrete investigation hypotheses")
@@ -53,6 +53,7 @@ class TriagePlan(BaseModel):
             return json.dumps(value)
         return value or ""
 
+
 def triage_node(state):
     llm = get_llm()
     structured_llm = llm.with_structured_output(TriagePlan)
@@ -91,10 +92,46 @@ def triage_node(state):
             f"Plan: {response.investigation_plan}"
         )
     except Exception as e:
-        print(f"[!] Triage structured-output failed ({type(e).__name__}: {e}); using fallback plan.")
-        fallback_used = True
+        print(f"[!] Triage structured-output failed ({type(e).__name__}: {e}); attempting recovery or fallback.")
+        err_text = "\n".join(str(error) for error in (e, e.__cause__) if error)
+        recovered = False
+
+        data = extract_outer_json(err_text)
+        if data and isinstance(data, dict):
+            try:
+                parsed = TriagePlan(**data)
+                if parsed.hypotheses:
+                    hypotheses = parsed.hypotheses
+                entities = parsed.initial_entities
+                if not entities and enriched_alert and enriched_alert.get("entities", {}).get("host_ids"):
+                    entities = enriched_alert["entities"]["host_ids"]
+                plan_text = f"Triage complete (recovered).\nHypotheses: {'; '.join(hypotheses)}\nPlan: {parsed.investigation_plan}"
+                recovered = True
+                fallback_used = False
+            except Exception:
+                pass
+
+        if not recovered:
+            extracted_hypos = []
+            for line in err_text.splitlines():
+                line_s = line.strip()
+                if line_s.lower().startswith(("h1:", "h2:", "h3:", "h4:", "hypothesis 1:", "hypothesis 2:")) or (
+                    "hypothesis" in line_s.lower() and len(line_s) > 15
+                ):
+                    extracted_hypos.append(line_s.lstrip("-*•0123456789. :").strip())
+            if extracted_hypos:
+                hypotheses = extracted_hypos
+            elif enriched_alert and enriched_alert.get("entities", {}).get("host_ids"):
+                hosts = ", ".join(enriched_alert["entities"]["host_ids"])
+                hypotheses = [
+                    f"Evaluate suspicious process execution and persistence on {hosts}",
+                    f"Assess benign administrative or software maintenance activity on {hosts}",
+                ]
+            entities = enriched_alert.get("entities", {}).get("host_ids", []) if enriched_alert else []
+            fallback_used = True
+            plan_text = f"Triage plan: {'; '.join(hypotheses)}"
+
         retry_used = isinstance(e, StructuredOutputRetryError)
-        plan_text = f"Triage fallback: {'; '.join(hypotheses)}"
 
     return {
         "messages": [HumanMessage(content=plan_text)],

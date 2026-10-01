@@ -16,46 +16,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from a1.graph import create_investigation_graph
 from a1.config import MAX_INVESTIGATION_STEPS
-
-def summarize_tool_output(content: str) -> str:
-    """Produce a short human-readable summary of a tool result for CLI display."""
-    try:
-        data = json.loads(content)
-        if isinstance(data, dict):
-            if "matches" in data:
-                return f"{len(data['matches'])} match(es): " + ", ".join(
-                    str(m.get("child_process_name", m.get("process_entity_id", "?"))) for m in data["matches"][:3]
-                )
-            if "ancestors" in data or "descendants" in data:
-                a = len(data.get("ancestors", []))
-                d = len(data.get("descendants", []))
-                return f"Process tree: {a} ancestor(s), {d} descendant(s)"
-            if "network_connections" in data:
-                return (f"Associations: {len(data.get('network_connections', []))} network, "
-                        f"{len(data.get('files', []))} file, "
-                        f"{len(data.get('registry_events', []))} registry")
-            # FIX: generic fallback for any other dict shape (was: first 120
-            # chars of raw JSON, which was unreadable for the new pivot tool
-            # and any future tool). Summarizes lists by count, scalars inline.
-            parts = []
-            for k, v in data.items():
-                if isinstance(v, list):
-                    parts.append(f"{k}: {len(v)} item(s)")
-                elif isinstance(v, dict):
-                    parts.append(f"{k}: object")
-                else:
-                    parts.append(f"{k}={v}")
-                if len(parts) >= 8:
-                    break
-            return "; ".join(parts) if parts else "(empty result)"
-        if isinstance(data, list):
-            return f"{len(data)} row(s) returned"
-        return str(data)[:200]
-    except Exception:
-        pass
-    if content.startswith(("Error", "Database query error")):
-        return content[:200]
-    return content[:200]
+from a1.tools import summarize_tool_output
 
 def run_investigation(alert: str, verbose: bool = False):
     app = create_investigation_graph()

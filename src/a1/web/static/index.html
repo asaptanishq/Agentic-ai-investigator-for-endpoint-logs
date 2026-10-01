@@ -10,10 +10,18 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=2" />
-  <!-- Optional CDN for rich Markdown rendering -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=3" />
+  <!-- Offline-first bundled Markdown & DOMPurify with CDN fallback -->
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script>
+    if (typeof window.marked === "undefined") {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\\/script>');
+    }
+    if (typeof window.DOMPurify === "undefined") {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"><\\/script>');
+    }
+  </script>
 </head>
 
 <body class="theme-dark">
@@ -187,6 +195,151 @@
         </div>
       </header>
 
+      <!-- Investigation Mode & Workbench Switcher -->
+      <div class="workbench-bar" id="workbenchBar">
+        <div class="view-switcher" role="tablist" aria-label="Investigation View Modes">
+          <button class="view-tab-btn" id="tabViewGraph" role="tab" aria-selected="false" data-view="graph" title="Interactive Process Tree & Attack Map">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+            <span>Forensic Graph</span>
+            <span class="view-tab-badge" id="graphNodeCountBadge">0</span>
+          </button>
+          <button class="view-tab-btn active" id="tabViewChat" role="tab" aria-selected="true" data-view="chat" title="Live Investigation Stepper & Tool Trace">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>Investigation Trail</span>
+          </button>
+          <button class="view-tab-btn" id="tabViewReport" role="tab" aria-selected="false" data-view="report" title="Executive Incident Report & Verdict">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            <span>Incident Report</span>
+          </button>
+        </div>
+
+        <div class="workbench-quick-meta" id="workbenchQuickMeta">
+          <span class="live-status-pill" id="graphLiveStatus">Ready</span>
+        </div>
+      </div>
+
+      <!-- Interactive Forensic Graph Stage -->
+      <div class="graph-stage" id="graphStage" style="display:none;">
+        <!-- Graph Control & Filter Toolbar -->
+        <div class="graph-toolbar">
+          <div class="graph-filter-group" role="group" aria-label="Entity Category Filters">
+            <button class="filter-pill active" data-filter="all">All</button>
+            <button class="filter-pill filter-pill-proc" data-filter="process">Processes</button>
+            <button class="filter-pill filter-pill-net" data-filter="network">Network</button>
+            <button class="filter-pill filter-pill-file" data-filter="file">Files</button>
+            <button class="filter-pill filter-pill-reg" data-filter="registry">Registry</button>
+            <button class="filter-pill filter-pill-alert" data-filter="alert">Suspicious</button>
+          </div>
+
+          <div class="graph-search-wrap">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="graphSearchInput" class="graph-search-input" placeholder="Search node name, PID, IP, command..." aria-label="Search graph nodes" />
+          </div>
+
+          <div class="graph-actions-group">
+            <button class="icon-btn-sm" id="graphExpandAllBtn" title="Expand All Connected Nodes" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+            </button>
+            <button class="icon-btn-sm" id="graphCollapseAllBtn" title="Collapse to Root Nodes" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+            </button>
+            <button class="icon-btn-sm" id="graphZoomInBtn" title="Zoom In (+)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+            <button class="icon-btn-sm" id="graphZoomOutBtn" title="Zoom Out (-)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+            <button class="icon-btn-sm" id="graphFitBtn" title="Fit to Screen">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+            </button>
+            <!-- Sample Scenarios Quick Selector -->
+            <div class="scenario-dropdown-wrap">
+              <button class="action-pill-btn-sm" id="scenarioDropdownBtn" title="Load Pre-configured Attack Scenario" type="button">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                <span>Sample Attacks</span>
+              </button>
+              <div class="scenario-menu" id="scenarioMenu">
+                <button class="scenario-menu-item" data-scenario="ransomware" type="button">
+                  <strong>LockBit Ransomware</strong>
+                  <span>Word &rarr; Hidden PowerShell &rarr; vssadmin shadow deletion</span>
+                </button>
+                <button class="scenario-menu-item" data-scenario="exfil" type="button">
+                  <strong>Data Exfiltration</strong>
+                  <span>7-Zip staging &rarr; Outbound C2 upload</span>
+                </button>
+                <button class="scenario-menu-item" data-scenario="lateral" type="button">
+                  <strong>Lateral Movement</strong>
+                  <span>PowerShell WinRM &rarr; WMI remote exec on DC</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SVG Visualizer Container -->
+        <div class="graph-canvas-container" id="graphCanvasContainer">
+          <!-- ForensicGraph renders here -->
+        </div>
+
+        <!-- Entity Inspector Drawer (Slide-out panel) -->
+        <aside class="graph-inspector-drawer" id="graphInspectorDrawer" aria-label="Entity Inspector">
+          <div class="inspector-header">
+            <div class="inspector-badge-row">
+              <span class="inspector-type-badge" id="inspectorTypeBadge">Process</span>
+              <span class="inspector-threat-badge" id="inspectorThreatBadge" style="display:none;">Suspicious</span>
+            </div>
+            <button class="icon-btn-sm" id="inspectorCloseBtn" title="Close Inspector (Esc)" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          </div>
+          <div class="inspector-title" id="inspectorTitle">powershell.exe</div>
+          <div class="inspector-subtitle" id="inspectorSubtitle">PID 4820 &middot; Host WS-ACCT-01</div>
+
+          <div class="inspector-body" id="inspectorBody">
+            <!-- Dynamically populated entity attributes -->
+          </div>
+        </aside>
+      </div>
+
+      <!-- Incident Report Stage -->
+      <div class="report-stage" id="reportStage" style="display:none;">
+        <div class="report-stage-inner">
+          <div class="report-stage-header">
+            <div class="report-verdict-card" id="reportStageVerdict">
+              <div class="verdict-tag" id="reportStageVerdictTag">No Report Generated</div>
+              <div class="verdict-time" id="reportStageVerdictTime">Run an investigation to generate a verified incident report</div>
+            </div>
+            <div class="report-stage-actions">
+              <button class="action-pill-btn" id="reportStageCopyBtn" title="Copy Report Markdown" type="button">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy Markdown</span>
+              </button>
+            </div>
+          </div>
+          <div class="report-stage-content report-markdown" id="reportStageContent">
+            <div class="history-empty" style="padding:60px 20px;">
+              No investigation report generated yet. Submit a query below or select a sample investigation from the suggestions to begin.
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Chat Messages Scroll Stage -->
       <div class="chat-stage" id="chatStage">
         <div class="chat-stage-inner" id="chatStageInner">
@@ -326,6 +479,7 @@
     <div class="evidence-table-wrap dialog-table-wrap" id="globalDialogTableWrap"></div>
   </dialog>
 
+  <script src="/static/forensic-graph.js?v=2"></script>
   <script src="/static/app.js?v=2"></script>
 </body>
 

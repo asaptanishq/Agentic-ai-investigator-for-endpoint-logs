@@ -1,0 +1,51 @@
+{
+  "dataset": "attack_supply_chain.db",
+  "scenario": "Supply chain compromise via trojanized software updater, Kerberoasting, WinRM lateral movement, and cloud exfiltration",
+  "summary": "On 2026-10-07, CorpTools.exe on WS-DEV-07 auto-updated with a trojanized DLL (corptoolshelper.dll) from compromised CDN update.corptoolscdn.com. The side-loaded payload executed hidden PowerShell for discovery, created local admin svc_backup, installed persistence service CorpToolsSyncSvc, performed Kerberoasting against SQL SPNs to compromise svc_sqlreport, then used WinRM to laterally move to WS-DBA-03 (SQL data access), DC-CORP-01 (domain enumeration), and WS-EXEC-15 (final staging). Data was exfiltrated via HTTPS POST to api.megaupload-cdn.com. Cleanup included event log clearing with wevtutil.",
+  "kill_chain": [
+    "09:14 CorpTools.exe loads trojanized corptoolshelper.dll via DLL side-loading on WS-DEV-07",
+    "09:16 Hidden PowerShell -Enc spawned by rundll32.exe for discovery (systeminfo, ipconfig, whoami /all)",
+    "09:22 WMI local enumeration of processes and software",
+    "09:35 net user svc_backup Password123! /add /y; net localgroup administrators svc_backup /add",
+    "09:40 sc create CorpToolsSyncSvc type= share start= auto binPath= C:\\Windows\\System32\\corptoolssync.dll",
+    "10:05 Kerberos TGS requests for SPN MSSQLSvc/sql01.corp.local:1433 (Kerberoasting)",
+    "10:45 WinRM to WS-DBA-03 as svc_sqlreport; PowerShell session established",
+    "11:10 WinRM to DC-CORP-01; Get-ADComputer and Get-ADUser enumeration",
+    "11:30 RDP to WS-EXEC-15 as svc_sqlreport for final staging",
+    "12:00 Access SQL exports on WS-DBA-03, stage as encrypted .cab files in %TEMP%",
+    "12:30 HTTPS POST to api.megaupload-cdn.com:443 from WS-EXEC-15 (exfiltration)",
+    "12:45 wevtutil cl Security; del /q C:\\Users\\*\\AppData\\Local\\Temp\\*.cab on WS-DEV-07 (cleanup)"
+  ],
+  "key_iocs": [
+    "corptoolshelper.dll (trojanized, unsigned)",
+    "update.corptoolscdn.com (compromised CDN)",
+    "svc_backup (rogue local admin account)",
+    "CorpToolsSyncSvc (persistence service)",
+    "MSSQLSvc/sql01.corp.local:1433 (Kerberoasting target SPN)",
+    "WinRM port 5985 lateral movement to 3 hosts",
+    "api.megaupload-cdn.com (exfiltration destination)",
+    "wevtutil cl Security (event log clearing)"
+  ],
+  "expected_verdict": "malicious",
+  "verdict_boundary": "confirmed_malicious",
+  "evidence_basis": [
+    "supply_chain_dll_sideloading (CorpTools.exe -> corptoolshelper.dll)",
+    "encoded_powershell_discovery (systeminfo, whoami /all, net user)",
+    "local_account_creation (svc_backup added to administrators)",
+    "service_persistence (CorpToolsSyncSvc installed)",
+    "kerberoasting (TGS requests for SQL service SPNs)",
+    "winrm_lateral_movement (WS-DEV-07 -> WS-DBA-03, DC-CORP-01)",
+    "rdp_lateral_movement (WS-DEV-07 -> WS-EXEC-15)",
+    "data_staging_and_exfiltration (.cab files -> HTTPS POST to cloud)",
+    "anti_forensics (wevtutil event log clearing)"
+  ],
+  "distractors": [
+    "Normal Chrome, VS Code, Teams, Outlook activity across 30+ workstations",
+    "Legitimate Kerberos TGT/TGS traffic on domain controllers",
+    "IT admin RDP sessions from WS-IT-* hosts",
+    "DBA legitimate sqlcmd and SSMS activity on WS-DBA-* hosts",
+    "Windows Update, Defender, SCCM background processes",
+    "Normal SMB file share access to FS-CORP-01/02"
+  ],
+  "notes": "50,000+ events across 30+ hosts with 2-week time window. Attack is ~2-3% of total events spread across 5 hosts on a single day. Tests agent's ability to find a needle in a haystack."
+}

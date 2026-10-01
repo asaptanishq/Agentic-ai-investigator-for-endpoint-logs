@@ -1,16 +1,9 @@
 import json
 from langchain_core.tools import tool
-from a1.db import EndpointDatabase
-from a1.config import get_db_path
+from a1.db import get_active_db
 
-_db = None
-
-def _get_db() -> EndpointDatabase:
-    global _db
-    current_path = get_db_path()
-    if _db is None or _db.db_path != current_path:
-        _db = EndpointDatabase(current_path)
-    return _db
+def _get_db():
+    return get_active_db()
 
 
 

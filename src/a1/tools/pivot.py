@@ -1,16 +1,9 @@
 import json
 from langchain_core.tools import tool
-from a1.db import EndpointDatabase
-from a1.config import get_db_path
+from a1.db import get_active_db
 
-_db = None
-
-def _get_db() -> EndpointDatabase:
-    global _db
-    current_path = get_db_path()
-    if _db is None or _db.db_path != current_path:
-        _db = EndpointDatabase(current_path)
-    return _db
+def _get_db():
+    return get_active_db()
 
 
 
@@ -54,16 +47,16 @@ def pivot_on_indicator(indicator_type: str, indicator_value: str, max_rows: int 
 
         if t == "sha256":
             rows = _get_db().execute_query(
-                "SELECT e.host_id, f.process_entity_id, f.file_path, f.file_name, f.sha256, f.event_id "
-                "FROM files AS f JOIN events AS e ON e.event_id = f.event_id "
+                "SELECT COALESCE(f.host_id, e.host_id, 'unknown') AS host_id, f.process_entity_id, f.file_path, f.file_name, f.sha256, f.event_id "
+                "FROM files AS f LEFT JOIN events AS e ON e.event_id = f.event_id "
                 "WHERE lower(f.sha256) = lower(?)",
                 (indicator_value,),
                 max_rows=max_rows,
             )
         elif t == "destination_ip":
             rows = _get_db().execute_query(
-                "SELECT e.host_id, n.process_entity_id, n.source_ip, n.source_port, n.destination_ip, n.destination_port, n.protocol, n.event_id "
-                "FROM network_connections AS n JOIN events AS e ON e.event_id = n.event_id "
+                "SELECT COALESCE(n.host_id, e.host_id, n.source_host_id, 'unknown') AS host_id, n.process_entity_id, n.source_ip, n.source_port, n.destination_ip, n.destination_port, n.protocol, n.event_id "
+                "FROM network_connections AS n LEFT JOIN events AS e ON e.event_id = n.event_id "
                 "WHERE n.destination_ip = ? OR n.source_ip = ?",
                 (indicator_value, indicator_value),
                 max_rows=max_rows,
@@ -73,18 +66,22 @@ def pivot_on_indicator(indicator_type: str, indicator_value: str, max_rows: int 
             val_no_ext = val[:-4] if val.lower().endswith(".exe") else val
             val_ext = val if val.lower().endswith(".exe") else f"{val}.exe"
             rows = _get_db().execute_query(
-                "SELECT host_id, process_entity_id, pid, process_name, executable, event_id "
+                "SELECT host_id, process_entity_id, pid, process_name, executable, command_line, event_id "
                 "FROM processes WHERE lower(executable) LIKE '%' || lower(?) || '%' "
-                "OR lower(process_name) = lower(?) OR lower(process_name) = lower(?)",
-                (val, val_no_ext, val_ext),
+                "OR lower(process_name) = lower(?) OR lower(process_name) = lower(?) "
+                "OR lower(COALESCE(command_line, '')) LIKE '%' || lower(?) || '%'",
+                (val, val_no_ext, val_ext, val),
                 max_rows=max_rows,
             )
         elif t == "file_name":
+            val = indicator_value.strip()
+            clean_val = val.lstrip("*").lower()
             rows = _get_db().execute_query(
-                "SELECT e.host_id, f.process_entity_id, f.file_path, f.file_name, f.sha256, f.event_id "
-                "FROM files AS f JOIN events AS e ON e.event_id = f.event_id "
-                "WHERE lower(f.file_name) = lower(?)",
-                (indicator_value,),
+                "SELECT COALESCE(f.host_id, e.host_id, 'unknown') AS host_id, f.process_entity_id, f.file_path, f.file_name, f.sha256, f.event_id "
+                "FROM files AS f LEFT JOIN events AS e ON e.event_id = f.event_id "
+                "WHERE lower(f.file_name) = lower(?) OR lower(f.file_name) LIKE '%' || lower(?) "
+                "OR lower(COALESCE(f.extension, '')) = lower(?) OR lower(COALESCE(f.file_path, '')) LIKE '%' || lower(?)",
+                (val, clean_val, clean_val, clean_val),
                 max_rows=max_rows,
             )
         elif t == "user":
