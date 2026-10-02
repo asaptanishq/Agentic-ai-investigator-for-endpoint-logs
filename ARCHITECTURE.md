@@ -163,7 +163,7 @@ ai-musefix/
 |   |-- README.md                         Dataset provenance and surface boundary
 |   |-- schema.md                         Telemetry schema specification
 |
-|-- tests/                             [Test Suite (77 Tests)]
+|-- tests/                             [Test Suite (78 Tests)]
     |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
     |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
@@ -317,6 +317,9 @@ python -m a1.cli --benchmark --limit 5
 
 # Run baseline comparisons and ablation experiments:
 python -m a1.experiment
+
+# Run live ablation studies with real LangGraph execution and rubric scoring:
+python -m a1.experiment --live --limit 3
 ```
 
 ### Web API (`web/server.py`)
@@ -379,7 +382,7 @@ python -m a1.experiment
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (77 unit and integration tests passing):
+The repository maintains full automated test coverage (78 unit and integration tests passing):
 
 ```powershell
 # Run the full test suite:

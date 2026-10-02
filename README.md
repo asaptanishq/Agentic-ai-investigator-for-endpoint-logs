@@ -79,7 +79,7 @@ ai-musefix/
 │       └── static/                # HTML/CSS/JS with SVG forensic DAG & process tree engine
 ├── scripts/
 │   └── smoke_test.py              # Standalone 17-point end-to-end verification script
-├── tests/                         # Pytest test suite (77 tests passed)
+├── tests/                         # Pytest test suite (78 tests passed)
 └── endpoint_security_dataset_expanded_corrected/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
     └── *.db                       # 8 SQLite forensic telemetry databases
@@ -215,6 +215,9 @@ Run empirical ablation experiments (`src/a1/experiment.py`) comparing system con
 ```bash
 # Run baseline comparison and ablation studies
 python -m a1.experiment
+
+# Run live ablation studies with real LangGraph workflow executions and rubric scoring
+python -m a1.experiment --live --limit 3
 ```
 
 Configurations tested:
@@ -224,11 +227,13 @@ Configurations tested:
 - **+ Evidence Validator:** Zero-hallucination deterministic database verification.
 - **Full Architecture:** All augmentations enabled.
 
+When run with `--live`, each scenario executes through the compiled LangGraph state machine, audits grounding against SQLite, scores outcomes using the 100-point rubric in `docs/EVALUATION_SCORING_RUBRICS.md`, and exports detailed summaries to `experiment_report.json` and `experiment_report.md`.
+
 ---
 
 ### 5. Running Tests
 
-Run the full pytest suite (77 tests passed) and standalone smoke tests:
+Run the full pytest suite (78 tests passed) and standalone smoke tests:
 
 ```bash
 # Run pytest suite
