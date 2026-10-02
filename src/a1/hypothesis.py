@@ -1,10 +1,14 @@
 """Hypothesis lifecycle management for DFIR investigation."""
 from __future__ import annotations
 
+import re
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
-import uuid
+from typing import Any, Dict, List, Optional, Set
+
+MAX_ACTIVE_HYPOTHESES = 8
+HYPOTHESIS_SIMILARITY_THRESHOLD = 0.6
 
 
 class HypothesisStatus(str, Enum):
@@ -26,6 +30,10 @@ class Hypothesis:
     unresolved_questions: List[str] = field(default_factory=list)
     confidence: float = 0.5
     notes: List[str] = field(default_factory=list)
+    provenance: str = ""
+    triggering_evidence: List[str] = field(default_factory=list)
+    source: str = "triage"
+    created_at_iteration: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -38,6 +46,10 @@ class Hypothesis:
             "unresolved_questions": list(self.unresolved_questions),
             "confidence": self.confidence,
             "notes": list(self.notes),
+            "provenance": self.provenance,
+            "triggering_evidence": list(self.triggering_evidence),
+            "source": self.source,
+            "created_at_iteration": self.created_at_iteration,
         }
 
     @classmethod
@@ -58,6 +70,10 @@ class Hypothesis:
             unresolved_questions=list(data.get("unresolved_questions", [])),
             confidence=float(data.get("confidence", 0.5)),
             notes=list(data.get("notes", [])),
+            provenance=str(data.get("provenance", "")),
+            triggering_evidence=list(data.get("triggering_evidence", [])),
+            source=str(data.get("source", "triage")),
+            created_at_iteration=int(data.get("created_at_iteration", 0)),
         )
 
 
@@ -76,9 +92,72 @@ class HypothesisTracker:
             id=hypothesis_id,
             description=description,
             status=HypothesisStatus.ACTIVE,
+            source="triage",
         )
         self.hypotheses[hypothesis_id] = hypo
         return hypo
+
+    def add_dynamic_hypothesis(
+        self,
+        description: str,
+        triggering_evidence: List[str],
+        provenance: str,
+        iteration: int,
+    ) -> Optional[Hypothesis]:
+        """Create a new hypothesis if:
+        1. Concrete triggering evidence is provided
+        2. Active count < MAX_ACTIVE_HYPOTHESES
+        3. Not semantically duplicate of existing hypotheses
+        Returns None if creation was suppressed."""
+        if not triggering_evidence:
+            return None
+        if len(self.get_active()) >= MAX_ACTIVE_HYPOTHESES:
+            return None
+        if self._is_duplicate(description):
+            return None
+
+        idx = len(self.hypotheses) + 1
+        hypo = Hypothesis(
+            id=f"HD{idx}",
+            description=description,
+            status=HypothesisStatus.ACTIVE,
+            provenance=provenance,
+            triggering_evidence=list(triggering_evidence),
+            source="dynamic",
+            created_at_iteration=iteration,
+        )
+        self.hypotheses[hypo.id] = hypo
+        return hypo
+
+    def get_active(self) -> List[Hypothesis]:
+        return [
+            h for h in self.hypotheses.values()
+            if h.status == HypothesisStatus.ACTIVE
+        ]
+
+    def _is_duplicate(self, description: str) -> bool:
+        """Keyword-based deduplication. Compare normalized keyword sets."""
+        new_kws = self._extract_keywords(description)
+        if not new_kws:
+            return False
+        for h in self.hypotheses.values():
+            existing_kws = self._extract_keywords(h.description)
+            if not existing_kws:
+                continue
+            overlap = len(new_kws & existing_kws) / max(len(new_kws), len(existing_kws))
+            if overlap >= HYPOTHESIS_SIMILARITY_THRESHOLD:
+                return True
+        return False
+
+    @staticmethod
+    def _extract_keywords(text: str) -> Set[str]:
+        stop = {
+            "the", "and", "for", "with", "from", "that", "this", "via", "into",
+            "over", "under", "between", "through", "during", "before", "after",
+            "above", "below", "to", "in", "on", "at", "by", "an", "a", "of"
+        }
+        words = set(re.findall(r"\b[a-z]{3,}\b", text.lower()))
+        return words - stop
 
     def get_hypothesis(self, hypothesis_id: str) -> Optional[Hypothesis]:
         return self.hypotheses.get(hypothesis_id)

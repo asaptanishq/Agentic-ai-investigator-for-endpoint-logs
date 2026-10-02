@@ -100,7 +100,7 @@ def correlation_node(state):
     baseline_str = "\n".join(f"- {n}" for n in set(baseline_notes)) if baseline_notes else "- (No baseline anomalies triggered)"
 
     # Secondary Context: Raw message trail (last 20 messages to keep context concise)
-    recent_messages = state["messages"][-20:]
+    recent_messages = (state.get("messages") or [])[-20:]
     trail_parts = []
     for msg in recent_messages:
         role = getattr(msg, "type", "unknown")
@@ -178,10 +178,11 @@ def correlation_node(state):
                     proc = item.get("process_name") or item.get("process_entity_id") or ""
                     host = item.get("host_id") or ""
                     top_events.append(f"Observed {act} on {host} ({eid}) by {proc}")
-                confirmed = top_events if top_events else ["Suspicious activity identified in endpoint telemetry"]
+                confirmed = top_events
+                gaps = ["Structured correlation output format required automated timeline mapping"]
             else:
-                confirmed = ["Suspicious activity identified in endpoint telemetry"]
-            gaps = ["Structured correlation output format required automated timeline mapping"]
+                confirmed = []
+                gaps = ["Correlation analysis failed; manual review required"]
             benign_explanations = []
 
         fallback_used = not recovered

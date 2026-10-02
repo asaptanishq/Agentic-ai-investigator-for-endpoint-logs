@@ -231,13 +231,20 @@ def activate_case_database(database_name) -> None:
     cfg.set_active_database(candidate)
     print(f"  [*] Telemetry database: {candidate.name}")
 
+def _normalize_boundary(boundary: str) -> str:
+    b = str(boundary).lower().strip()
+    if b in ("confirmed_benign", "benign"):
+        return "benign"
+    return b
+
+
 def _score_verdict(agent_verdict: str, expected_label: str, agent_boundary: str, expected_boundary: str, fallback_used: bool) -> float:
     if fallback_used:
         return 0.0
     pts = 0.0
     if agent_verdict == expected_label:
         pts += 15.0
-    if agent_boundary == expected_boundary:
+    if _normalize_boundary(agent_boundary) == _normalize_boundary(expected_boundary):
         pts += 5.0
     return pts
 
@@ -358,6 +365,31 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
     repeat_nudges = final_state.get("repeat_nudges", 0)
     dup_query_rate = round(repeat_nudges / max(1, iter_count), 3)
 
+    # Validation correctness & unverified evidence metrics (Issue #2, #3, #5)
+    val_results = final_state.get("validation_results") or {}
+    val_status = val_results.get("validation_status", "unknown")
+    unverified_count = (
+        len(val_results.get("event_ids_unverified", []))
+        + len(val_results.get("process_ids_unverified", []))
+        + len(val_results.get("hostnames_unverified", []))
+    )
+
+    # Relationship validation metrics (Issue #3, #5)
+    rel_validations = val_results.get("relationship_validations", [])
+    observed_rels = sum(1 for r in rel_validations if r.get("status") == "observed")
+    total_rels = len(rel_validations)
+    rel_correctness = round(observed_rels / total_rels, 3) if total_rels else 1.0
+
+    # Dynamic hypothesis metrics (Issue #1, #5)
+    tracker_data = final_state.get("hypothesis_tracker") or {}
+    all_hypos = tracker_data.get("hypotheses", {})
+    dynamic_hypos = [h for h in all_hypos.values() if h.get("source") == "dynamic"]
+    dynamic_count = len(dynamic_hypos)
+
+    # Investigation completeness (Issue #5)
+    unresolved_hypos = [h for h in all_hypos.values() if h.get("status") in ("active", "unresolved")]
+    completeness = round(1.0 - (len(unresolved_hypos) / max(1, len(all_hypos))), 3)
+
     return {
         "verdict_score": verdict_pts,
         "recall_score": recall_pts,
@@ -374,6 +406,12 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
         "evidence_recall": ev_recall,
         "duplicate_query_rate": dup_query_rate,
         "unsupported_claims_count": hallucinated,
+        "validation_status": val_status,
+        "unverified_evidence_count": unverified_count,
+        "relationship_correctness": rel_correctness,
+        "dynamic_hypotheses_created": dynamic_count,
+        "investigation_completeness": completeness,
+        "unresolved_hypothesis_count": len(unresolved_hypos),
     }
 
 
@@ -420,7 +458,7 @@ def _execute_benchmark_case(app, case_id: str, case: dict, db_path: Optional[str
 
     fallback_used = bool(final_state.get("report_fallback_used"))
     verdict_match = (agent_verdict == expected_label.lower()) and not fallback_used
-    boundary_match = (agent_boundary == expected_boundary.lower()) and not fallback_used
+    boundary_match = (_normalize_boundary(agent_boundary) == _normalize_boundary(expected_boundary)) and not fallback_used
 
     if fallback_used:
         print("  [!] Report generated via structured-output fallback -- counted as FAIL")
@@ -434,6 +472,8 @@ def _execute_benchmark_case(app, case_id: str, case: dict, db_path: Optional[str
     print(f"    * Grounding/Anti-Hal: {rubric['grounding_score']}/25 (Hallucinations: {rubric['hallucinated_citations']}/{rubric['total_citations']})")
     print(f"    * Investigation Eff:  {rubric['efficiency_score']}/15")
     print(f"    * Report Quality:     {rubric['report_score']}/10")
+    print(f"    * Validation Status:  {rubric['validation_status']} (Unverified: {rubric['unverified_evidence_count']})")
+    print(f"    * Relationship Corr:  {rubric['relationship_correctness']:.1%} | Completeness: {rubric['investigation_completeness']:.1%} (Dynamic: {rubric['dynamic_hypotheses_created']})")
 
     return {
         "case_id": case_id,
@@ -464,6 +504,9 @@ def _compute_and_print_benchmark_summary(results: list) -> dict:
     fnr = (fns / total_malicious) if total_malicious else 0.0
     avg_ev_precision = sum(r["rubric"].get("evidence_precision", 1.0) for r in results) / total if total else 1.0
     avg_ev_recall = sum(r["rubric"].get("evidence_recall", 1.0) for r in results) / total if total else 1.0
+    avg_rel_correctness = sum(r["rubric"].get("relationship_correctness", 1.0) for r in results) / total if total else 1.0
+    avg_completeness = sum(r["rubric"].get("investigation_completeness", 1.0) for r in results) / total if total else 1.0
+    total_dynamic_hypos = sum(r["rubric"].get("dynamic_hypotheses_created", 0) for r in results)
 
     print(f"\n{'='*60}\nBenchmark Summary\n{'='*60}")
     print(f"Verdict accuracy:          {verdict_acc:.0%} ({sum(r['verdict_match'] for r in results)}/{total})")
@@ -473,6 +516,9 @@ def _compute_and_print_benchmark_summary(results: list) -> dict:
     print(f"False-Negative Rate:       {fnr:.1%}")
     print(f"Avg Evidence Precision:    {avg_ev_precision:.1%}")
     print(f"Avg Evidence Recall:       {avg_ev_recall:.1%}")
+    print(f"Avg Relationship Corr:     {avg_rel_correctness:.1%}")
+    print(f"Avg Inv. Completeness:     {avg_completeness:.1%}")
+    print(f"Total Dynamic Hypotheses:  {total_dynamic_hypos}")
     print(f"Fallback runs (auto-FAIL):  {fallback_count}/{total}")
 
     return {
@@ -484,6 +530,9 @@ def _compute_and_print_benchmark_summary(results: list) -> dict:
         "false_negative_rate": fnr,
         "avg_evidence_precision": avg_ev_precision,
         "avg_evidence_recall": avg_ev_recall,
+        "avg_relationship_correctness": avg_rel_correctness,
+        "avg_investigation_completeness": avg_completeness,
+        "total_dynamic_hypotheses": total_dynamic_hypos,
         "fallback_count": fallback_count,
     }
 

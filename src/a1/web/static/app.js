@@ -4,6 +4,7 @@
 
 (function () {
   "use strict";
+  console.log("%c[A1 DFIR] Modern Thinking Stream Loaded v3.2", "color:#818cf8;font-weight:bold;font-size:12px;");
 
   // Application State
   const state = {
@@ -1530,6 +1531,9 @@
       console.error("Stream error:", err);
       assistantMsg.setErrorMessage(err.message);
     } finally {
+      if (assistantMsg && typeof assistantMsg.finalizeThinking === "function") {
+        assistantMsg.finalizeThinking();
+      }
       state.isGenerating = false;
       updateSendBtnState(false);
       scrollToBottom();
@@ -1651,39 +1655,52 @@
       openGlobalTelemetryTable(timeline, "Retrieved Evidence Events");
     });
 
-    // Telemetry & Steps Accordion
-    const traceBox = document.createElement("div");
-    traceBox.className = "telemetry-trace";
-    traceBox.innerHTML = `
-      <button class="telemetry-toggle">
-        <span>Investigation Telemetry Trace <span class="trace-count-pill">0 steps</span></span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+    // 1. ChatGPT-style Thought / Thinking Block
+    const thinkingBlock = document.createElement("div");
+    thinkingBlock.className = "chat-thinking-block is-collapsed";
+    thinkingBlock.style.display = "none";
+    thinkingBlock.innerHTML = `
+      <button type="button" class="chat-thinking-toggle" title="Click to expand/collapse thought process">
+        <div class="chat-thinking-left">
+          <span class="chat-thinking-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a6 6 0 0 0-6 6c0 2.2 1.2 4.1 3 5.1V15a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-1.9c1.8-1 3-2.9 3-5.1a6 6 0 0 0-6-6z"/><path d="M9 19h6"/><path d="M10 22h4"/></svg>
+          </span>
+          <span class="chat-thinking-label">Thinking...</span>
+          <span class="chat-thinking-pulse"></span>
+        </div>
+        <svg class="chat-thinking-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
       </button>
-      <div class="telemetry-body" style="display: none;"></div>
+      <div class="chat-thinking-body"></div>
     `;
 
-    const toggleBtn = traceBox.querySelector(".telemetry-toggle");
-    const traceBody = traceBox.querySelector(".telemetry-body");
-    const countPill = traceBox.querySelector(".trace-count-pill");
+    const thinkingToggle = thinkingBlock.querySelector(".chat-thinking-toggle");
+    const thinkingBody = thinkingBlock.querySelector(".chat-thinking-body");
+    const thinkingLabel = thinkingBlock.querySelector(".chat-thinking-label");
 
-    toggleBtn.addEventListener("click", () => {
-      const isHidden = traceBody.style.display === "none";
-      traceBody.style.display = isHidden ? "flex" : "none";
-      toggleBtn.querySelector("svg").style.transform = isHidden
-        ? "rotate(180deg)"
-        : "rotate(0deg)";
+    thinkingToggle.addEventListener("click", () => {
+      thinkingBlock.classList.toggle("is-collapsed");
     });
 
-    // Verdict Banner
+    // 2. ChatGPT-style Tool Activity Chips Row
+    const toolsContainer = document.createElement("div");
+    toolsContainer.className = "chat-tools-container";
+    toolsContainer.style.display = "none";
+
+    // 3. Main Assistant Direct Reply (streams on the left in real-time)
+    const replyBox = document.createElement("div");
+    replyBox.className = "assistant-reply";
+    replyBox.style.display = "none";
+
+    // 4. Verdict Banner
     const verdictBanner = document.createElement("div");
     verdictBanner.className = "verdict-banner";
     verdictBanner.style.display = "none";
 
-    // Markdown Report Container
+    // 5. Incident Report Container
     const reportBox = document.createElement("div");
     reportBox.className = "report-markdown";
 
-    // Report Actions
+    // 6. Report Actions
     const reportActions = document.createElement("div");
     reportActions.className = "report-actions";
     reportActions.style.display = "none";
@@ -1694,10 +1711,13 @@
       </button>
     `;
 
+    // Append to message content in ChatGPT natural hierarchy:
     content.appendChild(stepper);
+    content.appendChild(thinkingBlock);
+    content.appendChild(toolsContainer);
     content.appendChild(hypothesesBox);
+    content.appendChild(replyBox);
     content.appendChild(evidenceBox);
-    content.appendChild(traceBox);
     content.appendChild(verdictBanner);
     content.appendChild(reportBox);
     content.appendChild(reportActions);
@@ -1707,9 +1727,12 @@
 
     const internalState = {
       stepCount: 0,
+      thoughtText: "",
+      replyText: "",
       reportMarkdown: "",
       verdict: "",
       hypotheses: [],
+      toolChips: new Map(),
     };
 
     const copyBtn = reportActions.querySelector(".copy-report-btn");
@@ -1779,10 +1802,10 @@
         if (hypothesisList) {
           hypothesisList.replaceChildren();
           Object.entries(pack.hypotheses_evidence || {}).forEach(([hypothesis, evidence]) => {
-            const row = document.createElement("div");
-            row.className = "evidence-hypothesis";
-            row.textContent = `${evidence.event_count || 0} candidate event(s): ${hypothesis}`;
-            hypothesisList.appendChild(row);
+            const rowEl = document.createElement("div");
+            rowEl.className = "evidence-hypothesis";
+            rowEl.textContent = `${evidence.event_count || 0} candidate event(s): ${hypothesis}`;
+            hypothesisList.appendChild(rowEl);
           });
         }
 
@@ -1791,22 +1814,7 @@
           loadTimelineIntoGraph(timeline);
         }
       },
-      addTraceStep: (toolName, summary) => {
-        internalState.stepCount++;
-        countPill.textContent = `${internalState.stepCount} step(s)`;
-        const rowEl = document.createElement("div");
-        rowEl.className = "trace-row";
-        rowEl.innerHTML = `
-          <div class="trace-row-header">
-            <span class="trace-tool-name">${escapeHtml(toolName)}</span>
-            <span style="font-size:10px; color:var(--text-faint);">#${internalState.stepCount}</span>
-          </div>
-          <div class="trace-summary">${escapeHtml(summary)}</div>
-        `;
-        traceBody.appendChild(rowEl);
-        traceBody.scrollTop = traceBody.scrollHeight;
-      },
-      addReasoning: (text) => {
+      addThought: (text) => {
         if (!text) return;
         const cleaned = String(text)
           .replace(/<\|?channel[^>]*\|?>/gi, "")
@@ -1814,13 +1822,121 @@
           .replace(/<\/?thought>/gi, "")
           .trim();
         if (!cleaned) return;
-        const rowEl = document.createElement("div");
-        rowEl.className = "trace-reasoning";
-        rowEl.textContent = cleaned;
-        traceBody.appendChild(rowEl);
-        traceBody.scrollTop = traceBody.scrollHeight;
+
+        thinkingBlock.style.display = "flex";
+        // Expand while actively streaming thoughts
+        if (thinkingBlock.classList.contains("is-collapsed") && !thinkingBlock.classList.contains("is-done")) {
+          thinkingBlock.classList.remove("is-collapsed");
+        }
+
+        if (cleaned.startsWith(internalState.thoughtText)) {
+          internalState.thoughtText = cleaned;
+        } else if (cleaned !== internalState.thoughtText) {
+          internalState.thoughtText = internalState.thoughtText
+            ? internalState.thoughtText + "\n\n" + cleaned
+            : cleaned;
+        }
+
+        thinkingBody.innerHTML = renderMarkdown(internalState.thoughtText) + '<span class="thinking-cursor" aria-hidden="true"></span>';
+        scrollToBottom();
+      },
+      addToolCall: (toolName, args) => {
+        toolsContainer.style.display = "flex";
+        internalState.stepCount++;
+
+        // Auto-collapse thinking block when tools begin running
+        if (!thinkingBlock.classList.contains("is-done") && internalState.thoughtText) {
+          thinkingBlock.classList.add("is-collapsed");
+        }
+
+        const chip = document.createElement("div");
+        chip.className = "tool-chip is-running";
+        const cleanName = escapeHtml(toolName || "tool");
+        chip.innerHTML = `
+          <span class="tool-chip-icon">⚡</span>
+          <span class="tool-chip-name">${cleanName}</span>
+          <span class="tool-chip-status">Running...</span>
+        `;
+        toolsContainer.appendChild(chip);
+        internalState.toolChips.set(toolName, chip);
+        scrollToBottom();
+      },
+      addToolResult: (toolName, summary) => {
+        let chip = internalState.toolChips.get(toolName);
+        if (!chip) {
+          toolsContainer.style.display = "flex";
+          chip = document.createElement("div");
+          chip.className = "tool-chip";
+          toolsContainer.appendChild(chip);
+        }
+        chip.classList.remove("is-running");
+        const cleanName = escapeHtml(toolName || "tool");
+        const cleanSummary = escapeHtml(summary || "Completed");
+        chip.innerHTML = `
+          <span class="tool-chip-icon">⚡</span>
+          <span class="tool-chip-name">${cleanName}:</span>
+          <span class="tool-chip-status">${cleanSummary}</span>
+        `;
+        chip.title = `Tool: ${toolName}\nSummary: ${summary}\nClick to view evidence`;
+        chip.onclick = () => {
+          if (latestEvidenceTimeline && latestEvidenceTimeline.length > 0) {
+            openGlobalTelemetryTable(latestEvidenceTimeline, `${toolName} Results`);
+          }
+        };
+        scrollToBottom();
+      },
+      addReply: (text) => {
+        if (!text) return;
+        const cleaned = String(text)
+          .replace(/<\|?channel[^>]*\|?>/gi, "")
+          .replace(/<\/?think>/gi, "")
+          .replace(/<\/?thought>/gi, "")
+          .trim();
+        if (!cleaned) return;
+
+        // Auto-collapse thinking block when direct reply starts
+        if (!thinkingBlock.classList.contains("is-done") && internalState.thoughtText) {
+          thinkingBlock.classList.add("is-done");
+          thinkingBlock.classList.add("is-collapsed");
+          thinkingLabel.textContent = "Thought process";
+        }
+
+        replyBox.style.display = "block";
+        if (cleaned.startsWith(internalState.replyText)) {
+          internalState.replyText = cleaned;
+        } else if (cleaned !== internalState.replyText) {
+          internalState.replyText = internalState.replyText
+            ? internalState.replyText + "\n\n" + cleaned
+            : cleaned;
+        }
+
+        replyBox.innerHTML = renderMarkdown(internalState.replyText);
+        scrollToBottom();
+      },
+      addReasoning: function (text) {
+        // Alias to addReply so agent analysis streams directly into the main message body
+        this.addReply(text);
+      },
+      addTraceStep: function (toolName, summary) {
+        // Legacy alias to addToolResult
+        this.addToolResult(toolName, summary);
+      },
+      finalizeThinking: () => {
+        if (internalState.thoughtText) {
+          thinkingBlock.classList.add("is-done");
+          thinkingBlock.classList.add("is-collapsed");
+          const stepLabel = internalState.stepCount > 0 ? ` (${internalState.stepCount} tool operations)` : "";
+          thinkingLabel.textContent = `Thought process${stepLabel}`;
+          const cursor = thinkingBody.querySelector(".thinking-cursor");
+          if (cursor) cursor.remove();
+        }
       },
       setVerdict: (verdict, boundary, confidence) => {
+        if (internalState.thoughtText) {
+          thinkingBlock.classList.add("is-done");
+          thinkingBlock.classList.add("is-collapsed");
+        }
+
         const cleanVerdict = String(verdict || "inconclusive").toLowerCase().trim();
         const confStr = formatConfidence(confidence);
         const confVal = parseFloat(confStr) / 100;
@@ -1848,6 +1964,11 @@
         }
       },
       setReport: (markdown) => {
+        if (internalState.thoughtText) {
+          thinkingBlock.classList.add("is-done");
+          thinkingBlock.classList.add("is-collapsed");
+        }
+
         internalState.reportMarkdown = markdown;
         const rendered = renderMarkdown(markdown);
         reportBox.innerHTML = rendered;
@@ -1859,6 +1980,10 @@
         scrollToBottom(true);
       },
       setErrorMessage: (msg) => {
+        if (internalState.thoughtText) {
+          thinkingBlock.classList.add("is-done");
+          thinkingBlock.classList.add("is-collapsed");
+        }
         reportBox.innerHTML = `<div style="color:var(--verdict-malicious-text); padding:10px; background:var(--verdict-malicious-bg); border-radius:8px;">⚠️ ${escapeHtml(msg)}</div>`;
       },
     };
@@ -1891,25 +2016,25 @@
         break;
 
       case "tool_call":
-        const tc = event.data;
-        const argStr = JSON.stringify(tc.args || {});
-        assistantMsg.addTraceStep(
-          `Invoking ${tc.tool}`,
-          argStr.length > 120 ? argStr.slice(0, 117) + "..." : argStr
-        );
+        const tc = event.data || {};
+        assistantMsg.addToolCall(tc.tool, tc.args);
         break;
 
       case "tool_result":
-        assistantMsg.addTraceStep(event.data.tool, event.data.summary);
+        assistantMsg.addToolResult(event.data?.tool, event.data?.summary);
         break;
 
       case "thought":
+        assistantMsg.addThought(event.text);
+        break;
+
       case "reasoning":
-        assistantMsg.addReasoning(event.text);
+        assistantMsg.addReply(event.text);
         break;
 
       case "complete":
         assistantMsg.setStepActive("st-report");
+        assistantMsg.finalizeThinking();
         const res = event.data;
         if (res.verdict) {
           assistantMsg.setVerdict(
@@ -2084,15 +2209,37 @@
     return `${Math.round(val * 100)}%`;
   }
 
+  function normalizeMarkdown(text) {
+    if (!text) return "";
+    let s = String(text);
+
+    // 1. Separate headers like "text. ### Header" -> "text.\n\n### Header"
+    s = s.replace(/([^\n])\s*(#{1,4}\s+[^\n]+)/g, "$1\n\n$2\n\n");
+
+    // 2. Separate major key markers like "**Forensic Thinking:**", "**Action:**", "**Conclusion:**", "**Final Assessment:**"
+    s = s.replace(/([^\n])\s*(\*\*(?:Forensic Thinking|Action|Tool Call|Conclusion|Final Assessment):?\*\*)/gi, "$1\n\n$2\n");
+
+    // 3. Separate numbered lists stuck inside sentences like "text. 1. **Title**:" -> "text.\n\n1. **Title**:"
+    s = s.replace(/([^\n])\s+(\d+\.\s+\*\*)/g, "$1\n\n$2");
+    s = s.replace(/([^\n])\s+(\d+\.\s+[A-Z])/g, "$1\n\n$2");
+
+    // 4. Separate bullet items stuck like "* item * item"
+    s = s.replace(/([^\n])\s+(\*\s+`)/g, "$1\n* $2");
+    s = s.replace(/([^\n])\s+(\*\s+\*\*)/g, "$1\n* $2");
+
+    return s;
+  }
+
   function renderMarkdown(mdText) {
     if (!mdText) return "";
+    const normalized = normalizeMarkdown(mdText);
     
     // Check for marked in window (from vendor or CDN)
     if (window.marked) {
       try {
         const rawHtml = typeof window.marked.parse === "function" 
-          ? window.marked.parse(mdText) 
-          : window.marked(mdText);
+          ? window.marked.parse(normalized) 
+          : window.marked(normalized);
         if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
           return window.DOMPurify.sanitize(rawHtml);
         }
@@ -2103,7 +2250,7 @@
     }
 
     // Built-in Lightweight Markdown Fallback (100% offline reliable)
-    let html = escapeHtml(mdText);
+    let html = escapeHtml(normalized);
 
     // Code blocks ```...```
     html = html.replace(/```(?:[a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, function (match, p1) {

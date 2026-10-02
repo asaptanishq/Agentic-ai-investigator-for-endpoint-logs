@@ -46,7 +46,7 @@ Measures the agent's ability to accurately discriminate between genuine threats,
     - For `AMB-A`: Agent evaluates dual-use utility intent and reaches the documented operational determination.
   - **0 pts**: Agent verdict diverges from ground truth.
 - **Verdict Boundary Match (5 Points)**:
-  - **5 pts**: Correct operational confidence boundary (`confirmed_malicious`, `inconclusive_suspicious`, `benign`).
+  - **5 pts**: Correct operational confidence boundary (`confirmed_malicious`, `unconfirmed_malicious`, `benign`). Boundaries are normalized across evaluation datasets (`confirmed_benign` is treated as equivalent to `benign`).
   - **0 pts**: Mismatched confidence boundary.
 - **Structured Output Fallback Penalty**:
   - Automatic deduction of all 20 points if the report was produced via structured output recovery fallback (`report_fallback_used = True`).
@@ -85,6 +85,20 @@ Audit checks performed:
 - **Entity ID & Indicator Grounding (10 Points)**: Every `process_entity_id`, file path, and IP address cited must exist in the database telemetry.
   - **10 pts**: 100% of cited entity identifiers verified in telemetry.
   - -3 pts per hallucinated process ID or IP address.
+- **Strict Validation Status Classification**:
+  - Validations are categorized into `VALID`, `INVALID`, and `UNVERIFIED`. Database query exceptions or table mismatches never silently pass as valid; they are explicitly marked `UNVERIFIED` and flag warnings.
+- **Causal Relationship & Link Verification**:
+  - The validator checks whether claimed causal relationships (such as process parentage `PARENT_OF` or network flows `CONNECTED_TO`) exist in the telemetry, distinguishing direct `OBSERVED` links from inferred or unverified assertions.
+
+---
+
+### Additional Diagnostic Metrics (Reported Alongside Rubric)
+
+To provide deep architectural visibility, `benchmark.py` computes four diagnostic metrics for each case:
+1. **Validation Status (`validation_status`)**: Overall evidentiary outcome (`valid`, `invalid`, or `unverified`).
+2. **Relationship Correctness (`relationship_correctness`)**: The proportion of claimed relationship edges verified as directly observed in raw telemetry ($\frac{\text{observed relationships}}{\text{total relationships}}$).
+3. **Dynamic Hypotheses Spawned (`dynamic_hypotheses_created`)**: The number of runtime hypotheses created during the investigation loop in response to unexpected telemetry (e.g. registry Run keys, credential dumping tools, or staging archives).
+4. **Investigation Completeness (`investigation_completeness`)**: The fraction of all formulated hypotheses (initial + dynamic) successfully resolved to `SUPPORTED` or `CONTRADICTED` rather than remaining active/untested.
 
 ---
 

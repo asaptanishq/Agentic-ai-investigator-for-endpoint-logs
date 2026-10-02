@@ -38,10 +38,11 @@ The investigator autonomously queries telemetry through 8 specialized DFIR tools
 
 ### Key Architectural Capabilities
 
-- **Explicit Evidence Graph (`a1/evidence_graph.py`):** Maintains a directed entity-relationship DAG (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) citing specific `event_id` anchors. Feeds interactive Cytoscape/D3/SVG graph rendering in the web interface.
+- **Explicit Evidence Graph (`a1/evidence_graph.py`):** Maintains a directed entity-relationship DAG (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) citing specific `event_id` anchors. Tracks `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`) to distinguish direct evidence from deduction. Feeds interactive Cytoscape/D3/SVG graph rendering in the web interface.
+- **Dynamic Hypothesis Generation & Tracking (`a1/hypothesis.py`):** Formulates competing hypotheses during triage, and dynamically expands them during investigation when new persistence, credential access, lateral movement, or staging vectors emerge. Capped and deduplicated so initial hypotheses guide without constraining discovery.
 - **Adaptive Investigation Planner (`a1/nodes/planner_node.py`):** Dynamically ranks candidate forensic queries by expected information gain, avoiding redundant steps and prioritizing unresolved hypothesis gaps.
-- **Hypothesis State Tracking (`a1/hypothesis.py`):** Explicitly tracks the lifecycle (`UNTESTED`, `SUPPORTED`, `REFUTED`, `INCONCLUSIVE`) of competing explanations to avoid confirmation bias.
-- **Deterministic Evidence Validation (`a1/nodes/validator_node.py`):** Queries SQLite directly to verify 100% of cited event IDs, process entities, and hashes before reports are finalized, enforcing zero-hallucination standards.
+- **Deterministic Evidence & Relationship Validation (`a1/nodes/validator_node.py`):** Queries SQLite directly to verify 100% of cited event IDs, process entities, hashes, and parent-child/network relationships before reports are finalized. Classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (exceptions produce `UNVERIFIED`, preventing false certainty).
+- **Conservative Failure States (`a1/nodes/report_node.py`, `correlation_node.py`):** When report synthesis or correlation encounters unrecoverable errors, the agent falls back conservatively to `SUSPICIOUS` or `INCONCLUSIVE` rather than fabricating confirmed malicious certainty.
 - **Forensic Guardrails:** Read-only SQLite access (`mode=ro`), strict single-query `SELECT`/`PRAGMA`/`WITH` enforcement, loop circuit breakers (`MAX_REPEAT_NUDGES = 2`), and minimum evidence gates (`MIN_INVESTIGATION_STEPS = 2`).
 
 ---
@@ -79,7 +80,7 @@ ai-musefix/
 │       └── static/                # HTML/CSS/JS with SVG forensic DAG & process tree engine
 ├── scripts/
 │   └── smoke_test.py              # Standalone 17-point end-to-end verification script
-├── tests/                         # Pytest test suite (78 tests passed)
+├── tests/                         # Pytest test suite (92 tests passed)
 └── endpoint_security_dataset_expanded_corrected/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
     └── *.db                       # 8 SQLite forensic telemetry databases
@@ -148,10 +149,13 @@ python -m a1.cli --web
 ```
 
 Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) in your browser. The web workbench features:
-- **Streaming Investigation Console:** Live step-by-step reasoning, tool invocations, and findings.
+- **ChatGPT-Style Agent Interface:** Natural conversation flow where user alerts appear on the right and assistant answers stream directly on the left with clean, upright typography.
+- **Collapsible Thought Process:** Deep reasoning and internal planning stream into a top disclosure block (`Thinking...` during generation $\rightarrow$ `Thought process (X tool operations)` upon completion), toggleable at any time.
+- **Interactive Tool Activity Chips:** Compact inline chips (`⚡ search_timeline: 47 events`, `⚡ query_telemetry: 1 row`) showing real-time tool executions with 1-click modal telemetry inspection.
 - **Interactive Forensic DAG:** Dynamic SVG visualization of observed processes, network connections, files, and users.
 - **Process Tree Engine:** Hierarchical process ancestry tree traversal.
 - **Model & Database Switchers:** Hot-swap models (Ollama/OpenAI) and telemetry datasets directly in the UI.
+- **Verified Incident Reports:** Structured incident reports with verdict banners, confidence scores, and 1-click markdown copying.
 
 ---
 

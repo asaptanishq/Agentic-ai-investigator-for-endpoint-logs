@@ -86,3 +86,81 @@ def test_planner_candidate_generation_and_scoring():
     scored = score_actions(candidates, budget_remaining=2)
     assert len(scored) == len(candidates)
     assert scored[0]["budget_adjusted_score"] > 0
+
+
+def test_validator_exception_marks_unverified(monkeypatch):
+    """DB exceptions must produce UNVERIFIED, not VALID, and set validation_passed=False."""
+    class ExplodingDB:
+        def execute_query(self, sql, params=(), max_rows=50):
+            raise RuntimeError("DB connection lost")
+
+    from a1.nodes import validator_node as vn_module
+    monkeypatch.setattr(vn_module, "get_active_db", lambda: ExplodingDB())
+    state = {
+        "evidence": [{"event_id": "evt-test-001"}],
+        "evidence_pack": {},
+        "confirmed_correlations": [],
+    }
+    result = validator_node(state)
+    val = result["validation_results"]
+    assert "evt-test-001" in val["event_ids_unverified"]
+    assert val["validation_passed"] is False
+    assert val["validation_status"] == "unverified"
+    assert any("Unverified event IDs" in w for w in val["warnings"])
+
+
+def test_validator_malformed_or_empty_response():
+    """Empty evidence passes vacuously with valid status."""
+    state = {
+        "evidence": [],
+        "evidence_pack": {},
+        "confirmed_correlations": [],
+    }
+    result = validator_node(state)
+    val = result["validation_results"]
+    assert val["validation_passed"] is True
+    assert val["validation_status"] == "valid"
+
+
+def test_validator_relationship_not_entity_only(monkeypatch):
+    """Entities existing in DB does not automatically validate claimed relationships."""
+    from a1.evidence_graph import EvidenceGraph, EvidenceEdge, RelationshipType
+
+    class MockRelDB:
+        def execute_query(self, sql, params=(), max_rows=50):
+            # If checking relationship, return empty
+            if "parent_process_entity_id" in sql or "child_process_entity_id" in sql:
+                return []
+            # Entities exist individually
+            if "SELECT 1 FROM processes WHERE process_entity_id = ?" in sql:
+                return [{"count": 1}]
+            return []
+
+    from a1.nodes import validator_node as vn_module
+    monkeypatch.setattr(vn_module, "get_active_db", lambda: MockRelDB())
+
+    eg = EvidenceGraph()
+    eg.add_edge(
+        EvidenceEdge(
+            source_id="proc-parent",
+            target_id="proc-child",
+            relationship=RelationshipType.PARENT_OF,
+        )
+    )
+
+    state = {
+        "evidence": [],
+        "evidence_pack": {},
+        "confirmed_correlations": [],
+        "evidence_graph": eg.to_dict(),
+    }
+    result = validator_node(state)
+    val = result["validation_results"]
+    assert len(val["relationship_validations"]) == 1
+    rel = val["relationship_validations"][0]
+    assert rel["relationship"] == "parent_of"
+    # It should be inferred, not observed, because no direct parent-child link exists
+    assert rel["status"] == "inferred"
+    assert val["observed_relationships"] == 0
+    assert val["inferred_relationships"] == 1
+

@@ -1927,14 +1927,505 @@ body:not(.theme-dark) .moon-icon {
   font-size: 12.5px;
 }
 
+/* --------------------------------------------------------------------------
+   ChatGPT Style Assistant Stream: Thinking, Tool Chips & Direct Reply
+   -------------------------------------------------------------------------- */
+.chat-thinking-block {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: all 0.2s var(--ease-ios);
+  width: 100%;
+}
+
+.chat-thinking-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: background 0.15s ease, color 0.15s ease;
+  user-select: none;
+}
+
+.chat-thinking-toggle:hover {
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--text-primary);
+}
+
+body.theme-dark .chat-thinking-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.chat-thinking-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-thinking-icon {
+  color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+}
+
+.chat-thinking-label {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.chat-thinking-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: thinkingPulse 1.5s infinite;
+}
+
+.chat-thinking-block.is-done .chat-thinking-pulse {
+  display: none;
+}
+
+.chat-thinking-chevron {
+  transition: transform 0.2s var(--ease-ios);
+}
+
+.chat-thinking-block.is-collapsed .chat-thinking-chevron {
+  transform: rotate(-90deg);
+}
+
+.chat-thinking-body {
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-subtle);
+  background: rgba(0, 0, 0, 0.01);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.chat-thinking-block.is-collapsed .chat-thinking-body {
+  display: none;
+}
+
+/* Tool Usage Chips (like ChatGPT 'Used Python' / 'Used Search') */
+.chat-tools-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.tool-chip:hover {
+  background: var(--bg-card);
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
+
+.tool-chip-icon {
+  color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+}
+
+.tool-chip-name {
+  font-weight: 500;
+}
+
+.tool-chip-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent-primary);
+}
+
+.tool-chip.is-running .tool-chip-status {
+  animation: thinkingPulse 1.2s infinite;
+}
+
+/* Assistant Main Direct Reply (on the left, wide, unconstrained) */
+.assistant-reply {
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+  word-break: break-word;
+}
+
+.assistant-reply p {
+  margin-bottom: 10px;
+}
+
+.assistant-reply p:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-reply h1,
+.assistant-reply h2,
+.assistant-reply h3,
+.assistant-reply h4 {
+  color: var(--text-primary);
+  font-weight: 600;
+  margin: 14px 0 6px 0;
+  letter-spacing: -0.01em;
+}
+
+.assistant-reply h3:first-child,
+.assistant-reply h4:first-child {
+  margin-top: 0;
+}
+
+.assistant-reply strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.assistant-reply code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid var(--border-subtle);
+  color: var(--accent-primary);
+  padding: 1.5px 6px;
+  border-radius: 4px;
+}
+
+body.theme-dark .assistant-reply code {
+  background: rgba(165, 180, 252, 0.12);
+  border-color: rgba(165, 180, 252, 0.22);
+  color: var(--accent-primary);
+}
+
+.assistant-reply ul,
+.assistant-reply ol {
+  margin: 6px 0 10px 0;
+  padding-left: 24px;
+}
+
+.assistant-reply li {
+  margin-bottom: 4px;
+}
+
+.assistant-reply blockquote {
+  margin: 8px 0;
+  padding: 6px 14px;
+  border-left: 3px solid var(--accent-primary);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+/* --------------------------------------------------------------------------
+   Modern Forensic Thinking Stream & Trace Cards
+   -------------------------------------------------------------------------- */
 .trace-reasoning {
   font-family: var(--font-sans);
-  font-style: italic;
+  font-style: normal;
   color: var(--text-secondary);
-  padding: 8px 10px;
   background: var(--bg-card-subtle);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-primary);
+  margin: 3px 0;
+  overflow: hidden;
+  transition: all 0.2s var(--ease-ios);
+  animation: iosFadeIn 0.25s var(--ease-ios);
+}
+
+.trace-reasoning.is-generating {
+  border-left-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-soft-border), 0 2px 8px rgba(0, 0, 0, 0.04);
+  background: linear-gradient(180deg, var(--accent-soft) 0%, var(--bg-card-subtle) 36px);
+}
+
+.trace-reasoning.is-complete {
+  border-left-color: var(--border-medium);
+}
+
+/* Header */
+.thinking-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+body.theme-dark .thinking-header {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.thinking-header:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+body.theme-dark .thinking-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.thinking-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+}
+
+.thinking-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.thinking-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-soft-border);
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+.trace-reasoning.is-complete .thinking-status-badge {
+  background: transparent;
+  border-color: transparent;
+  padding: 0 4px;
+}
+
+.thinking-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  display: inline-block;
+  animation: thinkingPulse 1.6s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.trace-reasoning.is-complete .thinking-pulse-dot {
+  animation: none;
+  background: var(--text-muted);
+  opacity: 0.7;
+}
+
+.thinking-status-label {
+  font-size: 10.5px;
+  color: var(--accent-primary);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.trace-reasoning.is-complete .thinking-status-label {
+  color: var(--text-muted);
+}
+
+.thinking-header-right {
+  display: flex;
+  align-items: center;
+}
+
+.thinking-toggle-btn {
+  background: none;
+  border: none;
+  padding: 3px 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+}
+
+.thinking-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
+.thinking-chevron {
+  transition: transform 0.2s var(--ease-ios);
+}
+
+/* Collapsible toggle */
+.trace-reasoning.is-collapsed .thinking-chevron {
+  transform: rotate(-90deg);
+}
+
+.trace-reasoning.is-collapsed .thinking-header {
+  border-bottom: none;
+}
+
+.trace-reasoning.is-collapsed .thinking-body {
+  display: none;
+}
+
+/* Body */
+.thinking-body {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-style: normal !important;
+}
+
+.thinking-content {
+  overflow-wrap: break-word;
+  font-style: normal !important;
+}
+
+.thinking-content,
+.thinking-content * {
+  font-style: normal !important;
+}
+
+.thinking-content em,
+.thinking-content i {
+  font-style: italic !important;
+}
+
+.thinking-content h1,
+.thinking-content h2,
+.thinking-content h3,
+.thinking-content h4 {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 12.5px;
+  margin: 12px 0 6px 0;
+  letter-spacing: -0.01em;
+}
+
+.thinking-content h3:first-child,
+.thinking-content h4:first-child {
+  margin-top: 0;
+}
+
+.thinking-content p {
+  margin: 0 0 8px 0;
+  font-style: normal !important;
+}
+
+.thinking-content p:last-child {
+  margin-bottom: 0;
+}
+
+.thinking-content strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-style: normal !important;
+}
+
+.thinking-content code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid var(--border-subtle);
+  color: var(--accent-primary);
+  padding: 1.5px 5.5px;
+  border-radius: 4px;
+  word-break: break-all;
+  font-style: normal !important;
+}
+
+body.theme-dark .thinking-content code {
+  background: rgba(165, 180, 252, 0.12);
+  border-color: rgba(165, 180, 252, 0.22);
+  color: var(--accent-primary);
+}
+
+.thinking-content ul,
+.thinking-content ol {
+  margin: 6px 0 10px 0;
+  padding-left: 22px;
+}
+
+.thinking-content li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+
+.thinking-content blockquote {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 2px solid var(--accent-primary);
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+/* Streaming Blinking Cursor */
+.thinking-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  background: var(--accent-primary);
+  margin-left: 3px;
+  vertical-align: -1px;
+  border-radius: 1px;
+  animation: thinkingCursorBlink 0.9s infinite ease-in-out;
+  box-shadow: 0 0 6px var(--accent-primary);
+}
+
+@keyframes thinkingPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6);
+    transform: scale(0.95);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(99, 102, 241, 0);
+    transform: scale(1.15);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+    transform: scale(0.95);
+  }
+}
+
+@keyframes thinkingCursorBlink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.1;
+  }
 }
 
 /* --------------------------------------------------------------------------

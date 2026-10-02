@@ -146,9 +146,9 @@ ai-musefix/
 |       |-- __init__.py                [Web Package]          Package marker
 |       |-- server.py                  [Web Server]           FastAPI app, SSE stream, DB/LLM switch endpoints
 |       |-- static/index.html          [Web UI]               Responsive DFIR workbench frontend
-|       |-- static/app.js              [Web Client]           SSE rendering, DB/model selectors, graph orchestration
+|       |-- static/app.js              [Web Client]           SSE rendering, ChatGPT-style stream (collapsible thought disclosure, tool activity chips, streaming assistant reply), DB/model selectors, graph orchestration
 |       |-- static/forensic-graph.js   [Forensic DAG]         Interactive SVG DAG and Process Tree rendering engine
-|       |-- static/style.css           [Web Style]            Light/dark theme stylesheet
+|       |-- static/style.css           [Web Style]            Modern ChatGPT-style layout, clean upright typography, thinking blocks, tool chips, light/dark themes
 |
 |-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data]
 |   |-- attack_lateral_movement.db        Telemetry for ATK-A (credentials + lateral move) and INC-A (incomplete telemetry)
@@ -163,7 +163,7 @@ ai-musefix/
 |   |-- README.md                         Dataset provenance and surface boundary
 |   |-- schema.md                         Telemetry schema specification
 |
-|-- tests/                             [Test Suite (78 Tests)]
+|-- tests/                             [Test Suite (92 Tests)]
     |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
     |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
@@ -173,10 +173,11 @@ ai-musefix/
     |-- test_structured_output.py      [Test: LLM Helper]     Retry-once-then-fail contract
     |-- test_web.py                    [Test: Web]            FastAPI endpoints and SSE events
     |-- test_evidence_graph.py         [Test: Evidence Graph] Graph nodes, edges, cycle detection, format serialization
-    |-- test_hypothesis.py             [Test: Hypothesis]     Hypothesis state transitions and evidence grounding
-    |-- test_validator.py              [Test: Validator]      Deterministic SQLite event ID & entity verification
+    |-- test_hypothesis.py             [Test: Hypothesis]     Hypothesis state transitions, dynamic discovery, keyword deduplication
+    |-- test_validator.py              [Test: Validator]      Deterministic SQLite event ID & entity verification, UNVERIFIED status, link checking
     |-- test_adversarial.py            [Test: Robustness]     Prompt injection resilience, malicious telemetry handling
     |-- test_experiment.py             [Test: Experiment]     Ablation study runner and configuration evaluation
+    |-- test_conservative_failures.py  [Test: Fallbacks]      Conservative non-malicious failure handling for correlation and report nodes
 ```
 
 ---
@@ -195,9 +196,9 @@ ai-musefix/
 | `src/a1/graph.py`             | `[Graph Assembly]`    | Eight nodes (`alert_prep`, `triage`, `investigator`, `tools`, `evidence_packing`, `correlate`, `validate`, `report`); entry at `alert_prep`; conditional edges from `investigator` (`tools` / `investigator` self-loop / `evidence_packing`).                                                    |
 | `src/a1/llm.py`               | `[Model Factory]`     | `get_llm()` (`ChatOllama` / `ChatOpenAI`), `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`, centralized `invoke_with_network_retry()`.                                                                                                                           |
 | `src/a1/cli.py`               | `[CLI Interface]`     | `run_investigation()` streaming display; `main()` flags: positional alert, `--web`, `--benchmark`, `--limit`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--db`, `--port`, `--no-browser`.                                                                                        |
-| `src/a1/benchmark.py`         | `[Benchmark Harness]` | 10 evaluation cases (`ATK-A`..`G`, `BEN-A`, `AMB-A`, `INC-A`), per-case DB switching, ground truth loading, fallback tracking, and multi-dimensional rubric scoring.                                                                                                                             |
-| `src/a1/evidence_graph.py`    | `[Evidence Graph]`    | Directed graph modeling entities (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) and evidentiary relations (`SPAWNED`, `CONNECTED_TO`, `TOUCHED_FILE`, etc.); JSON serialization for DAG UI.                                                                                     |
-| `src/a1/hypothesis.py`        | `[Hypothesis Engine]` | State machine tracking hypothesis status (`UNTESTED`, `SUPPORTED`, `REFUTED`, `INCONCLUSIVE`) and citing corroborating/refuting event IDs.                                                                                                                                                           |
+| `src/a1/benchmark.py`         | `[Benchmark Harness]` | 10 evaluation cases (`ATK-A`..`G`, `BEN-A`, `AMB-A`, `INC-A`), per-case DB switching, ground truth loading, fallback tracking, normalized boundary scoring, and multi-dimensional rubric scoring including relationship correctness, completeness, dynamic hypotheses, and unverified evidence counts. |
+| `src/a1/evidence_graph.py`    | `[Evidence Graph]`    | Directed graph modeling entities (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) and evidentiary relations (`SPAWNED`, `CONNECTED_TO`, `TOUCHED_FILE`, etc.) with `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`); JSON serialization for DAG UI.                                  |
+| `src/a1/hypothesis.py`        | `[Hypothesis Engine]` | Hypothesis lifecycle state machine tracking status (`ACTIVE`, `SUPPORTED`, `WEAKLY_SUPPORTED`, `CONTRADICTED`, `UNRESOLVED`), dynamic hypothesis generation, provenance, triggering evidence, source tagging (`triage` vs `dynamic`), keyword deduplication, and active hypothesis capping (`MAX_ACTIVE_HYPOTHESES = 8`). |
 | `src/a1/investigation_trace.py`| `[Trace Ledger]`     | Structured chronological log of all tool executions, parameters, latency, rows returned, and newly observed entities.                                                                                                                                                                                |
 | `src/a1/experiment.py`        | `[Ablation Runner]`   | Baseline comparison and ablation framework measuring performance impact when toggling evidence graph, adaptive planner, evidence validator, or baseline context.                                                                                                                                   |
 | `src/a1/baseline_context.py`  | `[Baseline Context]`  | Enterprise baseline profiles (expected parentage, routine scripts, standard scheduled tasks) to reduce false positives on administrative operations.                                                                                                                                                 |
@@ -209,12 +210,12 @@ ai-musefix/
 | `src/a1/nodes/__init__.py`              | `[Node Registry]`      | Re-exports all nodes plus `should_continue`.                                                                                                                                                                                                                           |
 | `src/a1/nodes/alert_prep_node.py`       | `[Input Reflection 1]` | Deterministic alert enrichment: regex entity extraction, hostname-to-ID resolution against `hosts`, UTC time-window parsing clamped to DB bounds.                                                                                                                      |
 | `src/a1/nodes/triage_node.py`           | `[Triage]`             | Structured `TriagePlan` (2–4 hypotheses, initial entities, investigation strategy) via `TRIAGE_SYSTEM_PROMPT`; schema validation with retry-once-then-fail.                                                                                                           |
-| `src/a1/nodes/investigator_node.py`     | `[Investigator]`       | Tool-calling ReAct loop; cached schema hint in system prompt; integrates with `planner_node` for action ranking; updates `EvidenceGraph` and `HypothesisTracker`; repetition guard (`MAX_REPEAT_NUDGES` = 2); `MIN_INVESTIGATION_STEPS` = 2 gate.                       |
+| `src/a1/nodes/investigator_node.py`     | `[Investigator]`       | Tool-calling ReAct loop; dynamic hypothesis discovery (`_check_for_dynamic_hypotheses`) for persistence, credential dumping, lateral movement, and data staging; schema hints; planner hook; repetition guard (`MAX_REPEAT_NUDGES` = 2); `MIN_INVESTIGATION_STEPS` = 2 gate. |
 | `src/a1/nodes/planner_node.py`          | `[Adaptive Planner]`   | Generates candidate forensic actions from current entity frontiers and unresolved hypotheses; ranks actions by expected information gain.                                                                                                                              |
 | `src/a1/nodes/evidence_packing_node.py` | `[Input Reflection 2]` | Merges tool outputs into a compact structured pack (dedup by event ID, hypothesis coverage, hostname/time sanity) for downstream nodes.                                                                                                                                |
-| `src/a1/nodes/correlation_node.py`      | `[Correlation]`        | Structured `CorrelationAndGapAnalysis` via `CORRELATION_SYSTEM_PROMPT`: confirms/refutes hypotheses, defines relationship types, surfaces missing evidence gaps.                                                                                                      |
-| `src/a1/nodes/validator_node.py`        | `[Evidence Validator]` | Deterministic DB verification: queries raw SQLite tables for every cited `event_id`, `process_entity_id`, and hash; flags hallucinated IDs; verifies verdict boundary consistency.                                                                                   |
-| `src/a1/nodes/report_node.py`           | `[Report]`             | Structured `IncidentVerdict` (verdict, boundary, confidence, executive summary, attack chain, timeline matrix, IOC table, containment playbook); fallback tracked in `report_fallback_used`.                                                                           |
+| `src/a1/nodes/correlation_node.py`      | `[Correlation]`        | Structured `CorrelationAndGapAnalysis` via `CORRELATION_SYSTEM_PROMPT`: confirms/refutes hypotheses, defines relationship types, surfaces missing evidence gaps; conservative fallback on failure without fabricated suspicious claims.                               |
+| `src/a1/nodes/validator_node.py`        | `[Evidence Validator]` | Deterministic DB verification: queries raw SQLite tables for every cited ID and validates causal relationships (parent-child, network links); classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (exceptions produce `UNVERIFIED`, never valid).            |
+| `src/a1/nodes/report_node.py`           | `[Report]`             | Structured `IncidentVerdict` (verdict, boundary, confidence, executive summary, attack chain, timeline matrix, IOC table, playbook); conservative failure fallbacks (`suspicious` or `inconclusive`, never claiming false malicious certainty); fallback tracked in `report_fallback_used`. |
 | `src/a1/nodes/structured_output.py`     | `[LLM Helper]`         | `invoke_structured_with_retry()`: one retry, then raises `StructuredOutputRetryError` for explicit fallback tracking.                                                                                                                                                  |
 
 ---
@@ -278,7 +279,9 @@ ai-musefix/
 ## 5. Guardrails & Forensic Determinism
 
 * **Read-Only Telemetry:** `EndpointDatabase` opens SQLite exclusively with URI `mode=ro`; `execute_query()` permits only single `SELECT`/`PRAGMA`/`WITH` statements. Data modification operations and multi-statement queries raise `DatabaseAccessError`. In-memory virtual views project timestamps and hosts without disk alteration.
-* **Deterministic Evidence Validation:** The `validator_node` queries raw SQLite tables for every cited `event_id`, `process_entity_id`, IP address, and hash. Hallucinated IDs are detected and removed or flagged before report generation.
+* **Deterministic Evidence & Relationship Validation:** The `validator_node` queries raw SQLite tables for every cited `event_id`, `process_entity_id`, IP address, and hash. Causal links (process ancestry, network connections) are verified against database relationships, categorizing citations into `VALID`, `INVALID`, and `UNVERIFIED` (query exceptions produce `UNVERIFIED`, never valid). Edge states in `EvidenceGraph` are marked `OBSERVED`, `INFERRED`, or `UNVERIFIED`.
+* **Dynamic Hypothesis Expansion:** Initial triage hypotheses guide initial queries but never constrain discovery. When newly gathered telemetry reveals persistence mechanisms (Run/RunOnce/TaskCache), credential dumping (`lsass`, `procdump`, `mimikatz`), lateral movement (SMB, WinRM, ports 445/5985/135), or data staging (`.zip`, `.7z`, `.dmp`), the system automatically formulates new testable hypotheses with explicit triggering evidence and provenance, bounded by `MAX_ACTIVE_HYPOTHESES = 8` and keyword deduplication.
+* **Conservative Failure Fallbacks:** If structured report synthesis or correlation encounters fatal output errors or missing evidence, the system refuses to fabricate certainty. Fallbacks assign conservative determinations (`suspicious` with `unconfirmed_malicious` or `inconclusive`), penalizing confidence and logging explicit telemetry gaps.
 * **Adaptive Investigation Planning:** The planner computes remaining hypothesis uncertainty and information gain, guiding the agent toward high-value pivoting queries and preventing blind, brute-force table dumps.
 * **Minimum-Evidence Gate:** The agent cannot conclude without querying forensic tools (`MIN_INVESTIGATION_STEPS` = 2); `should_continue` enforces a self-loop if a zero-tool conclusion is attempted prematurely.
 * **Repetition Circuit Breaker:** Identical tool calls (normalized by argument structure) trigger a `[SYSTEM-NOTE: repeated tool call]` nudge; after `MAX_REPEAT_NUDGES` (2), execution is forced onward to correlation.
@@ -382,7 +385,7 @@ python -m a1.experiment --live --limit 3
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (78 unit and integration tests passing):
+The repository maintains full automated test coverage (92 unit and integration tests passing):
 
 ```powershell
 # Run the full test suite:

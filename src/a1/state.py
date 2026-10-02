@@ -47,4 +47,5 @@ class InvestigationState(TypedDict):
     validation_results: Optional[Dict[str, Any]]
     structured_rationale: Optional[List[dict]]
     quality_metrics: Optional[Dict[str, Any]]
+    dynamic_hypotheses_created: Optional[List[str]]
 

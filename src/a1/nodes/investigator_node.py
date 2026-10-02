@@ -422,7 +422,92 @@ def _format_investigation_memory(memory: dict) -> str:
     return "\n".join(lines)
 
 
-def _extract_graph_and_metrics(state: dict, response: Any, iteration: int, active_hypo: Optional[str]) -> dict:
+def _check_for_dynamic_hypotheses(
+    tracker: HypothesisTracker,
+    evidence_graph: EvidenceGraph,
+    working_memory: dict,
+    iteration: int,
+) -> List[str]:
+    """Inspect newly discovered evidence patterns and create new hypotheses
+    when evidence introduces directions not covered by existing hypotheses."""
+    created = []
+    existing_descriptions = {h.description.lower() for h in tracker.get_all()}
+
+    # Pattern 1: Persistence mechanisms discovered (registry Run keys, services, taskcache)
+    for reg in (working_memory.get("discovered_registry") or []):
+        path = str(reg.get("registry_path", "")).lower()
+        if any(k in path for k in ("run", "runonce", "services", "taskcache", "scheduled")):
+            desc = f"Persistence mechanism via registry modification at {reg.get('registry_path')}"
+            if not any("persistence" in e or "run" in e for e in existing_descriptions):
+                h = tracker.add_dynamic_hypothesis(
+                    description=desc,
+                    triggering_evidence=[reg.get("event_id") or reg.get("registry_path", "unknown")],
+                    provenance=f"Registry key modification detected at iteration {iteration}",
+                    iteration=iteration,
+                )
+                if h:
+                    created.append(h.id)
+                    existing_descriptions.add(desc.lower())
+
+    # Pattern 2: Credential access (lsass, procdump, mimikatz, sam, comsvcs)
+    for proc_id, proc in (working_memory.get("discovered_processes") or {}).items():
+        cmd = str(proc.get("command_line", "")).lower()
+        name = str(proc.get("process_name", "")).lower()
+        if any(k in cmd or k in name for k in ("lsass", "procdump", "mimikatz", "sam", "comsvcs", "sekurlsa")):
+            desc = f"Credential theft or dumping via {name or proc_id}"
+            if not any("credential" in e or "dump" in e for e in existing_descriptions):
+                h = tracker.add_dynamic_hypothesis(
+                    description=desc,
+                    triggering_evidence=[proc_id],
+                    provenance=f"Credential-access process discovered at iteration {iteration}",
+                    iteration=iteration,
+                )
+                if h:
+                    created.append(h.id)
+                    existing_descriptions.add(desc.lower())
+
+    # Pattern 3: Lateral movement (SMB, WinRM, NTLM type-3, ports 445, 5985, 5986, 135)
+    for net in (working_memory.get("discovered_network") or []):
+        port = str(net.get("destination_port", ""))
+        if port in ("445", "5985", "5986", "135"):
+            desc = f"Lateral movement via port {port} to {net.get('destination_ip')}"
+            if not any("lateral" in e for e in existing_descriptions):
+                h = tracker.add_dynamic_hypothesis(
+                    description=desc,
+                    triggering_evidence=[net.get("event_id") or f"{net.get('destination_ip')}:{port}"],
+                    provenance=f"Network connection on lateral-movement port at iteration {iteration}",
+                    iteration=iteration,
+                )
+                if h:
+                    created.append(h.id)
+                    existing_descriptions.add(desc.lower())
+
+    # Pattern 4: Data staging or exfiltration (archive creation, sensitive file access)
+    for f in (working_memory.get("discovered_files") or []):
+        name = str(f.get("file_name", "")).lower()
+        if any(name.endswith(ext) for ext in (".7z", ".zip", ".rar", ".tar", ".gz", ".dmp")):
+            desc = f"Data staging or exfiltration via archive {f.get('file_name')}"
+            if not any("exfiltration" in e or "staging" in e or "archive" in e for e in existing_descriptions):
+                h = tracker.add_dynamic_hypothesis(
+                    description=desc,
+                    triggering_evidence=[f.get("event_id") or f.get("file_name", "unknown")],
+                    provenance=f"Archive file creation detected at iteration {iteration}",
+                    iteration=iteration,
+                )
+                if h:
+                    created.append(h.id)
+                    existing_descriptions.add(desc.lower())
+
+    return created
+
+
+def _extract_graph_and_metrics(
+    state: dict,
+    response: Any,
+    iteration: int,
+    active_hypo: Optional[str],
+    working_memory: Optional[dict] = None,
+) -> dict:
     # 1. Evidence Graph ingestion
     eg = EvidenceGraph.from_dict(state.get("evidence_graph") or {})
     for m in state.get("messages", []):
@@ -434,11 +519,16 @@ def _extract_graph_and_metrics(state: dict, response: Any, iteration: int, activ
                 except Exception:
                     pass
 
-    # 2. Hypothesis Tracker
+    # 2. Hypothesis Tracker & Dynamic Expansion
     ht = HypothesisTracker.from_dict(state.get("hypothesis_tracker") or {})
     if not ht.get_all() and state.get("hypotheses"):
         for i, h in enumerate(state.get("hypotheses", [])):
             ht.add_hypothesis(h, hypothesis_id=f"H{i+1}")
+
+    wm = working_memory if working_memory is not None else (state.get("investigation_memory") or {})
+    new_dyn_ids = _check_for_dynamic_hypotheses(ht, eg, wm, iteration)
+    prev_dyn_ids = list(state.get("dynamic_hypotheses_created") or [])
+    all_dyn_ids = prev_dyn_ids + [did for did in new_dyn_ids if did not in prev_dyn_ids]
 
     # 3. Quality Metrics
     unique_calls = set()
@@ -486,6 +576,8 @@ def _extract_graph_and_metrics(state: dict, response: Any, iteration: int, activ
     return {
         "evidence_graph": eg.to_dict(),
         "hypothesis_tracker": ht.to_dict(),
+        "hypotheses": [h.description for h in ht.get_all()],
+        "dynamic_hypotheses_created": all_dyn_ids,
         "investigation_timeline": eg.get_timeline(),
         "structured_rationale": rationale_list,
         "investigation_trace": trace_list,
@@ -494,7 +586,8 @@ def _extract_graph_and_metrics(state: dict, response: Any, iteration: int, activ
 
 
 def _build_investigator_return(base_dict: dict, state: dict, response: Any, iteration: int, active_hypo: Optional[str]) -> dict:
-    meta = _extract_graph_and_metrics(state, response, iteration, active_hypo)
+    wm = base_dict.get("investigation_memory") or state.get("investigation_memory") or {}
+    meta = _extract_graph_and_metrics(state, response, iteration, active_hypo, wm)
     base_dict.update(meta)
     return base_dict
 
@@ -508,25 +601,34 @@ def investigator_node(state):
     # Accumulate working memory from all tool messages so far
     working_memory = _update_investigation_memory(state.get("investigation_memory"), state.get("messages", []))
 
-    # Inject active hypotheses into the investigator prompt
-    hypos = state.get("hypotheses", [])
-    active_hypo = None
-    hypo_block = ""
-    if hypos:
-        active_hypo = hypos[(iteration - 1) % len(hypos)]
-        hypo_lines = "\n".join(f"  [{i+1}] {h}" for i, h in enumerate(hypos))
-        hypo_block = (
-            f"\n\nCURRENT INVESTIGATION HYPOTHESES TO TEST:\n{hypo_lines}\n"
-            f"Active Focus for this step: {active_hypo}\n"
-            "Issue tool calls to gather telemetry confirming or refuting these hypotheses."
-        )
-
     # Adaptive investigation planning candidate actions (Issue #3)
     eg_for_plan = EvidenceGraph.from_dict(state.get("evidence_graph") or {})
     ht_for_plan = HypothesisTracker.from_dict(state.get("hypothesis_tracker") or {})
+    hypos = state.get("hypotheses", [])
     if not ht_for_plan.get_all() and hypos:
         for i, h in enumerate(hypos):
             ht_for_plan.add_hypothesis(h, hypothesis_id=f"H{i+1}")
+
+    # Inject active hypotheses into the investigator prompt
+    all_tracked = ht_for_plan.get_all()
+    active_hypo = None
+    hypo_block = ""
+    if all_tracked:
+        hypo_lines = []
+        for h in all_tracked:
+            marker = "[INITIAL]" if getattr(h, "source", "triage") == "triage" else "[DISCOVERED]"
+            hypo_lines.append(f"  {marker} {h.id}: {h.description} [{h.status.value}]")
+        active_idx = (iteration - 1) % len(all_tracked)
+        active_hypo_obj = all_tracked[active_idx]
+        active_hypo = f"{active_hypo_obj.id}: {active_hypo_obj.description}"
+        hypo_block = (
+            f"\n\nCURRENT INVESTIGATION HYPOTHESES TO TEST:\n" + "\n".join(hypo_lines) + "\n"
+            f"Active Focus for this step: {active_hypo}\n"
+            "Issue tool calls to gather telemetry confirming or refuting these hypotheses. "
+            "If evidence reveals a new direction not covered by these hypotheses, "
+            "the system will track dynamic hypotheses accordingly."
+        )
+
     candidates = generate_candidate_actions(eg_for_plan, ht_for_plan, budget_remaining)
     scored_cands = score_actions(candidates, budget_remaining)
     plan_lines = [

@@ -78,6 +78,13 @@ class EvidenceEntity:
         )
 
 
+class EvidenceStatus(str, Enum):
+    OBSERVED = "observed"
+    INFERRED = "inferred"
+    UNVERIFIED = "unverified"
+    CONTRADICTED = "contradicted"
+
+
 @dataclass
 class EvidenceEdge:
     source_id: str
@@ -88,6 +95,7 @@ class EvidenceEdge:
     source_telemetry: Optional[str] = None
     confidence: float = 1.0
     original_reference: Optional[str] = None
+    evidence_status: EvidenceStatus = EvidenceStatus.OBSERVED
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -99,6 +107,7 @@ class EvidenceEdge:
             "source_telemetry": self.source_telemetry,
             "confidence": self.confidence,
             "original_reference": self.original_reference,
+            "evidence_status": self.evidence_status.value if isinstance(self.evidence_status, EvidenceStatus) else str(self.evidence_status),
         }
 
     @classmethod
@@ -109,6 +118,12 @@ class EvidenceEdge:
         except ValueError:
             rel = RelationshipType.ASSOCIATED_WITH
 
+        status_val = data.get("evidence_status", "observed")
+        try:
+            ev_status = EvidenceStatus(status_val)
+        except ValueError:
+            ev_status = EvidenceStatus.OBSERVED
+
         return cls(
             source_id=str(data["source_id"]),
             target_id=str(data["target_id"]),
@@ -118,6 +133,7 @@ class EvidenceEdge:
             source_telemetry=data.get("source_telemetry"),
             confidence=float(data.get("confidence", 1.0)),
             original_reference=data.get("original_reference"),
+            evidence_status=ev_status,
         )
 
 
