@@ -11,6 +11,7 @@ from a1.nodes.triage_node import triage_node
 from a1.nodes.investigator_node import investigator_node, should_continue
 from a1.nodes.evidence_packing_node import evidence_packing_node
 from a1.nodes.correlation_node import correlation_node
+from a1.nodes.validator_node import validator_node
 from a1.nodes.report_node import report_node
 
 def create_investigation_graph():
@@ -24,6 +25,8 @@ def create_investigation_graph():
     # Input-reflection Stage 2: Evidence Packing (runs after review gate, before correlation)
     workflow.add_node("evidence_packing", evidence_packing_node)
     workflow.add_node("correlate", correlation_node)
+    # Stage 3: Deterministic Evidence Validation (Issue #6)
+    workflow.add_node("validate", validator_node)
     workflow.add_node("report", report_node)
 
     workflow.set_entry_point("alert_prep")
@@ -41,7 +44,8 @@ def create_investigation_graph():
     )
     workflow.add_edge("tools", "investigator")
     workflow.add_edge("evidence_packing", "correlate")
-    workflow.add_edge("correlate", "report")
+    workflow.add_edge("correlate", "validate")
+    workflow.add_edge("validate", "report")
     workflow.add_edge("report", END)
 
     return workflow.compile()

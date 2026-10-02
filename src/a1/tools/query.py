@@ -41,6 +41,39 @@ def get_database_schema() -> str:
     schema = get_active_db().get_schema()
     return json.dumps(schema, indent=2)
 
+def _clean_results(results: list) -> list:
+    cleaned = []
+    for r in results:
+        item = dict(r)
+        if "raw_json" in item:
+            raw = str(item["raw_json"])
+            if len(raw) > _RAW_JSON_KEEP_FULL_UPTO:
+                item["raw_json_projected"] = _project_raw_json(raw)
+                del item["raw_json"]
+        cleaned.append(item)
+    return cleaned
+
+def _diagnose_query_error(err_msg: str, schema: dict) -> str:
+    import difflib
+    col_match = re.search(r"no such column:\s*([\w.]+)", err_msg, re.IGNORECASE)
+    if col_match:
+        missing_col = col_match.group(1).split(".")[-1]
+        all_cols = {c for cols in schema.values() for c in cols}
+        matches = difflib.get_close_matches(missing_col, list(all_cols), n=3, cutoff=0.5)
+        if matches:
+            return f"Column '{missing_col}' does not exist. Did you mean: {', '.join(matches)}?"
+        return f"Column '{missing_col}' does not exist. Review available columns per table."
+
+    tbl_match = re.search(r"no such table:\s*([\w.]+)", err_msg, re.IGNORECASE)
+    if tbl_match:
+        missing_tbl = tbl_match.group(1).split(".")[-1]
+        matches = difflib.get_close_matches(missing_tbl, list(schema.keys()), n=2, cutoff=0.4)
+        if matches:
+            return f"Table '{missing_tbl}' does not exist. Did you mean: {', '.join(matches)}?"
+        return f"Table '{missing_tbl}' does not exist. Available tables: {list(schema.keys())}"
+
+    return "Check table and column names in schema."
+
 @tool
 def query_telemetry(sql_query: str, max_rows: int = 25) -> str:
     """Execute a read-only SQL query against the endpoint security database.
@@ -71,44 +104,12 @@ def query_telemetry(sql_query: str, max_rows: int = 25) -> str:
                 "available_tables": list(schema.keys())
             }, indent=2)
 
-        cleaned = []
-        for r in results:
-            item = dict(r)
-            if "raw_json" in item:
-                raw = str(item["raw_json"])
-                if len(raw) > _RAW_JSON_KEEP_FULL_UPTO:
-                    item["raw_json_projected"] = _project_raw_json(raw)
-                    del item["raw_json"]
-            cleaned.append(item)
+        cleaned = _clean_results(results)
         return json.dumps(cleaned, indent=2, default=str)
     except Exception as e:
         err_msg = str(e)
         schema = db.get_schema()
-        hint = "Check table and column names in schema."
-        
-        # Self-healing column error detection
-        col_match = re.search(r"no such column:\s*([\w.]+)", err_msg, re.IGNORECASE)
-        if col_match:
-            missing_col = col_match.group(1).split(".")[-1]
-            all_cols = {c for cols in schema.values() for c in cols}
-            # Find closest candidate column
-            import difflib
-            matches = difflib.get_close_matches(missing_col, list(all_cols), n=3, cutoff=0.5)
-            if matches:
-                hint = f"Column '{missing_col}' does not exist. Did you mean: {', '.join(matches)}?"
-            else:
-                hint = f"Column '{missing_col}' does not exist. Review available columns per table."
-
-        # Self-healing table error detection
-        tbl_match = re.search(r"no such table:\s*([\w.]+)", err_msg, re.IGNORECASE)
-        if tbl_match:
-            missing_tbl = tbl_match.group(1).split(".")[-1]
-            import difflib
-            matches = difflib.get_close_matches(missing_tbl, list(schema.keys()), n=2, cutoff=0.4)
-            if matches:
-                hint = f"Table '{missing_tbl}' does not exist. Did you mean: {', '.join(matches)}?"
-            else:
-                hint = f"Table '{missing_tbl}' does not exist. Available tables: {list(schema.keys())}"
+        hint = _diagnose_query_error(err_msg, schema)
 
         return json.dumps({
             "status": "query_error",

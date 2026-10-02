@@ -902,6 +902,25 @@
       }
       elements.dbSelect.appendChild(opt);
     });
+    updateActiveDbPromptHighlight();
+  }
+
+  function updateActiveDbPromptHighlight() {
+    const activeName = state.currentDb || (elements.headerDbName ? elements.headerDbName.textContent.trim() : "");
+    if (!activeName) return;
+    document.querySelectorAll(".suggestion-item").forEach((item) => {
+      const itemDb = item.getAttribute("data-db") || "";
+      if (itemDb === activeName || activeName.includes(itemDb) || itemDb.includes(activeName)) {
+        item.classList.add("highlight-active-db");
+      } else {
+        item.classList.remove("highlight-active-db");
+      }
+    });
+
+    const activeFilterBtn = document.getElementById("filterActiveDbBtn");
+    if (activeFilterBtn) {
+      activeFilterBtn.textContent = `Active DB (${activeName.replace(".db", "")})`;
+    }
   }
 
   async function onDatabaseChange(e) {
@@ -919,6 +938,7 @@
         state.currentDb = dbObj.name;
         elements.headerDbName.textContent = dbObj.name;
         elements.inputMetaDb.textContent = dbObj.name;
+        updateActiveDbPromptHighlight();
       }
     } catch (err) {
       alert("Error switching database: " + err.message);
@@ -1209,14 +1229,82 @@
       });
     }
 
-    // Suggestions click
-    document.querySelectorAll(".suggestion-card").forEach((card) => {
-      card.addEventListener("click", () => {
-        const query = card.getAttribute("data-query");
+    // Suggestions click (support both .suggestion-item and legacy .suggestion-card)
+    document.querySelectorAll(".suggestion-item, .suggestion-card").forEach((item) => {
+      item.addEventListener("click", async () => {
+        const query = item.getAttribute("data-query");
+        const dbName = item.getAttribute("data-db");
+
+        // Automatically switch active database if the suggestion targets a different DB
+        if (dbName && state.databases && state.databases.length > 0) {
+          const matchDb = state.databases.find(
+            (d) => d.name === dbName || d.path.endsWith(dbName) || (d.display && d.display.includes(dbName))
+          );
+          if (matchDb && state.currentDb !== matchDb.name) {
+            try {
+              const res = await fetch("/api/databases/set", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ db_path: matchDb.path }),
+              });
+              if (res.ok) {
+                state.currentDb = matchDb.name;
+                if (elements.headerDbName) elements.headerDbName.textContent = matchDb.name;
+                if (elements.inputMetaDb) elements.inputMetaDb.textContent = matchDb.name;
+                if (elements.dbSelect) elements.dbSelect.value = matchDb.path;
+                updateActiveDbPromptHighlight();
+              }
+            } catch (err) {
+              console.warn("Could not auto-switch database for suggestion:", err);
+            }
+          }
+        }
+
         if (query) {
           elements.promptInput.value = query;
           switchView("chat");
           handleSubmitPrompt();
+        }
+      });
+    });
+
+    // Prompt Scenarios Category Filter Pills
+    document.querySelectorAll(".sugg-filter-pill").forEach((pill) => {
+      pill.addEventListener("click", () => {
+        document.querySelectorAll(".sugg-filter-pill").forEach((p) => p.classList.remove("active"));
+        pill.classList.add("active");
+        const filter = pill.getAttribute("data-filter");
+        const activeName = state.currentDb || (elements.headerDbName ? elements.headerDbName.textContent.trim() : "");
+        let visibleCount = 0;
+
+        document.querySelectorAll(".suggestion-item").forEach((item) => {
+          const itemDb = item.getAttribute("data-db") || "";
+          const itemCat = item.getAttribute("data-category") || "";
+          let isMatch = true;
+
+          if (filter === "active") {
+            isMatch = itemDb === activeName || activeName.includes(itemDb) || itemDb.includes(activeName);
+          } else if (filter === "attack") {
+            isMatch = itemCat === "attack";
+          } else if (filter === "benign") {
+            isMatch = itemCat === "benign";
+          } else if (filter === "eval") {
+            isMatch = itemCat === "eval" || itemCat === "inconclusive" || itemCat === "ambiguous";
+          } else {
+            isMatch = true;
+          }
+
+          if (isMatch) {
+            item.style.display = "";
+            visibleCount++;
+          } else {
+            item.style.display = "none";
+          }
+        });
+
+        const countBadge = document.getElementById("suggestionsCountBadge");
+        if (countBadge) {
+          countBadge.textContent = `${visibleCount} Available`;
         }
       });
     });

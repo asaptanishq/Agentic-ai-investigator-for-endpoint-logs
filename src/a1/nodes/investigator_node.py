@@ -1,10 +1,14 @@
 import json
 import re
+from typing import Any, Optional, Dict, List, Set, Tuple
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage
 from a1.llm import get_llm, invoke_with_network_retry
 from a1.tools import ALL_INVESTIGATION_TOOLS
 from a1.prompts import INVESTIGATOR_SYSTEM_PROMPT
 from a1.config import MAX_INVESTIGATION_STEPS
+from a1.evidence_graph import EvidenceGraph
+from a1.hypothesis import HypothesisTracker, HypothesisStatus
+from a1.nodes.planner_node import generate_candidate_actions, score_actions
 # FIX: minimum reasoning passes before a tool-free conclusion is allowed.
 # Previously the agent could return plain text on step 1 (zero tool calls) and
 # jump straight to correlation/report with no evidence collected.
@@ -418,10 +422,88 @@ def _format_investigation_memory(memory: dict) -> str:
     return "\n".join(lines)
 
 
+def _extract_graph_and_metrics(state: dict, response: Any, iteration: int, active_hypo: Optional[str]) -> dict:
+    # 1. Evidence Graph ingestion
+    eg = EvidenceGraph.from_dict(state.get("evidence_graph") or {})
+    for m in state.get("messages", []):
+        if getattr(m, "type", "") == "tool":
+            content = getattr(m, "content", "")
+            if content:
+                try:
+                    eg.ingest_tool_result(getattr(m, "name", "tool"), {}, content)
+                except Exception:
+                    pass
+
+    # 2. Hypothesis Tracker
+    ht = HypothesisTracker.from_dict(state.get("hypothesis_tracker") or {})
+    if not ht.get_all() and state.get("hypotheses"):
+        for i, h in enumerate(state.get("hypotheses", [])):
+            ht.add_hypothesis(h, hypothesis_id=f"H{i+1}")
+
+    # 3. Quality Metrics
+    unique_calls = set()
+    total_calls = 0
+    for m in state.get("messages", []):
+        for tc in getattr(m, "tool_calls", None) or []:
+            total_calls += 1
+            unique_calls.add(_call_key(tc))
+
+    metrics = {
+        "total_tool_calls": total_calls,
+        "unique_tool_calls": len(unique_calls),
+        "duplicate_calls": max(0, total_calls - len(unique_calls)),
+        "entities_discovered": len(eg.entities),
+        "edges_discovered": len(eg.edges),
+        "timeline_events": len(eg.timeline),
+    }
+
+    # 4. Structured Rationale & Trace (Issue #3, #17, #18)
+    last_tool_msg = next((m for m in reversed(state.get("messages", [])) if getattr(m, "type", "") == "tool"), None)
+    useful_evidence = False
+    if last_tool_msg:
+        c = getattr(last_tool_msg, "content", "")
+        if c and c not in ("[]", "{}", '""') and "0 matches" not in str(c) and "error" not in str(c).lower():
+            useful_evidence = True
+
+    rationale_list = list(state.get("structured_rationale") or [])
+    trace_list = list(state.get("investigation_trace") or [])
+    new_calls = getattr(response, "tool_calls", None) or []
+    for tc in new_calls:
+        entry = {
+            "iteration": iteration,
+            "objective": f"Test hypothesis {active_hypo}" if active_hypo else "Investigate endpoint telemetry",
+            "tool_selected": tc.get("name"),
+            "tool_args": tc.get("args"),
+            "evidence_sought": str(tc.get("args")),
+            "hypothesis_addressed": active_hypo or "General",
+            "evidence_gap_resolved": str(tc.get("args")),
+            "why_selected": f"Adaptive planning prioritization for hypothesis {active_hypo or 'general'}",
+            "produced_useful_evidence": useful_evidence,
+        }
+        rationale_list.append(entry)
+        trace_list.append(entry)
+
+    return {
+        "evidence_graph": eg.to_dict(),
+        "hypothesis_tracker": ht.to_dict(),
+        "investigation_timeline": eg.get_timeline(),
+        "structured_rationale": rationale_list,
+        "investigation_trace": trace_list,
+        "quality_metrics": metrics,
+    }
+
+
+def _build_investigator_return(base_dict: dict, state: dict, response: Any, iteration: int, active_hypo: Optional[str]) -> dict:
+    meta = _extract_graph_and_metrics(state, response, iteration, active_hypo)
+    base_dict.update(meta)
+    return base_dict
+
+
 def investigator_node(state):
     llm = get_llm().bind_tools(ALL_INVESTIGATION_TOOLS)
 
     iteration = state.get("iteration_count", 0) + 1
+    budget_remaining = max(0, MAX_INVESTIGATION_STEPS - iteration)
 
     # Accumulate working memory from all tool messages so far
     working_memory = _update_investigation_memory(state.get("investigation_memory"), state.get("messages", []))
@@ -439,8 +521,26 @@ def investigator_node(state):
             "Issue tool calls to gather telemetry confirming or refuting these hypotheses."
         )
 
-    # FIX: schema hint appended to the system prompt (see _get_schema_hint).
-    system = INVESTIGATOR_SYSTEM_PROMPT + "\n\n" + _get_schema_hint() + hypo_block
+    # Adaptive investigation planning candidate actions (Issue #3)
+    eg_for_plan = EvidenceGraph.from_dict(state.get("evidence_graph") or {})
+    ht_for_plan = HypothesisTracker.from_dict(state.get("hypothesis_tracker") or {})
+    if not ht_for_plan.get_all() and hypos:
+        for i, h in enumerate(hypos):
+            ht_for_plan.add_hypothesis(h, hypothesis_id=f"H{i+1}")
+    candidates = generate_candidate_actions(eg_for_plan, ht_for_plan, budget_remaining)
+    scored_cands = score_actions(candidates, budget_remaining)
+    plan_lines = [
+        f"  * Candidate {idx+1}: [{c.get('tool')}] {c.get('objective')} (Sought: {c.get('evidence_sought')})"
+        for idx, c in enumerate(scored_cands[:3])
+    ]
+    planner_block = (
+        f"\n\nADAPTIVE INVESTIGATION PLAN & BUDGET:\n"
+        f"- Investigation Step: {iteration} / {MAX_INVESTIGATION_STEPS} (Budget Remaining: {budget_remaining} tool calls)\n"
+        f"- Prioritized Action Recommendations:\n" + "\n".join(plan_lines)
+    )
+
+    # Schema hint appended to the system prompt
+    system = INVESTIGATOR_SYSTEM_PROMPT + "\n\n" + _get_schema_hint() + hypo_block + planner_block
 
     # Inject authoritative working memory into prompt
     if working_memory and any(working_memory.values()):
@@ -480,12 +580,7 @@ def investigator_node(state):
     if getattr(response, "tool_calls", None) and len(response.tool_calls) > 2:
         response.tool_calls = response.tool_calls[:2]
 
-    # FIX: repetition guard. Observed in a real run: the model called
-    # trace_process_tree with identical arguments 17 times in a row, each
-    # returning "0 ancestors, 0 descendants" -- which was the CORRECT answer
-    # (251/275 processes in this dataset have no recorded parent). Re-executing
-    # teaches nothing, so instead of running the duplicate calls we inject a
-    # nudge telling the model to try a different tool/arguments or conclude.
+    # FIX: repetition guard.
     seen = set()
     for m in state["messages"]:
         for tc in getattr(m, "tool_calls", None) or []:
@@ -502,13 +597,13 @@ def investigator_node(state):
                 "the investigation can move to correlation."
             )
         )
-        return {
+        return _build_investigator_return({
             "messages": [response, nudge],
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0) + 1,
             "active_hypothesis": active_hypo,
             "investigation_memory": working_memory,
-        }
+        }, state, response, iteration, active_hypo)
 
     missing_smb = _missing_smb_auth_correlation(state.get("messages", []))
     if (
@@ -529,14 +624,14 @@ def investigator_node(state):
                 "TCP/445 event with this source/destination and its process_entity_id before concluding."
             )
         )
-        return {
+        return _build_investigator_return({
             "messages": [response, nudge],
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "lateral_network_nudge_sent": True,
             "investigation_memory": working_memory,
-        }
+        }, state, response, iteration, active_hypo)
 
     missing_auth_hosts = _missing_requested_auth_hosts(state)
     if (
@@ -561,14 +656,14 @@ def investigator_node(state):
                 "the primary attack chain; do not attribute it without causal links."
             )
         )
-        return {
+        return _build_investigator_return({
             "messages": [response, nudge],
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "requested_auth_nudge_sent": True,
             "investigation_memory": working_memory,
-        }
+        }, state, response, iteration, active_hypo)
 
     missing_archives = _missing_requested_archive_files(state)
     if (
@@ -595,17 +690,16 @@ def investigator_node(state):
                 + " and distinguish the archive command from a separate file-created event before concluding."
             )
         )
-        return {
+        return _build_investigator_return({
             "messages": [response, nudge],
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "requested_archive_nudge_sent": True,
             "investigation_memory": working_memory,
-        }
+        }, state, response, iteration, active_hypo)
 
-    # FIX: Prevent premature termination before gathering data. If the model outputs text
-    # without any tool calls before at least 2 tool results have been collected, nudge it to query.
+    # FIX: Prevent premature termination before gathering data.
     tool_results_count = sum(1 for m in state.get("messages", []) if getattr(m, "type", "") == "tool")
     if not new_calls and tool_results_count < 2 and iteration < (MAX_INVESTIGATION_STEPS - 2):
         nudge = HumanMessage(
@@ -615,20 +709,20 @@ def investigator_node(state):
                 "find_process_associations, or search_timeline) to query the database. Please invoke the tool now."
             )
         )
-        return {
+        return _build_investigator_return({
             "messages": [response, nudge],
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "investigation_memory": working_memory,
-        }
+        }, state, response, iteration, active_hypo)
 
-    return {
+    return _build_investigator_return({
         "messages": [response],
         "iteration_count": iteration,
         "active_hypothesis": active_hypo,
         "investigation_memory": working_memory,
-    }
+    }, state, response, iteration, active_hypo)
 
 def should_continue(state):
     messages = state.get("messages", [])

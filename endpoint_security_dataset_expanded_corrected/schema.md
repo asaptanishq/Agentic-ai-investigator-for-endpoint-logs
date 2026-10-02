@@ -1,6 +1,6 @@
 # Schema Specification
 
-> **Repository-state note (2026-10):** The table/view semantics below describe the shipped SQLite databases (`attack_lateral_movement.db`, `attack_data_exfiltration.db`, `ransomware_attack_complete_ecs.db`, `attack_lotl_fileless.db`, `wazuh_lotl_attack_dataset.db`, `suricata_c2_intrusion.db`, and `attack_supply_chain.db`). Per-scenario evaluator ground truth lives in the `groundtruth/` subfolder (`groundtruth/groundtruth_attack_*.json`).
+> **Repository-state note (2026-10):** The table/view semantics below describe the shipped SQLite databases (`attack_lateral_movement.db`, `attack_data_exfiltration.db`, `ransomware_attack_complete_ecs.db`, `attack_lotl_fileless.db`, `wazuh_lotl_attack_dataset.db`, `suricata_c2_intrusion.db`, `attack_supply_chain.db`, and `benign_admin_activity.db`). Per-scenario evaluator ground truth lives in the `groundtruth/` subfolder (`groundtruth_attack_*.json`, `groundtruth_benign_A_admin_activity.json`, `groundtruth_ambiguous_A_dev_activity.json`, and `groundtruth_incomplete_A_missing_telemetry.json`).
 
 - **Schema name:** Agentic AI Investigator Endpoint Security Dataset
 - **Schema version:** `1.0.0`
@@ -79,10 +79,7 @@ Neither relationship type is treated as proof of maliciousness.
 
 Telemetry records describe observations. Ground truth contains evaluation annotations and expected correlations. A document-associated process, registry change, file creation, network connection, or authentication pattern is an investigation trigger—not an automatic malicious classification.
 
-Case-level evaluation labels are stored separately in `case_labels.json`, keyed
-by `case_id` (`SCN-001` through `SCN-005`). The allowed `case_label` values are
-`benign`, `suspicious`, `malicious`, and `inconclusive`. Labels are evaluator-only
-metadata and must not be exposed through `agent_events`.
+Case-level evaluation labels are stored in `case_labels.json` and in scenario ground truth files (`groundtruth/groundtruth_*.json`), keyed by scenario IDs (e.g. `ATK-A` through `ATK-G`, `BEN-A`, `AMB-A`, `INC-A`). The allowed `case_label` values are `benign`, `suspicious`, `malicious`, and `inconclusive`. Labels are evaluator-only metadata and must not be exposed through `agent_events`.
 
 Each case label includes `confidence`, `expected_conclusion`, `evidence_basis`,
 and `verdict_boundary`. The verdict boundary records whether the evidence supports

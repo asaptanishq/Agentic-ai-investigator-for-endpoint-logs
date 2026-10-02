@@ -15,11 +15,11 @@
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <script>
-    if (typeof window.marked === "undefined") {
-      document.write('<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\\/script>');
+    if (window.marked === undefined) {
+      document.write(String.raw`<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>`);
     }
-    if (typeof window.DOMPurify === "undefined") {
-      document.write('<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"><\\/script>');
+    if (window.DOMPurify === undefined) {
+      document.write(String.raw`<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"><\/script>`);
     }
   </script>
 </head>
@@ -27,7 +27,7 @@
 <body class="theme-dark">
   <div class="app-layout">
     <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Investigation Sidebar">
       <div class="sidebar-header">
         <button class="new-chat-btn" id="newChatBtn" title="Start New Investigation">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -235,14 +235,14 @@
       <div class="graph-stage" id="graphStage" style="display:none;">
         <!-- Graph Control & Filter Toolbar -->
         <div class="graph-toolbar">
-          <div class="graph-filter-group" role="group" aria-label="Entity Category Filters">
+          <fieldset class="graph-filter-group" aria-label="Entity Category Filters">
             <button class="filter-pill active" data-filter="all">All</button>
             <button class="filter-pill filter-pill-proc" data-filter="process">Processes</button>
             <button class="filter-pill filter-pill-net" data-filter="network">Network</button>
             <button class="filter-pill filter-pill-file" data-filter="file">Files</button>
             <button class="filter-pill filter-pill-reg" data-filter="registry">Registry</button>
             <button class="filter-pill filter-pill-alert" data-filter="alert">Suspicious</button>
-          </div>
+          </fieldset>
 
           <div class="graph-search-wrap">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -358,48 +358,302 @@
             <p class="welcome-desc">A1 agent evaluates hypotheses across endpoint security telemetry, processes,
               network, and file operations.</p>
 
-            <div class="suggestions-grid">
-              <button class="suggestion-card"
-                data-query="Investigate unusual file-staging and outbound network activity on WS-DEV-02 on 2026-09-11. Trace relevant process, archive, scheduled-task, network, and file-deletion activity. Assess whether the evidence supports data exfiltration, note evidence gaps, and avoid treating unrelated authentication activity as proof.">
-                <div class="suggestion-tag">Exfiltration & PowerShell</div>
-                <div class="suggestion-text">"Investigate suspicious PowerShell execution and data exfiltration on
-                  WS-DEV-02"</div>
-              </button>
+            <div class="suggestions-list-wrapper">
+              <div class="suggestions-list-header">
+                <div class="suggestions-list-title-wrap">
+                  <span class="suggestions-list-title">Investigation Scenarios by Database</span>
+                  <span class="suggestions-count-badge" id="suggestionsCountBadge">10 Available</span>
+                </div>
+                <div class="suggestions-filter-bar" id="suggestionsFilterBar" role="tablist" aria-label="Filter Prompts by Category">
+                  <button class="sugg-filter-pill active" data-filter="all" type="button">All (10)</button>
+                  <button class="sugg-filter-pill" data-filter="active" id="filterActiveDbBtn" type="button" title="Show only prompts for the currently active database">Active DB</button>
+                  <button class="sugg-filter-pill" data-filter="attack" type="button">Attacks (7)</button>
+                  <button class="sugg-filter-pill" data-filter="benign" type="button">Benign (1)</button>
+                  <button class="sugg-filter-pill" data-filter="eval" type="button">Gaps &amp; Ambiguity (2)</button>
+                </div>
+              </div>
 
-              <button class="suggestion-card"
-                data-query="Investigate suspicious PowerShell activity on WS-OPS-01 on 2026-09-10. Determine whether there is evidence of credential access or movement to another host. Trace relevant process, file, authentication, network, and service activity; distinguish confirmed evidence from gaps and do not assume maliciousness.">
-                <div class="suggestion-tag">Lateral Movement</div>
-                <div class="suggestion-text">"Investigate potential lateral movement and remote command execution via
-                  WinRM"</div>
-              </button>
+              <div class="suggestions-list" id="suggestionsList">
+                <!-- 1. attack_lateral_movement.db - ATK-A -->
+                <button class="suggestion-item"
+                  data-db="attack_lateral_movement.db"
+                  data-category="attack"
+                  data-query="Investigate suspicious activity on WS-OPS-01: a process accessed lsass.exe memory and a dump file appeared in a user Temp directory, the same session then opened SMB connections to SRV-FILE-01, and repeated failed network logons for one account were followed by a successful one and a new Windows service installation. Determine whether this is credential dumping and lateral movement or benign administrative activity."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-attack">Attack</span>
+                      <span class="suggestion-case-id">ATK-A</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>attack_lateral_movement.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Credential Dumping &amp; Lateral Movement</span>
+                    </div>
+                    <div class="suggestion-title">LSASS memory dumping, SMB reconnaissance, and remote service installation on WS-OPS-01</div>
+                    <div class="suggestion-snippet">Investigate suspicious activity on WS-OPS-01: a process accessed lsass.exe memory and a dump file appeared in a user Temp directory, then opened SMB to SRV-FILE-01...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
 
-              <button class="suggestion-card"
-                data-query="Investigate suspicious Word execution and ransomware file encryption activity on WS-ACCT-01 on 2026-09-20. Trace phishing document invoice_2026-Q3.docx, PowerShell spawning, shadow copy deletion via vssadmin, and LockBit ransomware encryption activity.">
-                <div class="suggestion-tag">Ransomware & LockBit</div>
-                <div class="suggestion-text">"Investigate LockBit ransomware encryption and shadow copy deletion on
-                  WS-ACCT-01"</div>
-              </button>
+                <!-- 2. attack_lateral_movement.db - INC-A -->
+                <button class="suggestion-item"
+                  data-db="attack_lateral_movement.db"
+                  data-category="eval"
+                  data-query="Investigate an alert claiming unauthorized execution on SRV-FILE-01. Examine telemetry for the parent process, network flows, and authentication. If essential telemetry is absent to prove or disprove malicious activity, render an inconclusive outcome citing the specific missing telemetry."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-eval">Telemetry Gap</span>
+                      <span class="suggestion-case-id">INC-A</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>attack_lateral_movement.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Missing Telemetry Gap Analysis</span>
+                    </div>
+                    <div class="suggestion-title">Assess unauthorized execution alert on SRV-FILE-01 with missing telemetry gap analysis</div>
+                    <div class="suggestion-snippet">Examine telemetry for parent process, network flows, and authentication; if telemetry is absent to prove maliciousness, render inconclusive...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
 
-              <button class="suggestion-card"
-                data-query="Investigate suspicious Living-off-the-Land (LotL) and fileless in-memory execution on WS-EXEC-02 on 2026-09-22. Trace mshta.exe spawning hidden encoded PowerShell, C2 connection to 198.51.100.77, discovery LOLBins (wmic, net, nltest), certutil staging, schtasks/reg persistence, and remote WMI invocation on DC-AUTH-01.">
-                <div class="suggestion-tag">Fileless & LotL (LOLBins)</div>
-                <div class="suggestion-text">"Investigate fileless in-memory C2 and Living-off-the-Land execution on
-                  WS-EXEC-02"</div>
-              </button>
+                <!-- 3. attack_data_exfiltration.db - ATK-B -->
+                <button class="suggestion-item"
+                  data-db="attack_data_exfiltration.db"
+                  data-category="attack"
+                  data-query="Investigate suspicious activity on WS-DEV-02: PowerShell spawned an archiver that staged the user's spreadsheets into a password-protected archive in Temp, then dropped a script and created a logon scheduled task, made repeated outbound HTTPS connections to an external address, and the archive was later deleted. Determine whether this is data exfiltration or benign software activity."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-attack">Attack</span>
+                      <span class="suggestion-case-id">ATK-B</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>attack_data_exfiltration.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">PowerShell Staging &amp; Data Exfiltration</span>
+                    </div>
+                    <div class="suggestion-title">PowerShell 7-Zip file staging, scheduled task creation, and outbound HTTPS exfiltration on WS-DEV-02</div>
+                    <div class="suggestion-snippet">Investigate suspicious activity on WS-DEV-02: PowerShell staged spreadsheets into an encrypted archive in Temp and uploaded via HTTPS...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
 
-              <button class="suggestion-card"
-                data-query="Investigate suspicious living-off-the-land PowerShell execution and SAM registry access on WS-DEV-01 on 2026-10-15. Trace discovery commands, persistence tasks, and C2 exfiltration in Wazuh telemetry.">
-                <div class="suggestion-tag">Wazuh SIEM / EDR</div>
-                <div class="suggestion-text">"Investigate living-off-the-land execution and SAM registry access in Wazuh
-                  telemetry"</div>
-              </button>
+                <!-- 4. ransomware_attack_complete_ecs.db - ATK-C -->
+                <button class="suggestion-item"
+                  data-db="ransomware_attack_complete_ecs.db"
+                  data-category="attack"
+                  data-query="Investigate suspicious ransomware activity on WS-ACCT-01: Microsoft Word opened invoice_2026-Q3.docx, hidden PowerShell invoked vssadmin.exe to delete shadow copies, and LockBit executed encrypting user documents with .locked extensions. Determine whether this is ransomware or benign activity."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-attack">Attack</span>
+                      <span class="suggestion-case-id">ATK-C</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>ransomware_attack_complete_ecs.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">LockBit Ransomware &amp; VSS Deletion</span>
+                    </div>
+                    <div class="suggestion-title">Word phishing doc, vssadmin shadow copy deletion, and LockBit ransomware encryption on WS-ACCT-01</div>
+                    <div class="suggestion-snippet">Microsoft Word opened invoice_2026-Q3.docx, hidden PowerShell invoked vssadmin to delete shadow copies, and LockBit encrypted documents...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
 
-              <button class="suggestion-card"
-                data-query="Investigate critical Suricata NIDS alerts on WS-FINANCE-01:multiple ET MALWARE CobaltStrike C2 beaconing alerts to 203.0.113.88:8443 between 2026-10-16T14:00:00Z and 2026-10-16T16:02:00Z">
-                <div class="suggestion-tag">Suricata</div>
-                <div class="suggestion-text">"Investigate critical Suricata NIDS alerts on WS-FINANCE-01"</div>
-              </button>
+                <!-- 5. attack_lotl_fileless.db - ATK-D -->
+                <button class="suggestion-item"
+                  data-db="attack_lotl_fileless.db"
+                  data-category="attack"
+                  data-query="Investigate suspicious Living-off-the-Land and fileless execution on WS-EXEC-02: mshta.exe spawned hidden encoded PowerShell establishing outbound C2, discovery LOLBins executed, certutil staged payloads, and remote WMI execution occurred against DC-AUTH-01. Determine whether this is a fileless intrusion or benign administrative activity."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-attack">Attack</span>
+                      <span class="suggestion-case-id">ATK-D</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>attack_lotl_fileless.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Fileless LotL &amp; Remote WMI Execution</span>
+                    </div>
+                    <div class="suggestion-title">mshta.exe spawned encoded PowerShell, discovery LOLBins, certutil staging, and WMI on DC-AUTH-01</div>
+                    <div class="suggestion-snippet">Investigate mshta hidden encoded PowerShell C2, discovery LOLBins (wmic, net, nltest), certutil staging, and remote WMI execution...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
 
+                <!-- 6. attack_lotl_fileless.db - AMB-A -->
+                <button class="suggestion-item"
+                  data-db="attack_lotl_fileless.db"
+                  data-category="eval"
+                  data-query="Investigate command-line and utility activity on WS-EXEC-02: certutil.exe and PowerShell with flags were invoked during business hours. Evaluate whether this represents malicious C2 staging, dual-use developer activity, or benign administration, noting any ambiguity in intent."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-eval">Dual-Use Ambiguity</span>
+                      <span class="suggestion-case-id">AMB-A</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>attack_lotl_fileless.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Dual-Use Utility &amp; Ambiguous Intent</span>
+                    </div>
+                    <div class="suggestion-title">Evaluate certutil.exe and PowerShell invocation during business hours for dual-use ambiguity</div>
+                    <div class="suggestion-snippet">Evaluate whether certutil and flagged PowerShell represent malicious C2 staging, dual-use developer activity, or administration...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
+
+                <!-- 7. wazuh_lotl_attack_dataset.db - ATK-E -->
+                <button class="suggestion-item"
+                  data-db="wazuh_lotl_attack_dataset.db"
+                  data-category="attack"
+                  data-query="Investigate suspicious Living-off-the-Land PowerShell execution and SAM registry access on WS-DEV-01 on 2026-10-15. Trace discovery commands, persistence tasks, and C2 exfiltration in Wazuh telemetry."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-attack">Attack</span>
+                      <span class="suggestion-case-id">ATK-E</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>wazuh_lotl_attack_dataset.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Wazuh SIEM / EDR Telemetry</span>
+                    </div>
+                    <div class="suggestion-title">Wazuh telemetry: Living-off-the-Land execution, SAM hive access, and C2 on WS-DEV-01</div>
+                    <div class="suggestion-snippet">Hidden PowerShell executed, SAM registry hive was accessed, C2 connections were made to attacker.com, and lateral movement attempted...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
+
+                <!-- 8. suricata_c2_intrusion.db - ATK-F -->
+                <button class="suggestion-item"
+                  data-db="suricata_c2_intrusion.db"
+                  data-category="attack"
+                  data-query="Investigate critical Suricata NIDS alerts on WS-FINANCE-01:multiple ET MALWARE CobaltStrike C2 beaconing alerts to 203.0.113.88:8443 between 2026-10-16T14:00:00Z and 2026-10-16T16:02:00Z"
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-attack">Attack</span>
+                      <span class="suggestion-case-id">ATK-F</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>suricata_c2_intrusion.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Suricata NIDS &amp; CobaltStrike C2</span>
+                    </div>
+                    <div class="suggestion-title">Suricata NIDS alerts: Win32/CobaltStrike Malleable C2 Beaconing on port 8443 on WS-FINANCE-01</div>
+                    <div class="suggestion-snippet">ET MALWARE CobaltStrike C2 beacon alerts to 203.0.113.88:8443, internal SMB reconnaissance against DC-AUTH-01, and outbound exfiltration...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
+
+                <!-- 9. attack_supply_chain.db - ATK-G -->
+                <button class="suggestion-item"
+                  data-db="attack_supply_chain.db"
+                  data-category="attack"
+                  data-query="Investigate a potential supply chain compromise on WS-DEV-07: the CorpTools application auto-updated and shortly after, discovery commands were executed, a new local administrator account appeared, Kerberos ticket requests targeted SQL service accounts, and WinRM sessions were established to WS-DBA-03 and DC-CORP-01. Determine whether this is a supply chain attack or legitimate software activity."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-attack">Attack</span>
+                      <span class="suggestion-case-id">ATK-G</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>attack_supply_chain.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Supply Chain Auto-Update Compromise</span>
+                    </div>
+                    <div class="suggestion-title">CorpTools software auto-update, rogue local admin account, and Kerberos ticket requests on WS-DEV-07</div>
+                    <div class="suggestion-snippet">CorpTools updated and shortly after, discovery ran, new local admin appeared, Kerberos tickets targeted SQL accounts, and WinRM sessions opened...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
+
+                <!-- 10. benign_admin_activity.db - BEN-A -->
+                <button class="suggestion-item"
+                  data-db="benign_admin_activity.db"
+                  data-category="benign"
+                  data-query="Investigate scheduled activity on WS-ADMIN-05: svchost.exe spawned PowerShell running backup_verification.ps1 under CORP\sysadmin, which opened SMB connections to SRV-FILE-02, wrote to backup_audit_20260915.log, and checked W32Time registry settings. Determine whether this is an attack or benign administrative activity."
+                  type="button">
+                  <div class="suggestion-item-main">
+                    <div class="suggestion-item-meta">
+                      <span class="suggestion-type-badge type-benign">Benign Baseline</span>
+                      <span class="suggestion-case-id">BEN-A</span>
+                      <span class="suggestion-db-badge">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                        <span>benign_admin_activity.db</span>
+                      </span>
+                      <span class="active-db-indicator">● Active DB</span>
+                      <span class="suggestion-topic">Scheduled Admin &amp; Backup Verification</span>
+                    </div>
+                    <div class="suggestion-title">svchost.exe spawned backup_verification.ps1 under sysadmin, SMB to file server on WS-ADMIN-05</div>
+                    <div class="suggestion-snippet">Investigate scheduled backup verification script under sysadmin, SMB connections to SRV-FILE-02, audit log writing, and W32Time registry access...</div>
+                  </div>
+                  <div class="suggestion-item-action">
+                    <span class="suggestion-run-pill">
+                      <span>Investigate</span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </span>
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
 

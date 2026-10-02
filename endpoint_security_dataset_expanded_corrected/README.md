@@ -1,27 +1,28 @@
 # Expanded Endpoint Security Dataset
 
-> **Repository-state note (2026-10):** This dataset ships seven attack telemetry databases with evaluator ground truth isolated in the `groundtruth/` subfolder:
+> **Repository-state note (2026-10):** This dataset ships eight forensic telemetry databases with evaluator ground truth isolated in the `groundtruth/` subfolder:
 >
 > | File | Contents |
 > |---|---|
-> | `attack_lateral_movement.db` | **ATK-A** telemetry: credential dumping + lateral movement + service persistence (127 events; hosts `WS-OPS-01`, `SRV-FILE-01`) |
+> | `attack_lateral_movement.db` | **ATK-A** telemetry (credential dumping + lateral movement + service persistence; 127 events; hosts `WS-OPS-01`, `SRV-FILE-01`) and **INC-A** telemetry (incomplete telemetry evaluation; missing parent process & flows) |
 > | `attack_data_exfiltration.db` | **ATK-B** telemetry: data staging + scheduled-task persistence + HTTPS exfiltration + cleanup |
 > | `ransomware_attack_complete_ecs.db` | **ATK-C** telemetry: phishing document delivery, vssadmin shadow copy deletion, LockBit file encryption |
-> | `attack_lotl_fileless.db` | **ATK-D** telemetry: Living-off-the-Land (mshta, powershell, certutil, wmic) and fileless execution |
+> | `attack_lotl_fileless.db` | **ATK-D** telemetry (Living-off-the-Land LOLBins, mshta, PowerShell, certutil, wmic) and **AMB-A** telemetry (ambiguous developer vs. C2 staging evaluation) |
 > | `wazuh_lotl_attack_dataset.db` | **ATK-E** telemetry: Wazuh SIEM/EDR, LotL command execution and SAM registry access |
 > | `suricata_c2_intrusion.db` | **ATK-F** telemetry: Suricata NIDS alerts, CobaltStrike C2 beaconing, internal SMB sweeps, and exfiltration |
 > | `attack_supply_chain.db` | **ATK-G** telemetry: Enterprise supply chain software compromise across 32 endpoints (1,890 events) |
-> | `groundtruth/` | Ground truth JSON files for ATK-A through ATK-G (`expected_verdict: malicious`, `verdict_boundary: confirmed_malicious`, key IOCs, kill chain) |
+> | `benign_admin_activity.db` | **BEN-A** telemetry: Benign administrative backup verification script, SMB connections, audit logs, and W32Time registry queries |
+> | `groundtruth/` | Ground truth JSON files for ATK-A through ATK-G, BEN-A, AMB-A, and INC-A (`expected_verdict`, `verdict_boundary`, key IOCs, kill chain / evidence basis) |
 > | `schema.md` | Field and table semantics for the shipped `.db` telemetry files |
 >
-> The agent queries the telemetry `.db` files directly through safe read-only connections and convenience views, and the benchmark derives evaluation labels from `groundtruth/groundtruth_attack_*.json`.
+> The agent queries the telemetry `.db` files directly through safe read-only connections and convenience views, and the benchmark derives evaluation labels from `groundtruth/groundtruth_*.json`.
 
 Generation ID: `gen-20260920-expanded`
 Seed: `20260920`
 Schema version: `1.0.0`
 Events: `1050` (original bundle; the two shipped attack databases hold a subset)
 
-This expanded synthetic dataset supports agentic investigation across five scenarios. Agent-accessible telemetry is stored in `events.jsonl` and the `agent_events` SQLite view. Ground truth is isolated in `ground_truth.jsonl` and `ground_truth_events`. Case-level evaluation labels are isolated in `case_labels.json` and must remain unavailable to the investigating agent.
+This expanded synthetic dataset supports agentic investigation across diverse scenarios (malicious intrusions, benign administrative tasks, ambiguous developer utility executions, and incomplete telemetry gaps). Agent-accessible telemetry is stored in the shipped `.db` files and queried via safe read-only connections. Ground truth is isolated in the `groundtruth/` subfolder and must remain unavailable to the investigating agent.
 
 All hosts, users, event IDs, process IDs, hashes, IPs, and domains are synthetic. Suspicious patterns are investigation triggers, not automatic malicious classifications. Missing evidence is preserved where applicable.
 

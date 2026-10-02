@@ -8,11 +8,12 @@
 class ForensicGraph {
   constructor(containerEl, options = {}) {
     this.container = containerEl;
-    this.options = Object.assign({
+    this.options = {
       onNodeSelect: null,
       onNodeDeselect: null,
       onExpansionChange: null,
-    }, options);
+      ...options,
+    };
 
     this.nodes = new Map(); // id -> node
     this.edges = [];        // [{ from, to, label, type }]
@@ -110,7 +111,7 @@ class ForensicGraph {
     this.svg.addEventListener("pointerdown", (e) => {
       const nodeEl = e.target.closest(".fg-node");
       if (nodeEl) {
-        const nodeId = nodeEl.getAttribute("data-id");
+        const nodeId = nodeEl.dataset.id;
         const node = this.nodes.get(nodeId);
         if (node) {
           this.draggedNode = node;
@@ -180,6 +181,99 @@ class ForensicGraph {
     );
   }
 
+  _resolveParentProcKey(host, procId, procName) {
+    if (procId) return `${host}_${procId}`;
+    if (procName) return `${host}_${procName.toLowerCase()}`;
+    return null;
+  }
+
+  _buildProcessNode(ev, idx, host, time, procName, procId, parentName, parentId, cmdLine, action, isSuspicious, processMap) {
+    if (!procName && !procId && !action.includes("process")) return;
+    const nodeKey = `proc_${host}_${procId || procName || idx}`;
+    if (!this.nodes.has(nodeKey)) {
+      const procNode = {
+        id: nodeKey,
+        type: "process",
+        name: procName || (action.includes("process") ? "process.exe" : "Process"),
+        pid: procId || "N/A",
+        parentName: parentName,
+        parentId: parentId,
+        cmdLine: cmdLine || ev.summary || "",
+        host: host,
+        timestamp: time,
+        isSuspicious: isSuspicious,
+        action: action || "process_active",
+        raw: ev,
+        childrenCount: 0,
+      };
+      this.nodes.set(nodeKey, procNode);
+      processMap.set(`${host}_${procId}`, procNode);
+      if (procName) processMap.set(`${host}_${procName.toLowerCase()}`, procNode);
+    } else {
+      const existing = this.nodes.get(nodeKey);
+      if (!existing.cmdLine && cmdLine) existing.cmdLine = cmdLine;
+      if (isSuspicious) existing.isSuspicious = true;
+    }
+  }
+
+  _buildEventNode(ev, idx, host, time, action, isSuspicious, procId, procName, str) {
+    const parentProcKey = this._resolveParentProcKey(host, procId, procName);
+
+    if (action.includes("network") || ev.destination_ip || ev.details?.destination_ip) {
+      const dstIp = str(ev.destination_ip || ev.details?.destination_ip || "0.0.0.0");
+      const dstPort = str(ev.destination_port || ev.details?.destination_port || "");
+      return {
+        id: `net_${host}_${dstIp}_${dstPort}_${idx}`,
+        type: "network",
+        name: `${dstIp}${dstPort ? ":" + dstPort : ""}`,
+        ip: dstIp,
+        port: dstPort,
+        direction: str(ev.network_direction || ev.details?.network_direction || "Outbound"),
+        host: host,
+        timestamp: time,
+        isSuspicious: isSuspicious || this._isSuspiciousIp(dstIp),
+        action: action || "network_connection",
+        raw: ev,
+        parentProcKey: parentProcKey,
+      };
+    }
+
+    if (action.includes("file") || ev.file_name || ev.details?.file_name || ev.details?.path) {
+      const fileName = str(ev.file_name || ev.details?.file_name || ev.details?.path || "file");
+      return {
+        id: `file_${host}_${fileName.replace(/[^a-zA-Z0-9_-]/g, "_")}_${idx}`,
+        type: "file",
+        name: fileName.split(/[\\/]/).pop() || fileName,
+        fullPath: fileName,
+        fileAction: action || "file_modified",
+        host: host,
+        timestamp: time,
+        isSuspicious: isSuspicious || fileName.endsWith(".locked") || fileName.includes("dmp"),
+        action: action,
+        raw: ev,
+        parentProcKey: parentProcKey,
+      };
+    }
+
+    if (action.includes("registry") || ev.registry_key || ev.details?.registry_key) {
+      const regKey = str(ev.registry_key || ev.details?.registry_key || String.raw`HKLM\...`);
+      return {
+        id: `reg_${host}_${regKey.replace(/[^a-zA-Z0-9_-]/g, "_")}_${idx}`,
+        type: "registry",
+        name: regKey.split(/[\\/]/).pop() || regKey,
+        fullPath: regKey,
+        host: host,
+        timestamp: time,
+        isSuspicious: isSuspicious || regKey.toLowerCase().includes("run") || regKey.toLowerCase().includes("currentversion"),
+        action: action,
+        raw: ev,
+        parentProcKey: parentProcKey,
+      };
+    }
+
+    return null;
+  }
+
   /**
    * Parse timeline events and populate the DAG.
    */
@@ -201,105 +295,26 @@ class ForensicGraph {
     // Helper to format string safely
     const str = (v) => (v !== null && v !== undefined ? String(v).trim() : "");
 
-    // 1. Process identification pass
+    // 1. Process and non-process event identification pass
     this.rawEvents.forEach((ev, idx) => {
       const action = str(ev.action).toLowerCase();
-      const procName = str(ev.process_name || (ev.details && ev.details.process_name) || (ev.details && ev.details.name));
-      const procId = str(ev.process_entity_id || (ev.details && ev.details.pid) || (ev.details && ev.details.process_id));
-      const parentName = str(ev.parent_process_name || (ev.details && ev.details.parent_name) || (ev.details && ev.details.parent_process_name));
-      const parentId = str(ev.parent_process_entity_id || (ev.details && ev.details.parent_pid) || (ev.details && ev.details.parent_entity_id));
-      const cmdLine = str(ev.command_line || (ev.details && ev.details.command_line));
+      const procName = str(ev.process_name || ev.details?.process_name || ev.details?.name);
+      const procId = str(ev.process_entity_id || ev.details?.pid || ev.details?.process_id);
+      const parentName = str(ev.parent_process_name || ev.details?.parent_name || ev.details?.parent_process_name);
+      const parentId = str(ev.parent_process_entity_id || ev.details?.parent_pid || ev.details?.parent_entity_id);
+      const cmdLine = str(ev.command_line || ev.details?.command_line);
       const host = str(ev.host_id || "Unknown");
       const time = str(ev.timestamp || "");
 
       // Suspicious flag checks
       const isSuspicious = this._isSuspiciousEvent(ev, procName, cmdLine);
 
-      if (procName || procId || action.includes("process")) {
-        const nodeKey = `proc_${host}_${procId || procName || idx}`;
-        if (!this.nodes.has(nodeKey)) {
-          const procNode = {
-            id: nodeKey,
-            type: "process",
-            name: procName || (action.includes("process") ? "process.exe" : "Process"),
-            pid: procId || "N/A",
-            parentName: parentName,
-            parentId: parentId,
-            cmdLine: cmdLine || ev.summary || "",
-            host: host,
-            timestamp: time,
-            isSuspicious: isSuspicious,
-            action: action || "process_active",
-            raw: ev,
-            childrenCount: 0,
-          };
-          this.nodes.set(nodeKey, procNode);
-          processMap.set(`${host}_${procId}`, procNode);
-          if (procName) processMap.set(`${host}_${procName.toLowerCase()}`, procNode);
-        } else {
-          // Merge details
-          const existing = this.nodes.get(nodeKey);
-          if (!existing.cmdLine && cmdLine) existing.cmdLine = cmdLine;
-          if (isSuspicious) existing.isSuspicious = true;
-        }
-      }
+      this._buildProcessNode(ev, idx, host, time, procName, procId, parentName, parentId, cmdLine, action, isSuspicious, processMap);
 
-      // Non-process event nodes (network, file, registry)
-      if (action.includes("network") || ev.destination_ip || (ev.details && ev.details.destination_ip)) {
-        const dstIp = str(ev.destination_ip || (ev.details && ev.details.destination_ip) || "0.0.0.0");
-        const dstPort = str(ev.destination_port || (ev.details && ev.details.destination_port) || "");
-        const netId = `net_${host}_${dstIp}_${dstPort}_${idx}`;
-        const netNode = {
-          id: netId,
-          type: "network",
-          name: `${dstIp}${dstPort ? ":" + dstPort : ""}`,
-          ip: dstIp,
-          port: dstPort,
-          direction: str(ev.network_direction || (ev.details && ev.details.network_direction) || "Outbound"),
-          host: host,
-          timestamp: time,
-          isSuspicious: isSuspicious || this._isSuspiciousIp(dstIp),
-          action: action || "network_connection",
-          raw: ev,
-          parentProcKey: procId ? `${host}_${procId}` : (procName ? `${host}_${procName.toLowerCase()}` : null),
-        };
-        this.nodes.set(netId, netNode);
-        eventNodes.push(netNode);
-      } else if (action.includes("file") || ev.file_name || (ev.details && ev.details.file_name) || (ev.details && ev.details.path)) {
-        const fileName = str(ev.file_name || (ev.details && ev.details.file_name) || (ev.details && ev.details.path) || "file");
-        const fileId = `file_${host}_${fileName.replace(/[^a-zA-Z0-9_-]/g, "_")}_${idx}`;
-        const fileNode = {
-          id: fileId,
-          type: "file",
-          name: fileName.split(/[\\/]/).pop() || fileName,
-          fullPath: fileName,
-          fileAction: action || "file_modified",
-          host: host,
-          timestamp: time,
-          isSuspicious: isSuspicious || fileName.endsWith(".locked") || fileName.includes("dmp"),
-          action: action,
-          raw: ev,
-          parentProcKey: procId ? `${host}_${procId}` : (procName ? `${host}_${procName.toLowerCase()}` : null),
-        };
-        this.nodes.set(fileId, fileNode);
-        eventNodes.push(fileNode);
-      } else if (action.includes("registry") || ev.registry_key || (ev.details && ev.details.registry_key)) {
-        const regKey = str(ev.registry_key || (ev.details && ev.details.registry_key) || "HKLM\\...");
-        const regId = `reg_${host}_${regKey.replace(/[^a-zA-Z0-9_-]/g, "_")}_${idx}`;
-        const regNode = {
-          id: regId,
-          type: "registry",
-          name: regKey.split(/[\\/]/).pop() || regKey,
-          fullPath: regKey,
-          host: host,
-          timestamp: time,
-          isSuspicious: isSuspicious || regKey.toLowerCase().includes("run") || regKey.toLowerCase().includes("currentversion"),
-          action: action,
-          raw: ev,
-          parentProcKey: procId ? `${host}_${procId}` : (procName ? `${host}_${procName.toLowerCase()}` : null),
-        };
-        this.nodes.set(regId, regNode);
-        eventNodes.push(regNode);
+      const evNode = this._buildEventNode(ev, idx, host, time, action, isSuspicious, procId, procName, str);
+      if (evNode) {
+        this.nodes.set(evNode.id, evNode);
+        eventNodes.push(evNode);
       }
     });
 
@@ -478,6 +493,52 @@ class ForensicGraph {
     return visible;
   }
 
+  _buildDagLayers(visibleNodes, incomingCount) {
+    const layers = [];
+    const visited = new Set();
+    const currentLayer = [];
+
+    visibleNodes.forEach((n, id) => {
+      if (incomingCount.get(id) === 0) {
+        currentLayer.push(id);
+        visited.add(id);
+      }
+    });
+
+    if (currentLayer.length === 0 && visibleNodes.size > 0) {
+      const first = Array.from(visibleNodes.keys())[0];
+      currentLayer.push(first);
+      visited.add(first);
+    }
+    layers.push(currentLayer);
+
+    while (visited.size < visibleNodes.size) {
+      const nextLayer = [];
+      for (const currId of layers.at(-1)) {
+        for (const edge of this.edges) {
+          if (edge.from === currId && visibleNodes.has(edge.to) && !visited.has(edge.to)) {
+            nextLayer.push(edge.to);
+            visited.add(edge.to);
+          }
+        }
+      }
+      if (nextLayer.length === 0) {
+        visibleNodes.forEach((n, id) => {
+          if (!visited.has(id)) {
+            nextLayer.push(id);
+            visited.add(id);
+          }
+        });
+      }
+      if (nextLayer.length > 0) {
+        layers.push(nextLayer);
+      } else {
+        break;
+      }
+    }
+    return layers;
+  }
+
   _calculateLayout() {
     // Only layout visible nodes matching current filters & expansion state
     const visibleNodes = new Map();
@@ -498,51 +559,7 @@ class ForensicGraph {
       }
     });
 
-    // Roots have 0 incoming edges among visible nodes
-    const layers = [];
-    const visited = new Set();
-    let currentLayer = [];
-
-    visibleNodes.forEach((n, id) => {
-      if (incomingCount.get(id) === 0) {
-        currentLayer.push(id);
-        visited.add(id);
-      }
-    });
-
-    if (currentLayer.length === 0 && visibleNodes.size > 0) {
-      const first = Array.from(visibleNodes.keys())[0];
-      currentLayer.push(first);
-      visited.add(first);
-    }
-
-    layers.push(currentLayer);
-
-    while (visited.size < visibleNodes.size) {
-      const nextLayer = [];
-      for (const currId of layers[layers.length - 1]) {
-        for (const edge of this.edges) {
-          if (edge.from === currId && visibleNodes.has(edge.to) && !visited.has(edge.to)) {
-            nextLayer.push(edge.to);
-            visited.add(edge.to);
-          }
-        }
-      }
-      if (nextLayer.length === 0) {
-        // Collect unvisited nodes (e.g. disconnected components)
-        visibleNodes.forEach((n, id) => {
-          if (!visited.has(id)) {
-            nextLayer.push(id);
-            visited.add(id);
-          }
-        });
-      }
-      if (nextLayer.length > 0) {
-        layers.push(nextLayer);
-      } else {
-        break;
-      }
-    }
+    const layers = this._buildDagLayers(visibleNodes, incomingCount);
 
     // Assign X, Y coordinates
     const layerSpacingX = 320;
@@ -567,6 +584,8 @@ class ForensicGraph {
   }
 
   _render() {
+    const emptyState = this.viewport.querySelector(".fg-empty-state")?.closest("foreignObject");
+    if (emptyState) emptyState.remove();
     this.edgesLayer.innerHTML = "";
     this.nodesLayer.innerHTML = "";
 
@@ -574,147 +593,147 @@ class ForensicGraph {
     this._renderNodes();
   }
 
+  _getNodeMetaText(node) {
+    if (node.type === "process") return `PID ${node.pid} · ${node.host}`;
+    if (node.type === "network") return `${node.direction} · ${node.host}`;
+    if (node.type === "file") return `${node.fileAction || 'file'} · ${node.host}`;
+    return node.host;
+  }
+
+  _createNodeElement(node) {
+    const isMatch = this._doesNodeMatchSearch(node);
+    const hasChildren = node.children && node.children.length > 0;
+    const isExpanded = this.expandedNodeIds.has(node.id);
+
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.classList.add("fg-node", `fg-type-${node.type}`);
+    g.dataset.id = node.id;
+    g.setAttribute("transform", `translate(${node.x.toFixed(1)}, ${node.y.toFixed(1)})`);
+
+    if (this.searchQuery && !isMatch) g.classList.add("fg-dimmed");
+    if (this.selectedNodeId === node.id) g.classList.add("fg-selected");
+    if (this.highlightedNodeIds?.has(node.id)) g.classList.add("fg-highlighted");
+    if (node.isSuspicious) g.classList.add("fg-threat");
+
+    // Card Background Rect
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("width", node.width);
+    rect.setAttribute("height", node.height);
+    rect.setAttribute("rx", "10");
+    rect.setAttribute("ry", "10");
+    rect.classList.add("fg-node-card");
+    g.appendChild(rect);
+
+    // Icon & Type Indicator
+    const iconGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    iconGroup.classList.add("fg-node-icon");
+    iconGroup.setAttribute("transform", "translate(12, 16)");
+    iconGroup.innerHTML = this._getNodeIconSvg(node.type);
+    g.appendChild(iconGroup);
+
+    // Title Text
+    const textTitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    textTitle.setAttribute("x", "40");
+    textTitle.setAttribute("y", "26");
+    textTitle.classList.add("fg-node-title");
+    textTitle.textContent = this._truncate(node.name, node.type === "process" ? 17 : 15);
+    g.appendChild(textTitle);
+
+    // Subtitle / Meta Text
+    const textMeta = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    textMeta.setAttribute("x", "40");
+    textMeta.setAttribute("y", "44");
+    textMeta.classList.add("fg-node-meta");
+    textMeta.textContent = this._getNodeMetaText(node);
+    g.appendChild(textMeta);
+
+    // Threat / Alert Badge if suspicious
+    if (node.isSuspicious) {
+      const threatBadge = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      threatBadge.setAttribute("transform", `translate(${node.width - 24}, 8)`);
+      threatBadge.innerHTML = `
+        <circle cx="8" cy="8" r="8" fill="#f43f5e" />
+        <path d="M 8 4 L 8 9 M 8 11 L 8 12" stroke="#fff" stroke-width="1.8" stroke-linecap="round" />
+      `;
+      threatBadge.classList.add("fg-threat-badge");
+      g.appendChild(threatBadge);
+    }
+
+    // Interactive Expand/Collapse Badge if node has connected children
+    if (hasChildren) {
+      const childCount = node.children.length;
+      const expandBadge = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      expandBadge.classList.add("fg-expand-badge");
+      if (isExpanded) expandBadge.classList.add("is-expanded");
+      
+      expandBadge.setAttribute("transform", `translate(${node.width}, ${node.height / 2})`);
+      expandBadge.setAttribute("role", "button");
+      expandBadge.setAttribute("tabindex", "0");
+
+      const bTitle = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      bTitle.textContent = isExpanded
+        ? `Click to collapse ${childCount} connected entities`
+        : `Click to expand ${childCount} connected entities`;
+      expandBadge.appendChild(bTitle);
+
+      const bCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      bCircle.setAttribute("cx", "0");
+      bCircle.setAttribute("cy", "0");
+      bCircle.setAttribute("r", "10");
+      bCircle.classList.add("fg-expand-badge-bg");
+      expandBadge.appendChild(bCircle);
+
+      const bText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      bText.setAttribute("x", "0");
+      bText.setAttribute("y", isExpanded ? "3" : "3.5");
+      bText.setAttribute("text-anchor", "middle");
+      bText.classList.add("fg-expand-badge-text");
+      bText.textContent = isExpanded ? "−" : `+${childCount}`;
+      expandBadge.appendChild(bText);
+
+      expandBadge.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.toggleNodeExpansion(node.id);
+      });
+
+      g.appendChild(expandBadge);
+    }
+
+    g.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.selectNode(node.id);
+      if (hasChildren && !this.expandedNodeIds.has(node.id)) {
+        this.toggleNodeExpansion(node.id, true);
+      }
+    });
+
+    g.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      if (hasChildren) {
+        this.toggleNodeExpansion(node.id);
+      }
+    });
+
+    g.addEventListener("pointerenter", () => {
+      this._highlightConnected(node.id);
+    });
+
+    g.addEventListener("pointerleave", () => {
+      if (!this.selectedNodeId) {
+        this._clearHighlights();
+      } else {
+        this._highlightConnected(this.selectedNodeId);
+      }
+    });
+
+    return g;
+  }
+
   _renderNodes() {
     this.nodes.forEach((node) => {
       if (!this._isNodeVisible(node)) return;
-
-      const isMatch = this._doesNodeMatchSearch(node);
-      const hasChildren = node.children && node.children.length > 0;
-      const isExpanded = this.expandedNodeIds.has(node.id);
-
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.classList.add("fg-node", `fg-type-${node.type}`);
-      g.setAttribute("data-id", node.id);
-      g.setAttribute("transform", `translate(${node.x.toFixed(1)}, ${node.y.toFixed(1)})`);
-
-      if (this.searchQuery && !isMatch) g.classList.add("fg-dimmed");
-      if (this.selectedNodeId === node.id) g.classList.add("fg-selected");
-      if (this.highlightedNodeIds && this.highlightedNodeIds.has(node.id)) g.classList.add("fg-highlighted");
-      if (node.isSuspicious) g.classList.add("fg-threat");
-
-      // Card Background Rect
-      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("width", node.width);
-      rect.setAttribute("height", node.height);
-      rect.setAttribute("rx", "10");
-      rect.setAttribute("ry", "10");
-      rect.classList.add("fg-node-card");
-      g.appendChild(rect);
-
-      // Icon & Type Indicator
-      const iconGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      iconGroup.classList.add("fg-node-icon");
-      iconGroup.setAttribute("transform", "translate(12, 16)");
-      iconGroup.innerHTML = this._getNodeIconSvg(node.type);
-      g.appendChild(iconGroup);
-
-      // Title Text
-      const textTitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      textTitle.setAttribute("x", "40");
-      textTitle.setAttribute("y", "26");
-      textTitle.classList.add("fg-node-title");
-      textTitle.textContent = this._truncate(node.name, node.type === "process" ? 17 : 15);
-      g.appendChild(textTitle);
-
-      // Subtitle / Meta Text
-      const textMeta = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      textMeta.setAttribute("x", "40");
-      textMeta.setAttribute("y", "44");
-      textMeta.classList.add("fg-node-meta");
-      if (node.type === "process") {
-        textMeta.textContent = `PID ${node.pid} · ${node.host}`;
-      } else if (node.type === "network") {
-        textMeta.textContent = `${node.direction} · ${node.host}`;
-      } else if (node.type === "file") {
-        textMeta.textContent = `${node.fileAction || 'file'} · ${node.host}`;
-      } else {
-        textMeta.textContent = node.host;
-      }
-      g.appendChild(textMeta);
-
-      // Threat / Alert Badge if suspicious
-      if (node.isSuspicious) {
-        const threatBadge = document.createElementNS("http://www.w3.org/2000/svg", "g");
-        threatBadge.setAttribute("transform", `translate(${node.width - 24}, 8)`);
-        threatBadge.innerHTML = `
-          <circle cx="8" cy="8" r="8" fill="#f43f5e" />
-          <path d="M 8 4 L 8 9 M 8 11 L 8 12" stroke="#fff" stroke-width="1.8" stroke-linecap="round" />
-        `;
-        threatBadge.classList.add("fg-threat-badge");
-        g.appendChild(threatBadge);
-      }
-
-      // Interactive Expand/Collapse Badge if node has connected children
-      if (hasChildren) {
-        const childCount = node.children.length;
-        const expandBadge = document.createElementNS("http://www.w3.org/2000/svg", "g");
-        expandBadge.classList.add("fg-expand-badge");
-        if (isExpanded) expandBadge.classList.add("is-expanded");
-        
-        // Position badge on the right edge of node card
-        expandBadge.setAttribute("transform", `translate(${node.width}, ${node.height / 2})`);
-        expandBadge.setAttribute("role", "button");
-        expandBadge.setAttribute("tabindex", "0");
-
-        const bTitle = document.createElementNS("http://www.w3.org/2000/svg", "title");
-        bTitle.textContent = isExpanded
-          ? `Click to collapse ${childCount} connected entities`
-          : `Click to expand ${childCount} connected entities`;
-        expandBadge.appendChild(bTitle);
-
-        const bCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        bCircle.setAttribute("cx", "0");
-        bCircle.setAttribute("cy", "0");
-        bCircle.setAttribute("r", "10");
-        bCircle.classList.add("fg-expand-badge-bg");
-        expandBadge.appendChild(bCircle);
-
-        const bText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        bText.setAttribute("x", "0");
-        bText.setAttribute("y", isExpanded ? "3" : "3.5");
-        bText.setAttribute("text-anchor", "middle");
-        bText.classList.add("fg-expand-badge-text");
-        bText.textContent = isExpanded ? "−" : `+${childCount}`;
-        expandBadge.appendChild(bText);
-
-        expandBadge.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.toggleNodeExpansion(node.id);
-        });
-
-        g.appendChild(expandBadge);
-      }
-
-      // Event listener: pressing node selects it AND expands connected nodes if collapsed
-      g.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.selectNode(node.id);
-        if (hasChildren && !this.expandedNodeIds.has(node.id)) {
-          this.toggleNodeExpansion(node.id, true);
-        }
-      });
-
-      // Double clicking toggles expansion
-      g.addEventListener("dblclick", (e) => {
-        e.stopPropagation();
-        if (hasChildren) {
-          this.toggleNodeExpansion(node.id);
-        }
-      });
-
-      g.addEventListener("pointerenter", () => {
-        this._highlightConnected(node.id);
-      });
-
-      g.addEventListener("pointerleave", () => {
-        if (!this.selectedNodeId) {
-          this._clearHighlights();
-        } else {
-          this._highlightConnected(this.selectedNodeId);
-        }
-      });
-
-      this.nodesLayer.appendChild(g);
+      const el = this._createNodeElement(node);
+      this.nodesLayer.appendChild(el);
     });
   }
 
@@ -845,7 +864,7 @@ class ForensicGraph {
   _applyHighlightClasses() {
     const allNodeEls = this.nodesLayer.querySelectorAll(".fg-node");
     allNodeEls.forEach(el => {
-      const id = el.getAttribute("data-id");
+      const id = el.dataset.id;
       if (this.highlightedNodeIds) {
         if (this.highlightedNodeIds.has(id)) {
           el.classList.add("fg-highlighted");
@@ -868,7 +887,7 @@ class ForensicGraph {
 
     // Toggle selected class
     this.nodesLayer.querySelectorAll(".fg-node").forEach(el => {
-      const id = el.getAttribute("data-id");
+      const id = el.dataset.id;
       if (id === nodeId) {
         el.classList.add("fg-selected");
       } else {
@@ -919,7 +938,7 @@ class ForensicGraph {
 
   toggleNodeExpansion(nodeId, forceExpand = null) {
     const node = this.nodes.get(nodeId);
-    if (!node || !node.children || node.children.length === 0) return;
+    if (!node?.children?.length) return;
 
     const currentlyExpanded = this.expandedNodeIds.has(nodeId);
     const shouldExpand = forceExpand !== null ? forceExpand : !currentlyExpanded;
@@ -1000,7 +1019,7 @@ class ForensicGraph {
       }
     });
 
-    if (!isFinite(minX)) return;
+    if (!Number.isFinite(minX)) return;
 
     const rect = this.svg.getBoundingClientRect();
     const padding = 80;
@@ -1031,16 +1050,8 @@ class ForensicGraph {
   _renderEmpty() {
     this.edgesLayer.innerHTML = "";
     this.nodesLayer.innerHTML = "";
-    const foreign = document.createElementNS("http://www.w3.org/2000/svg", "foreignObject");
-    foreign.setAttribute("width", "100%");
-    foreign.setAttribute("height", "100%");
-    foreign.innerHTML = `
-      <div class="fg-empty-state">
-        <div class="fg-empty-title">Forensic Attack Graph Ready</div>
-        <div class="fg-empty-desc">Run an investigation query or click a sample scenario to visually trace process trees, C2 connections, file drops, and lateral movement.</div>
-      </div>
-    `;
-    this.viewport.appendChild(foreign);
+    const emptyState = this.viewport.querySelector(".fg-empty-state")?.closest("foreignObject");
+    if (emptyState) emptyState.remove();
   }
 
   _getNodeIconSvg(type) {

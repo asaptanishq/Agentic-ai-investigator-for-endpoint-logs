@@ -45,7 +45,7 @@ CORE INVESTIGATION PLAYBOOK BY ALERT TYPE:
    - TARGET HOST FIRST: Network logons (type 3) are logged on the TARGET host receiving the connection (e.g. SRV-FILE-01 / host-a02).
      * Query `search_timeline(host_id=target_host, category='authentication')` (or `user_id=...`) to verify failed logons (4625) and successful logon (4624).
      * Inspect post-logon activity across a broad window (at least ±2 hours around the logon): Query `search_timeline(host_id=target_host, category='process,registry,file')`.
-     * Search directly for persistence and service creation using keyword search: `search_timeline(host_id=target_host, keyword='sc.exe')`, `keyword='UpdaterSvc'`, or `keyword='service'`. Look for registry service ImagePath changes, dropped binaries in `C:\Windows\Temp\`, or processes running as SYSTEM.
+     * Search directly for persistence and service creation using keyword search: `search_timeline(host_id=target_host, keyword='sc.exe')`, `keyword='service'`, or `keyword='persistence'`. Look for registry service ImagePath changes, dropped binaries in `C:\Windows\Temp\`, or processes running as SYSTEM.
    - SOURCE HOST LOOKBACK: Adversaries dump credentials on the source host prior to lateral movement.
      * Query `search_timeline(host_id=source_host, category='network')` to see what process initiated the outbound connection (e.g. `powershell.exe`).
      * Look back broadly (at least ±2 hours around the alert): Query `search_timeline(host_id=source_host, category='process,file')` or use keyword search `search_timeline(host_id=source_host, keyword='procdump')`, `keyword='lsass'`, or `keyword='dmp'` to check if PowerShell spawned `procdump.exe`, accessed `lsass.exe` (Event 10), or dumped credentials (`lsass.dmp`).

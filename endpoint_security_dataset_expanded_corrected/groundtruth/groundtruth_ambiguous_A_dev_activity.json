@@ -1,0 +1,23 @@
+{
+  "dataset": "attack_lotl_fileless.db",
+  "scenario": "Ambiguous developer LOLBin utility usage with mixed signals",
+  "summary": "On WS-EXEC-02, command-line utilities including certutil.exe and PowerShell were invoked by a developer account during standard working hours. While certutil was used to verify remote files and PowerShell executed discovery scripts, dual-use behavior is present without confirmed data staging or established persistence. Evidence presents mixed signals that cannot be definitively classified as malicious without corroborating C2 egress or privilege escalation.",
+  "kill_chain": [
+    "Discovery utilities executed on workstation",
+    "Certutil invoked to retrieve remote certificate/payload",
+    "PowerShell executed with encoding flags",
+    "No confirmed data exfiltration or credential theft observed"
+  ],
+  "key_iocs": [
+    "certutil.exe",
+    "powershell.exe -enc"
+  ],
+  "expected_verdict": "suspicious",
+  "verdict_boundary": "unconfirmed_suspicious",
+  "evidence_basis": [
+    "dual-use utility execution without established persistence",
+    "lack of conclusive malicious payload analysis",
+    "mixed administrative vs potentially unauthorized commands"
+  ],
+  "notes": "Scenario stub: tests whether the model can output 'suspicious' rather than jumping to malicious certainty when evidence is dual-use."
+}

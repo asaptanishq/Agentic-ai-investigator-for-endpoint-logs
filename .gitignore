@@ -13,6 +13,6 @@ wheels/
 # Graphify & local agent artifacts (not tracked in git)
 graphify-out/
 .agents/
-
+.vscode
 # Scratch & local developer debug scripts
 scratch/

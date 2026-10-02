@@ -39,4 +39,12 @@ class InvestigationState(TypedDict):
     input_reflection_status: Optional[Dict[str, Any]]
     # Accumulated investigation working memory persisting extracted entities across iterations
     investigation_memory: Optional[Dict[str, Any]]
+    # Structured evidence graph and hypothesis tracking (Issues #2, #4, #9)
+    evidence_graph: Optional[Dict[str, Any]]
+    hypothesis_tracker: Optional[Dict[str, Any]]
+    investigation_timeline: Optional[List[dict]]
+    investigation_trace: Optional[List[dict]]
+    validation_results: Optional[Dict[str, Any]]
+    structured_rationale: Optional[List[dict]]
+    quality_metrics: Optional[Dict[str, Any]]
 

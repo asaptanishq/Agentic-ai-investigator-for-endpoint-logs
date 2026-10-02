@@ -67,6 +67,38 @@ def correlation_node(state):
     evidence_pack = state.get("evidence_pack") or {}
     evidence_pack_str = json.dumps(evidence_pack, indent=2) if evidence_pack else "(Structured evidence pack unavailable)"
 
+    # Deterministic Evidence Graph correlations (Issue #8)
+    deterministic_correlations: List[str] = []
+    eg_data = state.get("evidence_graph")
+    if eg_data:
+        try:
+            from a1.evidence_graph import EvidenceGraph
+            graph = EvidenceGraph.from_dict(eg_data)
+            for edge in graph.edges:
+                rel_str = f"Deterministic link: {edge.source_id} -> {edge.relationship.value if hasattr(edge.relationship, 'value') else edge.relationship} -> {edge.target_id}"
+                if edge.source_event_id:
+                    rel_str += f" (event: {edge.source_event_id})"
+                if edge.timestamp:
+                    rel_str += f" at {edge.timestamp}"
+                deterministic_correlations.append(rel_str)
+        except Exception:
+            pass
+
+    # Deterministic Baseline Context checks (Issue #10)
+    baseline_notes: List[str] = []
+    try:
+        from a1.baseline_context import assess_activity_context
+        for ev in (state.get("evidence") or []):
+            if isinstance(ev, dict):
+                ctx = assess_activity_context(ev)
+                if ctx.get("is_anomaly"):
+                    baseline_notes.extend(ctx.get("context_notes", []))
+    except Exception:
+        pass
+
+    det_corr_str = "\n".join(f"- {c}" for c in deterministic_correlations) if deterministic_correlations else "- (No deterministic graph edges extracted)"
+    baseline_str = "\n".join(f"- {n}" for n in set(baseline_notes)) if baseline_notes else "- (No baseline anomalies triggered)"
+
     # Secondary Context: Raw message trail (last 20 messages to keep context concise)
     recent_messages = state["messages"][-20:]
     trail_parts = []
@@ -94,6 +126,8 @@ def correlation_node(state):
         response, retry_used = invoke_structured_with_retry(structured_llm, [
             SystemMessage(content=CORRELATION_SYSTEM_PROMPT),
             HumanMessage(content=(
+                f"=== DETERMINISTIC EVIDENCE GRAPH RELATIONSHIPS ===\n{det_corr_str}\n\n"
+                f"=== BASELINE CONTEXT & ANOMALY FINDINGS ===\n{baseline_str}\n\n"
                 f"=== PRIMARY INPUT: STRUCTURED EVIDENCE PACK ===\n{evidence_pack_str}\n\n"
                 f"=== TRIAGE HYPOTHESES TO ADJUDICATE (confirmed / refuted / unresolved) ===\n{hypos_str}\n\n"
                 f"=== SECONDARY CONTEXT: INVESTIGATION TRAIL ===\n{trail}\n\n"

@@ -1,7 +1,7 @@
 import json
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel, Field, field_validator
-from typing import List
+from typing import List, Optional
 
 from a1.llm import get_llm
 from a1.prompts import TRIAGE_SYSTEM_PROMPT
@@ -54,26 +54,79 @@ class TriagePlan(BaseModel):
         return value or ""
 
 
+def _build_triage_prompt(enriched_alert: Optional[dict], alert_context: str) -> str:
+    if enriched_alert:
+        enriched_json = json.dumps(enriched_alert, indent=2)
+        return (
+            "Analyze this security alert using the pre-extracted and resolved input-reflection struct:\n\n"
+            f"=== ENRICHED ALERT STRUCT ===\n{enriched_json}\n\n"
+            "Create a triage plan with 2-4 concrete testable hypotheses (covering both malicious and benign explanations), "
+            "initial entities to target (using the canonical resolved host IDs and process/file artifacts), and a concise step-by-step investigation plan."
+        )
+    return f"Analyze this security alert and create a triage plan:\n\n{alert_context}"
+
+
+def _format_triage_plan(response: TriagePlan, default_hypotheses: list, enriched_alert: Optional[dict]):
+    hypotheses = response.hypotheses or default_hypotheses
+    entities = response.initial_entities
+    if not entities and enriched_alert and enriched_alert.get("entities", {}).get("host_ids"):
+        entities = enriched_alert["entities"]["host_ids"]
+    plan_text = (
+        f"Triage complete.\nHypotheses: {'; '.join(hypotheses)}\n"
+        f"Initial entities: {', '.join(entities)}\n"
+        f"Plan: {response.investigation_plan}"
+    )
+    return plan_text, hypotheses
+
+
+DEFAULT_HYPOTHESIS = "Investigate suspicious endpoint activity"
+
+
+def _extract_fallback_hypotheses(err_text: str, enriched_alert: Optional[dict]) -> list:
+    extracted_hypos = []
+    for line in err_text.splitlines():
+        line_s = line.strip()
+        if line_s.lower().startswith(("h1:", "h2:", "h3:", "h4:", "hypothesis 1:", "hypothesis 2:")) or (
+            "hypothesis" in line_s.lower() and len(line_s) > 15
+        ):
+            extracted_hypos.append(line_s.lstrip("-*•0123456789. :").strip())
+    if extracted_hypos:
+        return extracted_hypos
+    if enriched_alert and enriched_alert.get("entities", {}).get("host_ids"):
+        hosts = ", ".join(enriched_alert["entities"]["host_ids"])
+        return [
+            f"Evaluate suspicious process execution and persistence on {hosts}",
+            f"Assess benign administrative or software maintenance activity on {hosts}",
+        ]
+    return [DEFAULT_HYPOTHESIS]
+
+
+def _recover_or_fallback_triage(e: Exception, enriched_alert: Optional[dict]):
+    print(f"[!] Triage structured-output failed ({type(e).__name__}: {e}); attempting recovery or fallback.")
+    err_text = "\n".join(str(error) for error in (e, e.__cause__) if error)
+    data = extract_outer_json(err_text)
+    if data and isinstance(data, dict):
+        try:
+            parsed = TriagePlan(**data)
+            hypos = parsed.hypotheses or [DEFAULT_HYPOTHESIS]
+            plan_text = f"Triage complete (recovered).\nHypotheses: {'; '.join(hypos)}\nPlan: {parsed.investigation_plan}"
+            return plan_text, hypos, False
+        except Exception:
+            pass
+
+    hypos = _extract_fallback_hypotheses(err_text, enriched_alert)
+    plan_text = f"Triage plan: {'; '.join(hypos)}"
+    return plan_text, hypos, True
+
+
 def triage_node(state):
     llm = get_llm()
     structured_llm = llm.with_structured_output(TriagePlan)
 
     alert_context = state.get("alert_context", "")
     enriched_alert = state.get("enriched_alert")
-    hypotheses = ["Investigate suspicious endpoint activity"]
-    retry_used = False
-    fallback_used = False
-
-    if enriched_alert:
-        enriched_json = json.dumps(enriched_alert, indent=2)
-        content_prompt = (
-            f"Analyze this security alert using the pre-extracted and resolved input-reflection struct:\n\n"
-            f"=== ENRICHED ALERT STRUCT ===\n{enriched_json}\n\n"
-            f"Create a triage plan with 2-4 concrete testable hypotheses (covering both malicious and benign explanations), "
-            f"initial entities to target (using the canonical resolved host IDs and process/file artifacts), and a concise step-by-step investigation plan."
-        )
-    else:
-        content_prompt = f"Analyze this security alert and create a triage plan:\n\n{alert_context}"
+    default_hypotheses = [DEFAULT_HYPOTHESIS]
+    content_prompt = _build_triage_prompt(enriched_alert, alert_context)
 
     try:
         print("[TRIAGE] Requesting structured triage plan from the LLM...", flush=True)
@@ -81,56 +134,10 @@ def triage_node(state):
             SystemMessage(content=TRIAGE_SYSTEM_PROMPT),
             HumanMessage(content=content_prompt)
         ], "triage plan")
-
-        hypotheses = response.hypotheses or hypotheses
-        entities = response.initial_entities
-        if not entities and enriched_alert and enriched_alert.get("entities", {}).get("host_ids"):
-            entities = enriched_alert["entities"]["host_ids"]
-        plan_text = (
-            f"Triage complete.\nHypotheses: {'; '.join(hypotheses)}\n"
-            f"Initial entities: {', '.join(entities)}\n"
-            f"Plan: {response.investigation_plan}"
-        )
+        plan_text, hypotheses = _format_triage_plan(response, default_hypotheses, enriched_alert)
+        fallback_used = False
     except Exception as e:
-        print(f"[!] Triage structured-output failed ({type(e).__name__}: {e}); attempting recovery or fallback.")
-        err_text = "\n".join(str(error) for error in (e, e.__cause__) if error)
-        recovered = False
-
-        data = extract_outer_json(err_text)
-        if data and isinstance(data, dict):
-            try:
-                parsed = TriagePlan(**data)
-                if parsed.hypotheses:
-                    hypotheses = parsed.hypotheses
-                entities = parsed.initial_entities
-                if not entities and enriched_alert and enriched_alert.get("entities", {}).get("host_ids"):
-                    entities = enriched_alert["entities"]["host_ids"]
-                plan_text = f"Triage complete (recovered).\nHypotheses: {'; '.join(hypotheses)}\nPlan: {parsed.investigation_plan}"
-                recovered = True
-                fallback_used = False
-            except Exception:
-                pass
-
-        if not recovered:
-            extracted_hypos = []
-            for line in err_text.splitlines():
-                line_s = line.strip()
-                if line_s.lower().startswith(("h1:", "h2:", "h3:", "h4:", "hypothesis 1:", "hypothesis 2:")) or (
-                    "hypothesis" in line_s.lower() and len(line_s) > 15
-                ):
-                    extracted_hypos.append(line_s.lstrip("-*•0123456789. :").strip())
-            if extracted_hypos:
-                hypotheses = extracted_hypos
-            elif enriched_alert and enriched_alert.get("entities", {}).get("host_ids"):
-                hosts = ", ".join(enriched_alert["entities"]["host_ids"])
-                hypotheses = [
-                    f"Evaluate suspicious process execution and persistence on {hosts}",
-                    f"Assess benign administrative or software maintenance activity on {hosts}",
-                ]
-            entities = enriched_alert.get("entities", {}).get("host_ids", []) if enriched_alert else []
-            fallback_used = True
-            plan_text = f"Triage plan: {'; '.join(hypotheses)}"
-
+        plan_text, hypotheses, fallback_used = _recover_or_fallback_triage(e, enriched_alert)
         retry_used = isinstance(e, StructuredOutputRetryError)
 
     return {

@@ -1,0 +1,20 @@
+{
+  "dataset": "attack_lateral_movement.db",
+  "scenario": "Incomplete telemetry with missing parent process and truncated logs",
+  "summary": "An alert was raised for potential lateral movement on SRV-FILE-01. However, the telemetry on the host lacks process creation events for the executing parent, contains no network capture for inbound ports other than standard SMB, and authentication logs show ambiguous timestamp gaps. The investigator is expected to identify that key telemetry is missing (missing parent process, absent process tree, unrecorded network sessions) and render an inconclusive verdict rather than fabricating certainty.",
+  "kill_chain": [
+    "Alert received for unverified execution on SRV-FILE-01",
+    "Telemetry inspection reveals missing parent process record",
+    "Missing network connection detail for source session",
+    "Insufficient evidence to prove or disprove malicious compromise"
+  ],
+  "key_iocs": [],
+  "expected_verdict": "inconclusive",
+  "verdict_boundary": "telemetry_gap_inconclusive",
+  "evidence_basis": [
+    "missing parent process entity",
+    "absent endpoint network visibility",
+    "insufficient telemetry coverage to determine intent"
+  ],
+  "notes": "Scenario stub: tests whether the model correctly identifies missing telemetry and outputs 'inconclusive' instead of hallucinating facts."
+}

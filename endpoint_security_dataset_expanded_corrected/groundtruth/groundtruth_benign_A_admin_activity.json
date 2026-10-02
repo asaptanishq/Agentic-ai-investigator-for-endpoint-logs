@@ -1,0 +1,24 @@
+{
+  "dataset": "benign_admin_activity.db",
+  "scenario": "Scheduled administrative backup verification script",
+  "summary": "On 2026-09-15, scheduled task svchost.exe on WS-ADMIN-05 executed PowerShell to run C:\\Scripts\\backup_verification.ps1 under CORP\\sysadmin. The script verified catalog configuration via SMB TCP/445 connection to SRV-FILE-02 using legitimate Kerberos authentication, updated the routine backup log C:\\Logs\\backup_audit_20260915.log, and terminated cleanly with code 0. No malicious persistence, credential theft, or unauthorized access occurred.",
+  "kill_chain": [
+    "14:00 svchost.exe spawned powershell.exe with backup_verification.ps1 on WS-ADMIN-05",
+    "14:00 powershell.exe read legitimate script file C:\\Scripts\\backup_verification.ps1",
+    "14:01 SMB (445/tcp) connection from WS-ADMIN-05 to SRV-FILE-02 for backup catalog verification",
+    "14:01 successful Kerberos network logon (logon type 3) on SRV-FILE-02 for backup_svc",
+    "14:05 routine backup log entry created at C:\\Logs\\backup_audit_20260915.log",
+    "14:06 registry read for NTP configuration under W32Time",
+    "14:07 powershell.exe process terminated normally with exit code 0"
+  ],
+  "key_iocs": [],
+  "expected_verdict": "benign",
+  "verdict_boundary": "confirmed_benign",
+  "evidence_basis": [
+    "scheduled administrative script execution",
+    "legitimate domain account credentials with Kerberos auth",
+    "absence of code injection or credential access",
+    "clean exit without persistence"
+  ],
+  "notes": "Legitimate system administration session. No malicious activity present."
+}
