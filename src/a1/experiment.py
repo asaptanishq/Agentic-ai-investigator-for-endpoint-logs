@@ -27,6 +27,66 @@ class ExperimentRunner:
         self.output_dir = output_dir or Path("docs/experiments")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _simulate_mock_case_state(case_info: Dict[str, Any], config: ExperimentConfig) -> Dict[str, Any]:
+        """Synthesize simulated state for offline or ablation testing."""
+        expected_verdict = case_info.get("case_label", "malicious")
+        expected_boundary = case_info.get("verdict_boundary", "confirmed_malicious")
+
+        hallucinated = 0 if config.enable_validator else 2
+        evidence_items = case_info.get("evidence_basis", [])
+        recall_factor = 1.0 if config.enable_evidence_graph else 0.7
+        matched = int(len(evidence_items) * recall_factor)
+        matched_text = " ".join(evidence_items[:matched])
+
+        return {
+            "verdict": expected_verdict,
+            "verdict_boundary": expected_boundary,
+            "report_fallback_used": False,
+            "iteration_count": 4 if config.enable_adaptive_planner else 7,
+            "repeat_nudges": 0 if config.enable_adaptive_planner else 1,
+            "messages": [
+                {
+                    "content": (
+                        f"## Verdict\n{expected_verdict}\n\n## Evidence\n{matched_text}\n"
+                        + ("evt-exp-001 proc-exp-001 " if not hallucinated else "evt-fake-999 ")
+                    )
+                }
+            ],
+            "investigation_memory": {},
+        }
+
+    @staticmethod
+    def _run_live_case_state(cid: str, case_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the live LangGraph investigation pipeline on real case telemetry."""
+        from a1.benchmark import BENCHMARK_CASES, activate_case_database
+        from a1.graph import create_investigation_graph
+
+        db_name = BENCHMARK_CASES.get(cid, {}).get("database")
+        if db_name:
+            activate_case_database(db_name)
+
+        app = create_investigation_graph()
+        initial_state = {
+            "messages": [],
+            "hypotheses": [],
+            "iteration_count": 0,
+            "alert_context": case_info.get("prompt", ""),
+        }
+        final_state = initial_state
+        try:
+            for event in app.stream(initial_state, stream_mode="values"):
+                final_state = event
+        except Exception as exc:
+            logger.exception("Live investigation failed for case %s", cid)
+            final_state = {
+                "verdict": "unknown",
+                "verdict_boundary": "unknown",
+                "report_fallback_used": True,
+                "messages": [{"content": f"Live investigation error: {exc}"}],
+            }
+        return final_state
+
     def evaluate_configuration(
         self,
         config: ExperimentConfig,
@@ -44,37 +104,12 @@ class ExperimentRunner:
             if cid not in case_labels:
                 continue
             case_info = case_labels[cid]
-
-            # In mock mode or offline testing, synthesize state reflecting the configuration
             if mock_mode:
-                expected_verdict = case_info.get("case_label", "malicious")
-                expected_boundary = case_info.get("verdict_boundary", "confirmed_malicious")
-
-                # If validator is disabled, simulate higher hallucination rate
-                hallucinated = 0 if config.enable_validator else 2
-                # If evidence graph is enabled, higher recall
-                evidence_items = case_info.get("evidence_basis", [])
-                recall_factor = 1.0 if config.enable_evidence_graph else 0.7
-                matched = int(len(evidence_items) * recall_factor)
-                matched_text = " ".join(evidence_items[:matched])
-
-                simulated_state = {
-                    "verdict": expected_verdict,
-                    "verdict_boundary": expected_boundary,
-                    "report_fallback_used": False,
-                    "iteration_count": 4 if config.enable_adaptive_planner else 7,
-                    "repeat_nudges": 0 if config.enable_adaptive_planner else 1,
-                    "messages": [
-                        {"content": f"## Verdict\n{expected_verdict}\n\n## Evidence\n{matched_text}\n" +
-                                   ("evt-exp-001 proc-exp-001 " if not hallucinated else "evt-fake-999 ")}
-                    ],
-                    "investigation_memory": {},
-                }
-                rubric = evaluate_case_rubric(case_info, simulated_state)
+                state = self._simulate_mock_case_state(case_info, config)
             else:
-                # When running with live graph and LLM
-                rubric = {"composite_score": 85.0, "verdict_score": 20.0, "grade": "A"}
+                state = self._run_live_case_state(cid, case_info)
 
+            rubric = evaluate_case_rubric(case_info, state)
             results.append({
                 "case_id": cid,
                 "expected": case_info.get("case_label"),

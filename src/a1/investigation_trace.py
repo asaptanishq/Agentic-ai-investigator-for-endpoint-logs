@@ -90,9 +90,6 @@ class InvestigationTrace:
 
     def replay(self) -> Dict[str, Any]:
         """Deterministically replay the trace without invoking the LLM."""
-        from a1.evidence_graph import EvidenceGraph
-
-        replay_graph = EvidenceGraph()
         timeline_reconstructed = []
 
         for step in self.steps:

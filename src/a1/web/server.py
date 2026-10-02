@@ -6,7 +6,7 @@ import re
 import threading
 import urllib.request
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
@@ -334,27 +334,32 @@ def _emit_tool_message(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, ms
     )
 
 
-def _emit_final_report_complete(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, final_state: dict) -> None:
+def _extract_report_content(final_state: dict) -> str:
     report_content = final_state.get("report") or ""
-    if not report_content:
-        for m in reversed(final_state.get("messages", [])):
-            if getattr(m, "type", "") == "human":
-                c = getattr(m, "content", "")
-                if "DFIR Incident Investigation Report" in c or "## Verdict:" in c:
-                    report_content = c
-                    break
-        if not report_content:
-            report_msgs = [m for m in final_state.get("messages", []) if getattr(m, "type", "") == "human"]
-            if report_msgs:
-                report_content = getattr(report_msgs[-1], "content", "")
+    if report_content:
+        return report_content
+    for m in reversed(final_state.get("messages", [])):
+        if getattr(m, "type", "") == "human":
+            c = getattr(m, "content", "")
+            if "DFIR Incident Investigation Report" in c or "## Verdict:" in c:
+                return c
+    report_msgs = [m for m in final_state.get("messages", []) if getattr(m, "type", "") == "human"]
+    return getattr(report_msgs[-1], "content", "") if report_msgs else ""
 
+
+def _normalize_confidence_score(raw_conf: Any) -> float:
     try:
-        conf_val = float(final_state.get("confidence", 0.85))
+        conf_val = float(raw_conf)
         if conf_val > 1.0:
             conf_val /= 100.0
     except Exception:
         conf_val = 0.85
-    conf_val = max(0.05, min(1.0, conf_val))
+    return max(0.05, min(1.0, conf_val))
+
+
+def _emit_final_report_complete(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, final_state: dict) -> None:
+    report_content = _extract_report_content(final_state)
+    conf_val = _normalize_confidence_score(final_state.get("confidence", 0.85))
 
     _safe_queue_put(
         loop,
@@ -371,6 +376,49 @@ def _emit_final_report_complete(loop: asyncio.AbstractEventLoop, queue: asyncio.
             },
         },
     )
+
+
+def _emit_iteration_if_advanced(
+    loop: asyncio.AbstractEventLoop,
+    queue: asyncio.Queue,
+    event: dict,
+    last_iteration: int,
+) -> int:
+    iteration = event.get("iteration_count", 0)
+    if iteration > last_iteration:
+        _safe_queue_put(
+            loop,
+            queue,
+            {
+                "type": "loop",
+                "data": {
+                    "iteration": iteration,
+                    "max_steps": cfg.MAX_INVESTIGATION_STEPS,
+                    "active_hypothesis": event.get("active_hypothesis"),
+                },
+            },
+        )
+        return iteration
+    return last_iteration
+
+
+def _emit_messages_incremental(
+    loop: asyncio.AbstractEventLoop,
+    queue: asyncio.Queue,
+    messages: list,
+    processed_count: int,
+    step_num: int,
+) -> Tuple[int, int]:
+    if len(messages) <= processed_count:
+        return processed_count, step_num
+    new_msgs = messages[processed_count:]
+    for msg in new_msgs:
+        m_type = getattr(msg, "type", "unknown")
+        if m_type == "ai":
+            step_num = _emit_ai_message(loop, queue, msg, step_num)
+        elif m_type == "tool":
+            _emit_tool_message(loop, queue, msg)
+    return len(messages), step_num
 
 
 def _run_sync_investigation(
@@ -409,8 +457,6 @@ def _run_sync_investigation(
         processed_msg_count = 0
         last_iteration = 0
         step_num = 0
-        final_state = None
-
         for event in graph.stream(initial_state, stream_mode="values"):
             if cancel_event.is_set():
                 _safe_queue_put(loop, queue, {"type": "cancelled", "message": "Investigation cancelled by user."})
@@ -419,23 +465,7 @@ def _run_sync_investigation(
             final_state = event
             alert_prep_sent = _emit_alert_prep_if_needed(loop, queue, event, alert_prep_sent)
             triage_sent = _emit_triage_if_needed(loop, queue, event, triage_sent)
-
-            iteration = event.get("iteration_count", 0)
-            if iteration > last_iteration:
-                last_iteration = iteration
-                _safe_queue_put(
-                    loop,
-                    queue,
-                    {
-                        "type": "loop",
-                        "data": {
-                            "iteration": iteration,
-                            "max_steps": cfg.MAX_INVESTIGATION_STEPS,
-                            "active_hypothesis": event.get("active_hypothesis"),
-                        },
-                    },
-                )
-
+            last_iteration = _emit_iteration_if_advanced(loop, queue, event, last_iteration)
             evidence_pack_sent = _emit_evidence_pack_if_needed(loop, queue, event, evidence_pack_sent)
 
             if (event.get("confirmed_correlations") is not None or event.get("evidence_gaps") is not None) and not correlation_sent:
@@ -446,16 +476,9 @@ def _run_sync_investigation(
                     {"type": "reasoning", "text": "Correlation analysis complete. Synthesizing DFIR incident investigation report and assigning final verdict..."},
                 )
 
-            messages = event.get("messages", [])
-            if len(messages) > processed_msg_count:
-                new_msgs = messages[processed_msg_count:]
-                processed_msg_count = len(messages)
-                for msg in new_msgs:
-                    m_type = getattr(msg, "type", "unknown")
-                    if m_type == "ai":
-                        step_num = _emit_ai_message(loop, queue, msg, step_num)
-                    elif m_type == "tool":
-                        _emit_tool_message(loop, queue, msg)
+            processed_msg_count, step_num = _emit_messages_incremental(
+                loop, queue, event.get("messages", []), processed_msg_count, step_num
+            )
 
         if final_state and not cancel_event.is_set():
             _emit_final_report_complete(loop, queue, final_state)

@@ -16,3 +16,4 @@ graphify-out/
 .vscode
 # Scratch & local developer debug scripts
 scratch/
+docs/experiments/

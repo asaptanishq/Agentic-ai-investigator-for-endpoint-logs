@@ -61,9 +61,13 @@ def _build_triage_prompt(enriched_alert: Optional[dict], alert_context: str) -> 
             "Analyze this security alert using the pre-extracted and resolved input-reflection struct:\n\n"
             f"=== ENRICHED ALERT STRUCT ===\n{enriched_json}\n\n"
             "Create a triage plan with 2-4 concrete testable hypotheses (covering both malicious and benign explanations), "
-            "initial entities to target (using the canonical resolved host IDs and process/file artifacts), and a concise step-by-step investigation plan."
+            "initial entities to target (using the canonical resolved host IDs and process/file artifacts), and a concise step-by-step investigation plan.\n\n"
+            "Format Requirement: Return ONLY a valid JSON object matching keys 'hypotheses', 'initial_entities', and 'investigation_plan'. Do not include markdown headers or conversational commentary outside the JSON."
         )
-    return f"Analyze this security alert and create a triage plan:\n\n{alert_context}"
+    return (
+        f"Analyze this security alert and create a triage plan:\n\n{alert_context}\n\n"
+        "Format Requirement: Return ONLY a valid JSON object matching keys 'hypotheses', 'initial_entities', and 'investigation_plan'. Do not include markdown headers or conversational commentary outside the JSON."
+    )
 
 
 def _format_triage_plan(response: TriagePlan, default_hypotheses: list, enriched_alert: Optional[dict]):

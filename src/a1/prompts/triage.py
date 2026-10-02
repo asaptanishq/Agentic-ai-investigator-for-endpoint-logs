@@ -28,4 +28,13 @@ Triage Responsibilities:
 3. INITIAL INVESTIGATION TARGETS:
    - First target: Query authentication on the TARGET host (e.g. `search_timeline(host_id=target_host, category='authentication')`) to verify failed (4625) and successful (4624) logons.
    - Second target: Check the SOURCE host for what process initiated the connection around that timestamp.
+
+Output Format Requirement:
+You must strictly return a valid JSON object matching the required schema:
+{
+  "hypotheses": ["<hypothesis 1>", "<hypothesis 2>", ...],
+  "initial_entities": ["<host_id>", "<user_id>", ...],
+  "investigation_plan": "<concise step-by-step plan>"
+}
+Do NOT output markdown titles or headers (e.g., '### Triage Plan') or surrounding conversational commentary.
 """

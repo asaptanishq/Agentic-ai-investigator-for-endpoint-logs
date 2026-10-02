@@ -78,3 +78,29 @@ def test_experiment_runner_ab_comparison_and_ablation(tmp_path):
     )
     assert len(ablation_result["stages"]) == 5
     assert (tmp_path / "ablation_study_results.json").exists()
+
+
+def test_experiment_runner_live_mode_execution(tmp_path, monkeypatch):
+    runner = ExperimentRunner(output_dir=tmp_path)
+    config = ExperimentConfig(name="LiveTest")
+
+    # Mock the graph stream to return a realistic final state without making remote network calls
+    class FakeApp:
+        def stream(self, initial_state, stream_mode="values"):
+            yield {
+                "verdict": "malicious",
+                "verdict_boundary": "confirmed_malicious",
+                "report_fallback_used": False,
+                "iteration_count": 3,
+                "repeat_nudges": 0,
+                "messages": [{"content": "## Verdict: malicious\nCiting evt-exp-001 proc-exp-001"}],
+                "investigation_memory": {},
+            }
+
+    monkeypatch.setattr("a1.graph.create_investigation_graph", lambda: FakeApp())
+    res = runner.evaluate_configuration(config, cases=["ATK-A"], mock_mode=False)
+
+    assert res["cases_evaluated"] == 1
+    assert "composite_score" in res["results"][0]["rubric"]
+    assert res["results"][0]["rubric"]["verdict_score"] == 20.0
+
