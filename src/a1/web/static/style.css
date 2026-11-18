@@ -1996,6 +1996,13 @@ button:disabled {
   white-space: nowrap;
 }
 
+.map-hint {
+  margin-left: auto;
+  color: var(--text-3);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
 .graph-wrap {
   flex: 1;
   min-height: 0;

@@ -127,7 +127,9 @@
       ts: str(raw.timestamp || get(d, "@timestamp") || get(d, "timestamp")),
       action: action,
       severity: Number(get(d, "event.severity") || get(d, "rule.level") || get(d, "alert.severity") || raw.severity || 0) || 0,
-      host: firstString(d, ["host.name", "host.hostname", "host_id", "agent.name", "agent_name"]),
+      // Log datasets (AMiner/AIT) keep the host on the row, not inside details.
+      host: firstString(d, ["host.name", "host.hostname", "host_id", "agent.name", "agent_name"]) ||
+        firstString(raw, ["host_id", "host.name", "host.hostname", "agent.name", "agent_name"]),
       hostIp: firstString(d, ["host.ip", "source.ip", "src_ip"]),
       user: firstString(d, ["user.name", "source_user", "data.win.eventdata.user", "user"]),
       procId: firstString(d, ["process.entity_id", "process_id"]),
@@ -152,7 +154,8 @@
       dstDomain: firstString(d, ["destination.domain", "dns_query", "dns.rrname"]),
       direction: firstString(d, ["network.direction"]),
       proto: firstString(d, ["network.protocol", "network_protocol", "proto", "app_proto"]),
-      alertName: firstString(d, ["alert.signature", "rule.description", "alert_signature"]),
+      alertName: firstString(d, ["alert.signature", "rule.description", "alert_signature"]) ||
+        firstString(d, ["AnalysisComponent.AnalysisComponentName", "AnalysisComponent.Message"]),
     };
     if (!out.id) out.id = out.ts + "|" + action + "|" + out.host;
     if (!out.procId) out.procId = out.host + "/" + (out.procName || "?") + ":" + out.procPid;
@@ -700,13 +703,16 @@
     this._fitted = false;
     this._layout();
     this._syncEmpty();
-    this.fit();
+    this.fit(true);
     this._invalidate();
   };
 
   ForensicGraph.prototype.resize = function () {
+    var prevW = this._width, prevH = this._height;
     this._resize();
-    if (this.nodes.length) this.fit();
+    // Re-fit only when the stage was effectively hidden before; otherwise keep the
+    // user's pan/zoom across drawer resizes.
+    if (this.nodes.length && (prevW < 200 || prevH < 200)) this.fit(true);
   };
 
   ForensicGraph.prototype.clear = function () {
@@ -819,7 +825,7 @@
     }
     for (var j = 0; j < this.edges.length; j++) {
       var e = this.edges[j];
-      if (e.rel !== "observed_on" && e.rel !== "authenticated_to") continue;
+      if (e.rel !== "observed_on" && e.rel !== "authenticated_to" && e.rel !== "associated_with") continue;
       if (hostOf.has(e.to) && !hostOf.has(e.from)) hostOf.set(e.from, e.to);
     }
 
@@ -1010,7 +1016,7 @@
     this._invalidate();
   };
 
-  ForensicGraph.prototype.fit = function () {
+  ForensicGraph.prototype.fit = function (focus) {
     if (!this.nodes.length) return;
     var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     var any = false;
@@ -1035,6 +1041,27 @@
     }
     var padX = 34, padY = 34;
     var k = Math.min(this._width / (maxX - minX + padX * 2), this._height / (maxY - minY + padY * 2));
+    // Fitting three host blocks into a narrow drawer shrinks below the point where
+    // labels render, which looks like an empty map. Open on the busiest block instead;
+    // the full map is still one scroll or the 0 key away.
+    if (focus && k < 0.45 && this.blocks && this.blocks.length) {
+      var big = null;
+      for (var fb = 0; fb < this.blocks.length; fb++) {
+        var cand = this.blocks[fb];
+        var isHost = false;
+        for (var hn = 0; hn < cand.nodes.length; hn++) {
+          if (cand.nodes[hn].type === "host") { isHost = true; break; }
+        }
+        // Prefer a host block: the NETWORK bucket is usually the biggest but shows
+        // addresses, not the endpoint story an analyst opens the map for.
+        if (!big || (isHost && big.label === "NETWORK") || (isHost === (big.label !== "NETWORK") && cand.count > big.count)) big = cand;
+      }
+      if (big && big.count >= 6) {
+        minX = big.x; minY = big.y;
+        maxX = big.x + big.w; maxY = big.y + big.h;
+        k = Math.min(this._width / (maxX - minX + padX * 2), this._height / (maxY - minY + padY * 2));
+      }
+    }
     k = Math.min(1.4, Math.max(0.08, k));
     this.transform.k = k;
     this.transform.x = this._width / 2 - ((minX + maxX) / 2) * k;
@@ -1143,11 +1170,11 @@
     var k = t.k;
     var blockLevel = k < 0.34;
 
-    if (this.blocks && this.blocks.length > 1) {
+    if (this.blocks && this.blocks.length > 1 && blockLevel) {
       for (var bix = 0; bix < this.blocks.length; bix++) {
         this._drawBlock(ctx, this.blocks[bix], k, t);
       }
-      if (blockLevel) {
+      {
         // At this zoom the individual edges are noise, but which hosts talk to which is
         // the lateral-movement signal. Aggregate them per host pair.
         var pairs = new Map();
@@ -1203,8 +1230,10 @@
       }
       var ax = a.x * k + t.x, ay = a.y * k + t.y;
       var bx = b.x * k + t.x, by = b.y * k + t.y;
-      if (Math.max(ax, bx) < -80 || Math.min(ax, bx) > this._width + 80) continue;
-      if (Math.max(ay, by) < -80 || Math.min(ay, by) > this._height + 80) continue;
+      // Draw an edge only when both ends are near the viewport. Long lines from the
+      // focused host to an off-screen host turn the map into spaghetti.
+      if (ax < -120 || ax > this._width + 120 || ay < -120 || ay > this._height + 120) continue;
+      if (bx < -120 || bx > this._width + 120 || by < -120 || by > this._height + 120) continue;
 
       var type = this.byId.get(e.from).type;
       var color = (TYPES[type] || TYPES.host).color;
