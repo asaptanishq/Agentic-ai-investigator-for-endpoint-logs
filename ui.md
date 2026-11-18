@@ -89,6 +89,7 @@ Main bench: welcome (case kicker, dataset title, facts, starting points with All
 | --- | --- |
 | Dataset button | Opens `#caseMenu` with the real `/api/databases` list, indexed hint, case log (`localStorage`) and workspace status; Esc/outside click closes |
 | Dataset select | `POST /api/databases/set`, reloads `/api/events`, rebuilds the map, disabled while generating, reverts + toast on failure |
+| Upload database | "upload .db" in the case menu sends the raw file to `/api/databases/upload` (SQLite header + integrity checked, 256 MB cap), refreshes the catalog and switches to the new dataset |
 | Starting point | Switches dataset first if needed, fills the prompt, submits once |
 | Send / stop | Enter submits; while generating the same button is Stop → `POST /api/cancel` + aborts the stream; no double submit |
 | Model pill | Popover with provider tabs from `/api/models`, filter, custom id; `POST /api/models/set`; closed by Esc/outside click |

@@ -472,6 +472,37 @@
     }
   }
 
+  async function uploadDatabase(file) {
+    if (!file) return;
+    if (state.generating) {
+      toast("Stop the current investigation before uploading a dataset", "error");
+      return;
+    }
+    if (!/\.db$/i.test(file.name)) {
+      toast("Choose a .db SQLite file", "error");
+      return;
+    }
+    if (file.size > 256 * 1024 * 1024) {
+      toast("Database exceeds the 256 MB upload limit", "error");
+      return;
+    }
+    els.dbHint.textContent = "uploading…";
+    try {
+      var res = await api("/api/databases/upload?filename=" + encodeURIComponent(file.name), {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: file,
+      });
+      await loadStatus();
+      renderDatabases();
+      toast("Uploaded " + res.name);
+      await switchDatabase(res.path);
+    } catch (e) {
+      setDbChrome();
+      toast("Upload failed: " + e.message, "error");
+    }
+  }
+
   // ---------------------------------------------------------------- map / tree
 
   function rebuildGraph() {
@@ -1438,6 +1469,18 @@
       var b = e.target.closest("[data-db]");
       if (b) switchDatabase(b.dataset.db);
     });
+    els.uploadDbBtn.addEventListener("click", function () {
+      if (state.generating) {
+        toast("Stop the current investigation before uploading a dataset", "error");
+        return;
+      }
+      els.uploadDbInput.click();
+    });
+    els.uploadDbInput.addEventListener("change", function () {
+      var file = els.uploadDbInput.files && els.uploadDbInput.files[0];
+      els.uploadDbInput.value = "";
+      uploadDatabase(file);
+    });
     els.clearHistoryBtn.addEventListener("click", function () {
       if (!state.history.length) {
         toast("Case log is already empty");
@@ -1762,6 +1805,7 @@
   function init() {
     [
       "newCaseBtn", "caseBtn", "caseMenu", "headerDbName", "dbHint", "dbList", "clearHistoryBtn",
+      "uploadDbBtn", "uploadDbInput",
       "historyList", "railStatus", "headerDbMeta", "verdictStamp", "verdictStampLabel", "verdictStampConf",
       "evidenceBtn", "evidenceBadge", "modelDropdownContainer", "modelSelectorPill", "activeModelName",
       "activeProviderBadge", "modelMenu", "providerTabs", "modelSearchInput", "modelList", "customModelInput",

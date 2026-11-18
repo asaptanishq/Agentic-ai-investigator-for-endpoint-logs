@@ -82,7 +82,7 @@ ai-musefix/
 │       └── static/                # HTML/CSS/JS with SVG forensic DAG & process tree engine
 ├── scripts/
 │   └── smoke_test.py              # Standalone 17-point end-to-end verification script
-├── tests/                         # Pytest test suite (99 tests passed)
+├── tests/                         # Pytest test suite (102 tests passed)
 └── endpoint_security_dataset_expanded_corrected/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
     └── *.db                       # 8 SQLite forensic telemetry databases
@@ -157,6 +157,7 @@ Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) in your browser. The web w
 - **Interactive Forensic DAG:** Dynamic SVG visualization of observed processes, network connections, files, and users.
 - **Process Tree Engine:** Hierarchical process ancestry tree traversal.
 - **Model & Database Switchers:** Hot-swap models (OpenCode/Ollama/OpenAI) and telemetry datasets directly in the UI.
+- **Custom Database Upload:** Add a new `.db` telemetry dataset from the UI; the server validates the SQLite file and adds it to the dataset menu.
 - **Verified Incident Reports:** Structured incident reports with verdict banners, confidence scores, and 1-click markdown copying.
 
 ---
@@ -239,7 +240,7 @@ When run with `--live`, each scenario executes through the compiled LangGraph st
 
 ### 5. Running Tests
 
-Run the full pytest suite (99 tests passed) and standalone smoke tests:
+Run the full pytest suite (102 tests passed) and standalone smoke tests:
 
 ```bash
 # Run pytest suite

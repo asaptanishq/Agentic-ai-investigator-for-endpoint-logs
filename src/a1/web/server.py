@@ -3,12 +3,14 @@ import asyncio
 import json
 import logging
 import re
+import sqlite3
+import tempfile
 import threading
 import urllib.request
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, Request, APIRouter
+from fastapi import FastAPI, HTTPException, Query, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +34,8 @@ logging.basicConfig(level=logging.INFO)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+CUSTOM_DB_DIR = PROJECT_ROOT / "custom_databases"
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 
 # Active cancellation event tracking
 _active_investigations: Dict[str, threading.Event] = {}
@@ -101,6 +105,28 @@ def get_available_databases() -> List[Dict[str, Any]]:
     # Sort so default agent db is first
     dbs.sort(key=lambda d: ("agent_endpoint_security.db" not in d["name"], d["display"]))
     return dbs
+
+def _safe_upload_name(raw: str) -> str:
+    """Return a flat .db filename; strips any client-supplied path."""
+    name = Path(raw or "").name.strip()
+    if not name or Path(name).suffix.lower() != ".db":
+        raise HTTPException(status_code=400, detail="Only .db SQLite files are supported.")
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    if name.startswith(".") or name.lower() == ".db":
+        raise HTTPException(status_code=400, detail="Invalid database filename.")
+    stem, dot, ext = name.rpartition(".")
+    return f"{stem[:115]}.{ext}"
+
+
+def _unique_db_path(name: str) -> Path:
+    CUSTOM_DB_DIR.mkdir(parents=True, exist_ok=True)
+    dest = CUSTOM_DB_DIR / name
+    i = 2
+    while dest.exists():
+        dest = CUSTOM_DB_DIR / f"{Path(name).stem}-{i}.db"
+        i += 1
+    return dest
+
 
 def set_active_database(db_path_str: str) -> str:
     """Switch active database path and reset tool caches.
@@ -711,6 +737,57 @@ async def update_model(req: ModelConfigRequest):
 @router.get("/api/databases")
 async def list_databases():
     return {"databases": get_available_databases()}
+
+
+@router.post("/api/databases/upload")
+async def upload_database(request: Request, filename: str = Query(..., min_length=1)):
+    """Accept a raw SQLite file, validate it, and add it to the dataset catalog."""
+    length = request.headers.get("content-length")
+    if length:
+        try:
+            if int(length) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Database exceeds the 256 MB upload limit.")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length.")
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Database exceeds the 256 MB upload limit.")
+    if not body.startswith(b"SQLite format 3\x00"):
+        raise HTTPException(status_code=400, detail="File is not a SQLite database.")
+
+    name = _safe_upload_name(filename)
+    CUSTOM_DB_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=CUSTOM_DB_DIR, suffix=".upload", delete=False) as tmp:
+            tmp.write(body)
+            tmp_path = Path(tmp.name)
+
+        try:
+            conn = sqlite3.connect(str(tmp_path))
+            try:
+                objects = conn.execute(
+                    "SELECT count(*) FROM sqlite_master WHERE type IN ('table','view')"
+                ).fetchone()[0]
+                healthy = conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError:
+            raise HTTPException(status_code=400, detail="File is not a readable SQLite database.")
+
+        if not objects or not healthy:
+            raise HTTPException(status_code=400, detail="Database has no tables/views or failed integrity check.")
+
+        dest = _unique_db_path(name)
+        tmp_path.replace(dest)
+        tmp_path = None
+        return {"status": "uploaded", "name": dest.name, "path": str(dest)}
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 @router.post(

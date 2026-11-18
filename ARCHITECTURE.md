@@ -167,7 +167,7 @@ ai-musefix/
 |   |-- README.md                         Dataset provenance and surface boundary
 |   |-- schema.md                         Telemetry schema specification
 |
-|-- tests/                             [Test Suite (99 Tests)]
+|-- tests/                             [Test Suite (102 Tests)]
     |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
     |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
@@ -341,6 +341,7 @@ python -m a1.experiment --live --limit 3
 | `/api/models/set`         | `POST` | Switch active LLM (`provider`, `model`).               |
 | `/api/databases`          | `GET`  | Available `.db` catalog with sizes and active status.  |
 | `/api/databases/set`      | `POST` | Switch active telemetry database (clears tool caches). |
+| `/api/databases/upload`   | `POST` | Validate + store a raw `.db` upload in `custom_databases/`.|
 | `/api/events`             | `GET`  | Raw events for the active database (graph + events table).|
 | `/api/chat`               | `POST` | Conversational follow-up over the stored session, SSE.   |
 | `/api/investigate`        | `POST` | Run investigation streamed as Server-Sent Events (SSE).|
@@ -394,7 +395,7 @@ python -m a1.experiment --live --limit 3
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (99 unit and integration tests passing):
+The repository maintains full automated test coverage (102 unit and integration tests passing):
 
 ```powershell
 # Run the full test suite:
