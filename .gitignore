@@ -20,3 +20,6 @@ docs/experiments/
 
 # User-uploaded telemetry databases
 custom_databases/
+
+# Shipped telemetry databases (downloaded separately, not tracked)
+endpoint_security_dataset_expanded_corrected/*.db
