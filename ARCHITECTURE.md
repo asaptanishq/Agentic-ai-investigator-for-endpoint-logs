@@ -154,7 +154,7 @@ ai-musefix/
 |       |-- static/vendor/            [Vendored Assets]      Third-party browser libraries served locally
 |       |-- static/style.css           [Web Style]            Modern ChatGPT-style layout, clean upright typography, thinking blocks, tool chips, light/dark themes
 |
-|-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data (.db files are git-ignored)]
+|-- endpoint_security_dataset_expanded_corrected/   [Local dataset, git-ignored; not in repo]
 |   |-- attack_lateral_movement.db        Telemetry for ATK-A (credentials + lateral move) and INC-A (incomplete telemetry)
 |   |-- attack_data_exfiltration.db       Telemetry for ATK-B (staging + persistence + exfiltration)
 |   |-- ransomware_attack_complete_ecs.db Telemetry for ATK-C (phishing + LockBit encryption)
@@ -168,7 +168,7 @@ ai-musefix/
 |   |-- schema.md                         Telemetry schema specification
 |
 |-- tests/                             [Test Suite (124 Tests)]
-    |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
+    |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a local dataset DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
     |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
     |-- test_graph.py                  [Test: Graph]          Graph compilation, condensed tool-output anchors
@@ -408,11 +408,11 @@ The case menu supports uploading raw `.db`/log files, switching datasets, and de
 | `attack_supply_chain.db` | `ATK-G` | 32 | 32 | 1,890 | `groundtruth/groundtruth_attack_G_supply_chain.json` |
 | `benign_admin_activity.db` | `BEN-A` | 2 | 2 | 7 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
 
-The eight `.db` files are git-ignored and must be placed in `endpoint_security_dataset_expanded_corrected/` before running the benchmark; together they hold 4,490 events. The `groundtruth/*.json` labels remain tracked.
+The eight `.db` files and the `groundtruth/*.json` labels are git-ignored and must be supplied locally in `endpoint_security_dataset_expanded_corrected/` before running the built-in benchmark; together the databases hold 4,490 events. The repository itself contains no telemetry or evaluation dataset.
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (124 unit and integration tests passing):
+The repository maintains full automated test coverage (136 unit and integration tests passing):
 
 ```powershell
 # Run the full test suite:

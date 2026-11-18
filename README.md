@@ -7,7 +7,7 @@ A1 is an autonomous Digital Forensics and Incident Response (DFIR) investigation
 | **Language** | Python >= 3.12 |
 | **Interfaces** | Terminal CLI, Web UI (FastAPI + SSE + Interactive Forensic DAG), Scenario Benchmark, Experiment Runner |
 | **Agent Stack** | LangGraph cyclical state machine, LangChain |
-| **Telemetry Engine** | Safe, read-only SQLite endpoint security databases (8 scenario datasets; `.db` files are git-ignored and supplied separately) |
+| **Telemetry Engine** | Safe, read-only SQLite endpoint security databases (users bring their own `.db`; no telemetry is stored in the repo) |
 | **Model Providers** | OpenCode (default), Ollama (local or Cloud), and OpenAI, selectable at runtime |
 
 ## Quick Reference & Documentation
@@ -15,8 +15,8 @@ A1 is an autonomous Digital Forensics and Incident Response (DFIR) investigation
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete architectural diagrams, routing contracts, file catalog, and internal guardrails.
 - **[ui.md](ui.md)** — Web workbench layout, views, controls, and interaction contract.
 - **[docs/EVALUATION_SCORING_RUBRICS.md](docs/EVALUATION_SCORING_RUBRICS.md)** — 100-point multi-dimensional evaluation rubric, scoring criteria, and ablation study guidelines.
-- **[endpoint_security_dataset_expanded_corrected/README.md](endpoint_security_dataset_expanded_corrected/README.md)** — Dataset provenance, shipped databases, and agent/evaluator surface boundary.
-- **[endpoint_security_dataset_expanded_corrected/schema.md](endpoint_security_dataset_expanded_corrected/schema.md)** — Telemetry database schema specification.
+- **`endpoint_security_dataset_expanded_corrected/README.md`** — dataset provenance and evaluator boundary (available only when the dataset is supplied locally; not in the repo).
+- **`endpoint_security_dataset_expanded_corrected/schema.md`** — telemetry database schema specification (local dataset only).
 
 ---
 
@@ -117,9 +117,9 @@ cp .env.example .env              # Windows: copy .env.example .env
 
 The default configuration supports OpenCode (`deepseek-v4.1-flash`), local Ollama (`llama3.1`), and OpenAI (`gpt-4o-mini`). Configure your API key and endpoint in `.env`.
 
-### 3. Telemetry Databases (supplied separately)
+### 3. Local Evaluation Dataset (not in the repo)
 
-The benchmark and default config expect eight forensic telemetry databases in `endpoint_security_dataset_expanded_corrected/`. The binary `.db` files are git-ignored, so a fresh clone must place them in that directory; the evaluator ground truth remains tracked in `groundtruth/`:
+The benchmark expects the optional `endpoint_security_dataset_expanded_corrected/` folder locally: eight forensic telemetry databases plus `groundtruth/*.json` labels. The entire folder is git-ignored, so a fresh clone has no dataset and users supply their own logs or place this folder in the project root before running the built-in benchmark:
 
 | Database | Scenario | Hosts | Users | Events | Ground Truth |
 | :--- | :--- | ---: | ---: | ---: | :--- |
@@ -219,13 +219,13 @@ The ingester auto-detects JSON, JSONL/NDJSON and text, recognises Wazuh rule/age
 
 ### 3. Benchmark Runner & Evaluation
 
-Evaluate agent accuracy and reasoning across all 10 shipped scenarios covering malicious intrusions, benign operations, ambiguous tasks, and incomplete telemetry, or on external AIT-ADS AMiner exports:
+Evaluate agent accuracy and reasoning across all 10 built-in scenarios covering malicious intrusions, benign operations, ambiguous tasks, and incomplete telemetry, or on external AIT-ADS AMiner exports. The built-in scenarios need the local dataset described above:
 
 ```bash
-# Run complete shipped benchmark
+# Run complete built-in benchmark (requires local dataset)
 python -m a1.benchmark --split all
 
-# Run two shipped cases
+# Run two built-in cases
 python -m a1.benchmark --split dev --limit 2
 
 # Run AIT-ADS cases from a local extract

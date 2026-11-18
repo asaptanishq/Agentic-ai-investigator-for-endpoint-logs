@@ -11,7 +11,7 @@ Binary accuracy ("did the agent say malicious?") is not a useful measure of a DF
 5. **Investigation Efficiency** (10 points)
 6. **Report Quality & Actionability** (15 points)
 
-The suite covers the 10 shipped scenarios (7 malicious, 1 benign, 1 ambiguous, 1 incomplete-telemetry) plus optional AIT-ADS cases built from AMiner alert exports. Every case is scored against a SQLite database, not against the agent's own narrative.
+The suite covers 10 built-in scenarios (7 malicious, 1 benign, 1 ambiguous, 1 incomplete-telemetry) plus optional AIT-ADS cases built from AMiner alert exports. The built-in dataset is supplied locally and is not stored in the repository. Every case is scored against a SQLite database, not against the agent's own narrative.
 
 ---
 
@@ -42,7 +42,7 @@ The summary also emits the full verdict confusion matrix, per-label precision/re
 
 ### Dimension 2 — Ground-Truth Evidence Retrieval (25 Points)
 
-**Checklist coverage (20 points).** Each case has weighted `checks` in `groundtruth/eval_checks.json`. A check is either matched by any of its phrases/indicators or not; critical checks receive weight 2, ordinary checks weight 1. Coverage is `sum(matched weights) / sum(all weights)`, and the score is `20 × coverage`. If a case has no checks, they are derived from `evidence_basis`. Evidence is searched in the report only, never in raw tool output or `investigation_memory`.
+**Checklist coverage (20 points).** Each case has weighted `checks` in the local `groundtruth/eval_checks.json` (supplied with the dataset). A check is either matched by any of its phrases/indicators or not; critical checks receive weight 2, ordinary checks weight 1. Coverage is `sum(matched weights) / sum(all weights)`, and the score is `20 × coverage`. If a case has no checks, they are derived from `evidence_basis`. Evidence is searched in the report only, never in raw tool output or `investigation_memory`.
 
 **Key IOC coverage (5 points).** Each case's `key_iocs` (paths, hashes, IPs, service names, command lines) is tested independently: `5 × covered / total`. A case with no `key_iocs` folds its full 25 points into checklist coverage. `distractors` are reported diagnostically but are not scored yet.
 
@@ -112,7 +112,7 @@ Headings and a table alone cannot reach 15/15.
 - **Scoring is deterministic; the agent is not.** A single run per case is a snapshot. For a leaderboard, run each case at least 3–5 times and compare confidence intervals, not one composite.
 - The summary prints 95% bootstrap CIs for verdict accuracy and mean score. With four cases those intervals are necessarily wide; treat them as uncertainty bounds, not precision estimates.
 - Grounding claim support is a lexical heuristic, not semantic entailment. It blocks obvious "real ID, unrelated claim" citations but cannot prove that an inference is correct.
-- Checklist phrases are curated per case; inspect `eval_checks.json` before comparing across datasets. AIT-ADS cases use attack-step anchors and are coarser than the hand-written shipped checks.
+- Checklist phrases are curated per case; inspect `eval_checks.json` before comparing across datasets. AIT-ADS cases use attack-step anchors and are coarser than the hand-written built-in checks.
 - The 100-point weights are design choices, not empirically validated against human experts. Report per-dimension scores alongside the composite.
 - AIT-ADS cases only include AMiner anomaly records, not full packet/process telemetry. They test triage under telemetry limits, not endpoint forensics.
 
@@ -150,10 +150,10 @@ Use `--ait-scenarios fox,harrison` to select scenarios and `--ait-rebuild` after
 ## 5. Running Evaluations
 
 ```powershell
-# All 10 shipped scenarios (limit defaults to 0 = all)
+# All 10 built-in scenarios (requires local dataset; limit defaults to 0 = all)
 .venv\Scripts\python.exe -m a1.benchmark --split all --out bench_all.json
 
-# Two shipped scenarios
+# Two built-in scenarios
 .venv\Scripts\python.exe -m a1.benchmark --split dev --limit 2 --out bench_dev.json
 
 # AIT-ADS cases
