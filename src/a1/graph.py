@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Any, Literal, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
@@ -18,17 +19,33 @@ def create_investigation_graph(config: Optional[Any] = None):
     workflow = StateGraph(InvestigationState)
 
     enable_validator = True
+    enable_evidence_graph = True
+    enable_adaptive_planner = True
+    enable_baseline_context = True
     if config is not None:
         enable_validator = getattr(config, "enable_validator", True)
+        enable_evidence_graph = getattr(config, "enable_evidence_graph", True)
+        enable_adaptive_planner = getattr(config, "enable_adaptive_planner", True)
+        enable_baseline_context = getattr(config, "enable_baseline_context", True)
 
     # Input-reflection Stage 1: Alert Prep (runs before triage)
     workflow.add_node("alert_prep", alert_prep_node)
     workflow.add_node("triage", triage_node)
-    workflow.add_node("investigator", investigator_node)
+    workflow.add_node(
+        "investigator",
+        partial(
+            investigator_node,
+            enable_adaptive_planner=enable_adaptive_planner,
+            enable_evidence_graph=enable_evidence_graph,
+        ),
+    )
     workflow.add_node("tools", ToolNode(ALL_INVESTIGATION_TOOLS))
     # Input-reflection Stage 2: Evidence Packing (runs after review gate, before correlation)
     workflow.add_node("evidence_packing", evidence_packing_node)
-    workflow.add_node("correlate", correlation_node)
+    workflow.add_node(
+        "correlate",
+        partial(correlation_node, enable_baseline_context=enable_baseline_context),
+    )
     # Stage 3: Deterministic Evidence Validation (Issue #6)
     if enable_validator:
         workflow.add_node("validate", validator_node)

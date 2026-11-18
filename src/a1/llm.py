@@ -19,6 +19,12 @@ from a1.config import (
 
 _ACTIVE_PROVIDER: Optional[str] = None
 _ACTIVE_MODEL: Optional[str] = None
+_REQUEST_PROVIDER: ContextVar[Optional[str]] = ContextVar(
+    "a1_request_provider", default=None
+)
+_REQUEST_MODEL: ContextVar[Optional[str]] = ContextVar(
+    "a1_request_model", default=None
+)
 _OPENCODE_SESSION_ID: ContextVar[Optional[str]] = ContextVar(
     "a1_opencode_session_id",
     default=None,
@@ -47,7 +53,7 @@ def stream_investigation(
 
 
 def set_active_llm(provider: Optional[str] = None, model: Optional[str] = None) -> None:
-    """Set the active LLM provider and model dynamically at runtime."""
+    """Set the default LLM provider and model at runtime."""
     global _ACTIVE_PROVIDER, _ACTIVE_MODEL
     if provider:
         _ACTIVE_PROVIDER = provider.strip().lower()
@@ -55,17 +61,35 @@ def set_active_llm(provider: Optional[str] = None, model: Optional[str] = None) 
         _ACTIVE_MODEL = model.strip()
 
 
+@contextmanager
+def llm_request_context(
+    provider: Optional[str] = None, model: Optional[str] = None
+) -> Iterator[None]:
+    """Scope a provider/model choice to one request thread instead of process globals."""
+    provider_token = _REQUEST_PROVIDER.set(provider.strip().lower()) if provider else None
+    model_token = _REQUEST_MODEL.set(model.strip()) if model else None
+    try:
+        yield
+    finally:
+        if model_token is not None:
+            _REQUEST_MODEL.reset(model_token)
+        if provider_token is not None:
+            _REQUEST_PROVIDER.reset(provider_token)
+
+
 def get_active_llm_info() -> Dict[str, str]:
     """Return the active provider and model name."""
-    provider = (_ACTIVE_PROVIDER or LLM_PROVIDER).lower()
+    request_provider = _REQUEST_PROVIDER.get()
+    provider = (request_provider or _ACTIVE_PROVIDER or LLM_PROVIDER).lower()
+    requested_model = _REQUEST_MODEL.get() if request_provider else None
     if provider == "opencode":
-        model = _ACTIVE_MODEL or OPENCODE_MODEL_NAME
+        model = requested_model or _ACTIVE_MODEL or OPENCODE_MODEL_NAME
     elif provider == "ollama":
-        model = _ACTIVE_MODEL or OLLAMA_MODEL_NAME
+        model = requested_model or _ACTIVE_MODEL or OLLAMA_MODEL_NAME
     elif provider == "openai":
-        model = _ACTIVE_MODEL or OPENAI_MODEL_NAME
+        model = requested_model or _ACTIVE_MODEL or OPENAI_MODEL_NAME
     else:
-        model = _ACTIVE_MODEL or "unknown"
+        model = requested_model or _ACTIVE_MODEL or "unknown"
     return {"provider": provider, "model": model}
 
 
@@ -138,12 +162,17 @@ def get_llm(
     """Factory returning the configured chat model with optional overrides.
     Supports OpenCode, Ollama, and OpenAI.
     """
-    chosen_provider = (provider or _ACTIVE_PROVIDER or LLM_PROVIDER).lower()
-    active_model = (
-        _ACTIVE_MODEL
-        if _ACTIVE_PROVIDER is None or _ACTIVE_PROVIDER == chosen_provider
-        else None
-    )
+    request_provider = _REQUEST_PROVIDER.get()
+    request_model = _REQUEST_MODEL.get()
+    chosen_provider = (provider or request_provider or _ACTIVE_PROVIDER or LLM_PROVIDER).lower()
+    if model:
+        active_model = model
+    elif request_model and (request_provider or chosen_provider) == chosen_provider:
+        active_model = request_model
+    elif request_provider is None and (_ACTIVE_PROVIDER is None or _ACTIVE_PROVIDER == chosen_provider):
+        active_model = _ACTIVE_MODEL
+    else:
+        active_model = None
 
     if chosen_provider == "opencode":
         chosen_model = model or active_model or OPENCODE_MODEL_NAME
@@ -202,23 +231,74 @@ def check_llm_status() -> Dict[str, Any]:
     return {"status": "unknown", "provider": provider}
 
 
+def is_transient_llm_error(exc: Exception) -> bool:
+    """Return True for network failures, timeouts, and rate limits worth retrying."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 429 or status in (500, 502, 503, 504):
+        return True
+    if "ratelimit" in type(exc).__name__.lower():
+        return True
+
+    try:
+        import openai
+        if isinstance(exc, openai.RateLimitError):
+            return True
+        if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
+            return True
+        if isinstance(exc, openai.APIStatusError) and exc.status_code >= 500:
+            return True
+    except ImportError:
+        pass
+
+    try:
+        import httpx
+        if isinstance(exc, (httpx.TimeoutException, httpx.RequestError)):
+            return True
+    except ImportError:
+        pass
+
+    import urllib.error
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    return isinstance(exc, (ConnectionError, TimeoutError))
+
+
+def _retry_delay_seconds(exc: Exception, attempt: int) -> float:
+    import random
+
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is None:
+        headers = getattr(getattr(exc, "response", None), "headers", {}) or {}
+        retry_after = headers.get("retry-after")
+    try:
+        delay = float(retry_after)
+    except (TypeError, ValueError):
+        delay = 1.5 * (attempt + 1)
+    return min(max(delay, 1.0), 30.0) + random.uniform(0, 0.5)
+
+
 def invoke_with_network_retry(runnable: Any, messages: Any, max_attempts: int = 3) -> Any:
-    """Invoke an LLM or runnable with automatic backoff retry on transient network errors."""
-    import time
+    """Invoke with backoff retry for network errors and HTTP 429/5xx responses."""
     import logging
+    import time
 
     logger = logging.getLogger("a1.llm")
     for attempt in range(max_attempts):
         try:
             return runnable.invoke(messages)
         except Exception as e:
-            err_str = f"{type(e).__name__} {str(e)}".lower()
-            is_net = any(k in err_str for k in ("disconnect", "protocol", "timeout", "connection", "remote", "reset"))
-            if is_net and attempt < max_attempts - 1:
-                delay = 1.5 * (attempt + 1)
-                logger.warning(
-                    f"Transient LLM network issue ({type(e).__name__}: {e}). Retrying attempt {attempt + 2}/{max_attempts} in {delay:.1f}s..."
-                )
-                time.sleep(delay)
-                continue
-            raise
+            if not is_transient_llm_error(e) or attempt >= max_attempts - 1:
+                raise
+            delay = _retry_delay_seconds(e, attempt)
+            logger.warning(
+                "Transient LLM error (%s: %s). Retrying attempt %d/%d in %.1fs...",
+                type(e).__name__,
+                e,
+                attempt + 2,
+                max_attempts,
+                delay,
+            )
+            time.sleep(delay)
+    raise RuntimeError("unreachable")

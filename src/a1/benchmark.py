@@ -233,6 +233,8 @@ def _normalize_boundary(boundary: str) -> str:
     b = str(boundary).lower().strip()
     if b in ("confirmed_benign", "benign"):
         return "benign"
+    if b == "telemetry_gap_inconclusive":
+        return "inconclusive"
     return b
 
 

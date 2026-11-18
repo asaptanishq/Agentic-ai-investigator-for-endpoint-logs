@@ -91,6 +91,7 @@ ai-musefix/
 |-- .env.example                       [Environment Template] Default LLM and telemetry database configuration
 |-- README.md                          [Project Overview]     Quickstart, usage instructions, and executive summary
 |-- ARCHITECTURE.md                    [Architecture Guide]   Complete system visualization & file catalog
+|-- ui.md                              [UI Guide]             Web workbench layout, interaction model, and views
 |-- docs/
 |   |-- EVALUATION_SCORING_RUBRICS.md  [Evaluation Rubrics]   100-point multi-dimensional scoring and benchmark specification
 |
@@ -103,7 +104,7 @@ ai-musefix/
 |   |-- config.py                      [Configuration]        Path resolution, env parsing, and model config
 |   |-- db.py                          [Database Layer]       Read-only SQLite wrapper (URI mode=ro) + temp views + get_active_db
 |   |-- state.py                       [Agent State]          InvestigationState TypedDict shared across the graph
-|   |-- graph.py                       [Graph Assembly]       StateGraph 7-node pipeline, edges, and conditional routing
+|   |-- graph.py                       [Graph Assembly]       StateGraph 8-node pipeline, edges, and conditional routing
 |   |-- llm.py                         [Model Factory]        OpenCode / Ollama / OpenAI chat-model factory + invoke_with_network_retry
 |   |-- cli.py                         [CLI Interface]        Single investigations, --web, --benchmark, --db
 |   |-- benchmark.py                   [Benchmark Harness]    10-case evaluation (ATK-A..G, BEN-A, AMB-A, INC-A)
@@ -148,6 +149,9 @@ ai-musefix/
 |       |-- static/index.html          [Web UI]               Responsive DFIR workbench frontend
 |       |-- static/app.js              [Web Client]           SSE rendering, ChatGPT-style stream (collapsible thought disclosure, tool activity chips, streaming assistant reply), DB/model selectors, graph orchestration
 |       |-- static/forensic-graph.js   [Forensic DAG]         Interactive SVG DAG and Process Tree rendering engine
+|       |-- static/evidence-tree.js   [Evidence Tree]        Hierarchical, filterable evidence browser with inline event detail
+|       |-- static/process-links.js   [Process Links]        Process ancestry/relationship visualization helpers
+|       |-- static/vendor/            [Vendored Assets]      Third-party browser libraries served locally
 |       |-- static/style.css           [Web Style]            Modern ChatGPT-style layout, clean upright typography, thinking blocks, tool chips, light/dark themes
 |
 |-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data]
@@ -163,11 +167,11 @@ ai-musefix/
 |   |-- README.md                         Dataset provenance and surface boundary
 |   |-- schema.md                         Telemetry schema specification
 |
-|-- tests/                             [Test Suite (92 Tests)]
+|-- tests/                             [Test Suite (99 Tests)]
     |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
     |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
-    |-- test_graph.py                  [Test: Graph]          Graph compilation, investigator nudges
+    |-- test_graph.py                  [Test: Graph]          Graph compilation, condensed tool-output anchors
     |-- test_input_reflection.py       [Test: Reflection]     Alert prep, evidence packing, verdict recovery
     |-- test_report.py                 [Test: Report]         Verdict normalisation, citations, correlation verdicts
     |-- test_structured_output.py      [Test: LLM Helper]     Retry-once-then-fail contract
@@ -300,8 +304,8 @@ ai-musefix/
 | `OPENCODE_MODEL_NAME`                | `deepseek-v4.1-flash`                                                                           | OpenCode model tag.                              |
 | `OPENCODE_BASE_URL`                  | `https://opencode.ai/inference/go/openai/v1`                                                     | OpenCode Go API base URL.                        |
 | `OPENCODE_API_KEY`                   | *(empty)*                                                                                       | API key for OpenCode inference.                  |
-| `OLLAMA_MODEL_NAME`                  | `gemma4:31b`                                                                                    | Ollama model tag.                                |
-| `OLLAMA_BASE_URL`                    | `https://ollama.com/api`                                                                        | Ollama API base URL.                             |
+| `OLLAMA_MODEL_NAME`                  | `llama3.1`                                                                                      | Ollama model tag.                                |
+| `OLLAMA_BASE_URL`                    | `http://localhost:11434`                                                                        | Ollama API base URL.                             |
 | `OLLAMA_NUM_CTX`                     | `32768`                                                                                         | Ollama context window size.                      |
 | `OLLAMA_API_KEY`                     | *(empty)*                                                                                       | Bearer token for Ollama Cloud.                   |
 | `OPENAI_MODEL_NAME`                  | `gpt-4o-mini`                                                                                   | OpenAI model name.                               |
@@ -333,10 +337,12 @@ python -m a1.experiment --live --limit 3
 | Endpoint                  | Method | Purpose                                                |
 | ------------------------- | ------ | ------------------------------------------------------ |
 | `/api/status`             | `GET`  | Readiness, active LLM, current DB.                     |
-| `/api/models`             | `GET`  | Model catalog (live Ollama tags + OpenAI options).     |
+| `/api/models`             | `GET`  | Model catalog (OpenCode, live Ollama tags, OpenAI options).     |
 | `/api/models/set`         | `POST` | Switch active LLM (`provider`, `model`).               |
 | `/api/databases`          | `GET`  | Available `.db` catalog with sizes and active status.  |
 | `/api/databases/set`      | `POST` | Switch active telemetry database (clears tool caches). |
+| `/api/events`             | `GET`  | Raw events for the active database (graph + events table).|
+| `/api/chat`               | `POST` | Conversational follow-up over the stored session, SSE.   |
 | `/api/investigate`        | `POST` | Run investigation streamed as Server-Sent Events (SSE).|
 | `/api/cancel`             | `POST` | Cancel in-flight investigation.                        |
 
@@ -388,7 +394,7 @@ python -m a1.experiment --live --limit 3
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (100 unit and integration tests passing):
+The repository maintains full automated test coverage (99 unit and integration tests passing):
 
 ```powershell
 # Run the full test suite:

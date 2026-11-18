@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Tuple, Optional
 
-from a1.db import EndpointDatabase
+from a1.db import EndpointDatabase, get_active_db
 from a1.config import get_db_path
 
 
@@ -216,7 +216,7 @@ def parse_alert_time_window(
 def alert_prep_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Alert Prep Node: deterministic input reflection before triage."""
     alert_text = state.get("alert_context", "")
-    db = EndpointDatabase(get_db_path())
+    db = get_active_db(get_db_path())
 
     # 1. Regex entity extraction
     entities = extract_regex_entities(alert_text)

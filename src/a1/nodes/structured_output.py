@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from langchain_core.messages import HumanMessage
-from a1.llm import invoke_with_network_retry
+from a1.llm import invoke_with_network_retry, is_transient_llm_error
 
 
 class StructuredOutputRetryError(Exception):
@@ -23,8 +23,7 @@ def invoke_structured_with_retry(
     try:
         return invoke_with_network_retry(structured_llm, messages), False
     except Exception as first_error:
-        err_str = f"{type(first_error).__name__} {str(first_error)}".lower()
-        if any(k in err_str for k in ("disconnect", "protocol", "timeout", "connection", "remote", "reset")):
+        if is_transient_llm_error(first_error):
             raise
 
         retry_messages = [

@@ -13,6 +13,7 @@ A1 is an autonomous Digital Forensics and Incident Response (DFIR) investigation
 ## Quick Reference & Documentation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete architectural diagrams, routing contracts, file catalog, and internal guardrails.
+- **[ui.md](ui.md)** — Web workbench layout, views, controls, and interaction contract.
 - **[docs/EVALUATION_SCORING_RUBRICS.md](docs/EVALUATION_SCORING_RUBRICS.md)** — 100-point multi-dimensional evaluation rubric, scoring criteria, and ablation study guidelines.
 - **[endpoint_security_dataset_expanded_corrected/README.md](endpoint_security_dataset_expanded_corrected/README.md)** — Dataset provenance, shipped databases, and agent/evaluator surface boundary.
 - **[endpoint_security_dataset_expanded_corrected/schema.md](endpoint_security_dataset_expanded_corrected/schema.md)** — Telemetry database schema specification.
@@ -57,6 +58,7 @@ ai-musefix/
 ├── .python-version                # Pinned interpreter (>= 3.12)
 ├── .env.example                   # Environment variable template
 ├── README.md / ARCHITECTURE.md    # Project overview / full architecture guide
+├── ui.md                          # Web workbench layout and interaction contract
 ├── docs/
 │   └── EVALUATION_SCORING_RUBRICS.md # 100-point multi-dimensional benchmark rubrics
 ├── src/a1/
@@ -65,7 +67,7 @@ ai-musefix/
 │   ├── db.py                      # Read-only SQLite wrapper + convenience virtual views
 │   ├── llm.py                     # OpenCode / Ollama / OpenAI chat-model factory + runtime overrides
 │   ├── state.py                   # LangGraph InvestigationState TypedDict
-│   ├── graph.py                   # 7-node StateGraph assembly, routing, and compilation
+│   ├── graph.py                   # 8-node StateGraph assembly, routing, and compilation
 │   ├── benchmark.py               # 10-scenario labeled benchmark runner
 │   ├── evidence_graph.py          # Entity-relationship DAG and UI serialization
 │   ├── hypothesis.py              # Competing hypothesis lifecycle tracker
@@ -80,7 +82,7 @@ ai-musefix/
 │       └── static/                # HTML/CSS/JS with SVG forensic DAG & process tree engine
 ├── scripts/
 │   └── smoke_test.py              # Standalone 17-point end-to-end verification script
-├── tests/                         # Pytest test suite (100 tests passed)
+├── tests/                         # Pytest test suite (99 tests passed)
 └── endpoint_security_dataset_expanded_corrected/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
     └── *.db                       # 8 SQLite forensic telemetry databases
@@ -113,7 +115,7 @@ Copy the `.env.example` template:
 cp .env.example .env              # Windows: copy .env.example .env
 ```
 
-The default configuration supports OpenCode (`deepseek-v4.1-flash`), Ollama Cloud / local (`gemma4:31b`), and OpenAI (`gpt-4o-mini`). Configure your API key and endpoint in `.env`.
+The default configuration supports OpenCode (`deepseek-v4.1-flash`), local Ollama (`llama3.1`), and OpenAI (`gpt-4o-mini`). Configure your API key and endpoint in `.env`.
 
 ### 3. Shipped Telemetry Databases
 
@@ -123,12 +125,12 @@ The repository includes eight forensic telemetry databases with evaluator ground
 | :--- | :--- | ---: | ---: | ---: | :--- |
 | `attack_lateral_movement.db` | **ATK-A**: Credential access & lateral movement<br/>**INC-A**: Missing telemetry / inconclusive | 2 | 3 | 127 | `groundtruth/groundtruth_attack_A_lateral_movement.json`<br/>`groundtruth/groundtruth_incomplete_A_missing_telemetry.json` |
 | `attack_data_exfiltration.db` | **ATK-B**: Data staging, persistence & exfiltration | 1 | 1 | 83 | `groundtruth/groundtruth_attack_B_data_exfiltration.json` |
-| `ransomware_attack_complete_ecs.db` | **ATK-C**: Ransomware file encryption (LockBit) | 1 | 1 | 1,450 | `groundtruth/groundtruth_attack_C_ransomware.json` |
-| `attack_lotl_fileless.db` | **ATK-D**: Living-off-the-Land & fileless in-memory C2<br/>**AMB-A**: Ambiguous developer activity | 2 | 2 | 240 | `groundtruth/groundtruth_attack_D_lotl_fileless.json`<br/>`groundtruth/groundtruth_ambiguous_A_dev_activity.json` |
-| `wazuh_lotl_attack_dataset.db` | **ATK-E**: Wazuh SIEM/EDR, LotL & SAM registry access | 2 | 2 | 320 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
+| `ransomware_attack_complete_ecs.db` | **ATK-C**: Ransomware file encryption (LockBit) | 1 | 1 | 1,004 | `groundtruth/groundtruth_attack_C_ransomware.json` |
+| `attack_lotl_fileless.db` | **ATK-D**: Living-off-the-Land & fileless in-memory C2<br/>**AMB-A**: Ambiguous developer activity | 2 | 2 | 708 | `groundtruth/groundtruth_attack_D_lotl_fileless.json`<br/>`groundtruth/groundtruth_ambiguous_A_dev_activity.json` |
+| `wazuh_lotl_attack_dataset.db` | **ATK-E**: Wazuh SIEM/EDR, LotL & SAM registry access | 2 | 2 | 612 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
 | `suricata_c2_intrusion.db` | **ATK-F**: Suricata NIDS CobaltStrike C2 beaconing & exfil | 3 | 1 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
 | `attack_supply_chain.db` | **ATK-G**: Enterprise Supply Chain software compromise | 32 | 32 | 1,890 | `groundtruth/groundtruth_attack_G_supply_chain.json` |
-| `benign_admin_activity.db` | **BEN-A**: Benign administrative backup verification script | 1 | 2 | 75 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
+| `benign_admin_activity.db` | **BEN-A**: Benign administrative backup verification script | 1 | 2 | 7 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
 
 `config.py` automatically discovers and mounts the first available database out of the box.
 
@@ -154,7 +156,7 @@ Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) in your browser. The web w
 - **Interactive Tool Activity Chips:** Compact inline chips (`⚡ search_timeline: 47 events`, `⚡ query_telemetry: 1 row`) showing real-time tool executions with 1-click modal telemetry inspection.
 - **Interactive Forensic DAG:** Dynamic SVG visualization of observed processes, network connections, files, and users.
 - **Process Tree Engine:** Hierarchical process ancestry tree traversal.
-- **Model & Database Switchers:** Hot-swap models (Ollama/OpenAI) and telemetry datasets directly in the UI.
+- **Model & Database Switchers:** Hot-swap models (OpenCode/Ollama/OpenAI) and telemetry datasets directly in the UI.
 - **Verified Incident Reports:** Structured incident reports with verdict banners, confidence scores, and 1-click markdown copying.
 
 ---
@@ -188,7 +190,7 @@ python -m a1.cli "Investigate an alert claiming unauthorized execution on SRV-FI
 | `alert` / `-q, --query` | Alert text / prompt to investigate |
 | `--db` | Path to a specific SQLite telemetry database |
 | `-p, --provider` | Model provider (`opencode`, `ollama`, or `openai`) |
-| `-m, --model` | Specific model name / tag (e.g. `gemma4:31b`, `gpt-4o-mini`) |
+| `-m, --model` | Specific model name / tag (e.g. `deepseek-v4.1-flash`, `gpt-4o-mini`) |
 | `--select-llm` | Interactively select provider and available models |
 | `-v, --verbose` | Stream detailed reasoning, SQL queries, and tool I/O to console |
 | `--web` | Launch the FastAPI web server |
@@ -237,7 +239,7 @@ When run with `--live`, each scenario executes through the compiled LangGraph st
 
 ### 5. Running Tests
 
-Run the full pytest suite (100 tests passed) and standalone smoke tests:
+Run the full pytest suite (99 tests passed) and standalone smoke tests:
 
 ```bash
 # Run pytest suite
@@ -255,9 +257,12 @@ Configure `a1` via `.env` or system environment variables:
 
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |
-| `LLM_PROVIDER` | `ollama` | `ollama` or `openai` |
-| `OLLAMA_MODEL_NAME` | `gemma4:31b` | Ollama model tag |
-| `OLLAMA_BASE_URL` | `https://ollama.com/api` | Base URL (trailing `/api` auto-handled) |
+| `LLM_PROVIDER` | `opencode` | `opencode`, `ollama`, or `openai` |
+| `OPENCODE_MODEL_NAME` | `deepseek-v4.1-flash` | OpenCode model tag |
+| `OPENCODE_BASE_URL` | `https://opencode.ai/inference/go/openai/v1` | OpenCode Go API base URL |
+| `OPENCODE_API_KEY` | *(empty)* | API key for OpenCode inference |
+| `OLLAMA_MODEL_NAME` | `llama3.1` | Ollama model tag |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server base URL (trailing `/api` auto-handled) |
 | `OLLAMA_NUM_CTX` | `32768` | Ollama context window size |
 | `OLLAMA_API_KEY` | *(empty)* | API key / Bearer token for Ollama Cloud |
 | `OPENAI_MODEL_NAME` | `gpt-4o-mini` | OpenAI model name |

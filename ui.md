@@ -18,14 +18,15 @@ Dark only; single purpose: an analyst triaging endpoint telemetry → verdict + 
 
 ## Direction — "case board"
 
-*Three fixed surfaces, one case. The rail is the case index, the bench is the record of reasoning, the map is the
-evidence board. Nothing is a card; hierarchy comes from hairline rules, background steps and type, never from
+*Two fixed surfaces and an evidence drawer. The topbar is the case switchboard, the bench is the record of
+reasoning, the drawer is the evidence board. Nothing is a card; hierarchy comes from hairline rules, background steps and type, never from
 gradients, glow, glass, pills or hero type.*
 
 | Decision | Choice | Why |
 | --- | --- | --- |
-| Layout | Three panes side by side at ≥1180px: rail 264px · bench (flex) · case map `min(52vw, 760px)` | Triage reads left-to-right: what case → what was asked → what the evidence says. The map is visible while the investigation streams, which is the whole point of an evidence graph. |
-| Map default | Open on desktop, overlay drawer ≤1180px, closes with Esc/Ctrl+M | Previously hidden; now the centrepiece. On narrow screens it must not kill the bench, so it slides over. |
+| Layout | Topbar · bench (flex) · evidence drawer (default closed, drag-resizable 380–900px) | Triage reads top-to-bottom: which dataset → what was asked → what the evidence says. The drawer opens beside the record only when the analyst needs it, so the bench keeps full width while a run streams. |
+| Dataset / case log | Both live in the `#caseMenu` popover opened from the dataset button in the topbar | Replaces the old 264px rail, which spent a third of the screen on navigation. The popover keeps dataset selection, history restore/delete/clear and workspace status one click away. |
+| Evidence drawer | Tabs Map / Events / Report; Map offers Tree and Links modes, a filter, type legend and Collapse; Ctrl+E or the Evidence button opens it, Esc closes it | One surface for every piece of evidence, sized by the analyst. Tree mode is the hierarchical entity/artifact view; Links mode is the process-relationship view. |
 | Bench | Left-aligned record: user line, then a five-step run (prepare/plan/collect/pack/verdict) with hypotheses, evidence pack and verdict | Progress is the honest thing to show: the backend really emits those stages. No fake typing indicator. |
 | Welcome | Compact case briefing inside the bench, not a hero: dataset facts (events, hosts, span), starting points as a dense list | Turns the empty state into triage context from real `/api/events` counts. |
 | Accent | One signal colour (amber `#e0a33c`) reserved for *running* state; verdict colours only on verdict surface | Colour means state, never decoration. |
@@ -64,54 +65,55 @@ The map is built from `src/a1/evidence_graph.py` `EntityType` / `RelationshipTyp
 shapes that actually exist in the bundled datasets (flat ECS dotted keys, nested ECS, Suricata, Wazuh). It never
 invents a node kind. Types rendered: host, user, process, file, registry_artifact, ip_address, domain, alert.
 Relationships: observed_on, spawned, authenticated_to, connected_to, resolved, created/modified/accessed (file and
-registry actions), associated_with (alert → anchor). Edges are drawn with an arrowhead at the target and a label at
-zoom ≥ 0.62.
+registry actions), associated_with (alert → anchor). Tree and Links render the same graph; Tree groups by entity and
+artifact, Links groups by process ancestry.
 
 ## Layout
 
 ```
-┌ rail 264 ┬──────── bench ────────┬── case map (52vw, max 760) ──┐
-│ dataset  │ topbar: case · stamp  │ Map | Events | Report   status│
-│ surface  │                       │ toolbar: search zoom fit reset│
-│ case log │ record of the run     │ canvas            │ inspector│
-│          │ composer              │ legend from real types present│
-└──────────┴───────────────────────┴──────────────────────────────┘
+┌ topbar: brand · new case · dataset/case menu · facts ─ verdict · evidence · model · shortcuts ┐
+├──────────────────── bench (flex) ──────────────────────┴─ evidence drawer (resizable) ─┤
+│ welcome: dataset facts, starting points                      │ Map | Events | Report          │
+│ record of the run: user line, stages, hypotheses, pack      │ Map: Tree | Links · filter     │
+│ composer                                                     │ legend · inspector             │
+└──────────────────────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
-Rail: brand, New investigation, dataset select + indexed hint, entity surface (real counts per type, click filters
-the map), case log (localStorage `a1_case_log_v2`, restore/delete/clear), status + shortcuts.
-Topbar: rail toggle, case name + facts, verdict stamp, case-map toggle with node count, model pill → menu.
-Welcome: kicker, one-line title, one-paragraph explainer, four dataset facts, starting points with a working filter
-(All / This dataset / Attack / Benign / Ambiguous).
-Composer: textarea, meta line (model · dataset · hint), send square that becomes a stop square while running.
+The topbar replaces the old rail. Brand, New investigation, the dataset button (opens `#caseMenu`: datasets list + case log + local workspace status), dataset facts, verdict stamp, Evidence button with count, model pill → menu, shortcuts. The evidence drawer is an `<aside>` toggled by the Evidence button or Ctrl+E; it can be resized by dragging its grip (380–900px) and closed with Esc. It is closed by default so the bench owns the screen until evidence is requested.
+
+Main bench: welcome (case kicker, dataset title, facts, starting points with All / This dataset / Attack / Benign / Ambiguous filter), streamed turns, and the composer (textarea, model · dataset meta, send button that becomes stop while running).
 
 ## Behaviour contract (every control)
 
 | Control | Behaviour |
 | --- | --- |
+| Dataset button | Opens `#caseMenu` with the real `/api/databases` list, indexed hint, case log (`localStorage`) and workspace status; Esc/outside click closes |
 | Dataset select | `POST /api/databases/set`, reloads `/api/events`, rebuilds the map, disabled while generating, reverts + toast on failure |
 | Starting point | Switches dataset first if needed, fills the prompt, submits once |
 | Send / stop | Enter submits; while generating the same button is Stop → `POST /api/cancel` + aborts the stream; no double submit |
 | Model pill | Popover with provider tabs from `/api/models`, filter, custom id; `POST /api/models/set`; closed by Esc/outside click |
-| Case map toggle | Opens/closes the map pane; Ctrl+M; state persisted |
-| Map toolbar | Search (highlights + dims), zoom ±, Fit, Reset (search/filters/scope/selection) |
-| Legend | Generated from types present; each chip toggles that type |
-| Node | Click selects, inspector shows attributes, relations (navigable), source events (jump to the filtered events tab); drag moves, dblclick focuses, background drag pans, wheel zooms, keyboard arrows/±/0 work when canvas is focused |
+| Evidence button | Opens/closes the evidence drawer; Ctrl+E; badge counts evidence items |
+| Map / Tree | Hierarchical entities → artifacts → source events; filter dims non-matches; Collapse closes groups; legend toggles types |
+| Map / Links | Process-relationship layout for the current graph; same filter/legend/selection semantics |
+| Node | Click selects, inspector shows attributes, relations (navigable), source events (jump to the filtered events tab) |
 | Inspector | Focus, isolate neighbourhood, copy node id, close |
 | Evidence pack | "Scope map to evidence" isolates the nodes touched by the kept event ids; "Show in events" |
 | Events tab | Search over host/action/process/summary/id, count, Copy CSV |
 | Report tab | Rendered markdown (sanitised), verdict tag, copy markdown |
 | Case log | Restore a saved run (verdict + report), delete one, clear all with confirm |
-| Shortcuts | `?` popover; Esc closes menu/inspector/map/drawer in that order |
+| Shortcuts | `?` popover; Esc closes menu/inspector/drawer in that order |
 
 Unavailable actions get a real disabled state or an explicit toast — never a fake success.
 
 ## Files
 
 - `src/a1/web/static/index.html` — shell (ids stable for JS and for `tests/test_web.py`).
-- `src/a1/web/static/style.css` — all classes emitted by `app.js` and `forensic-graph.js`.
-- `src/a1/web/static/app.js` — controller: API, SSE, map wiring, views, history.
-- `src/a1/web/static/forensic-graph.js` — `TelemetryGraph.build` normaliser/builder + `ForensicGraph` canvas renderer.
+- `src/a1/web/static/style.css` — all classes emitted by `app.js`, `forensic-graph.js`, `evidence-tree.js` and `process-links.js`.
+- `src/a1/web/static/app.js` — controller: API, SSE, drawer/tabs, map wiring, views, history.
+- `src/a1/web/static/forensic-graph.js` — `TelemetryGraph.build` normaliser + entity/relationship type metadata used by Tree and Links (legacy canvas renderer retained).
+- `src/a1/web/static/evidence-tree.js` — hierarchical entity/artifact/source-event tree renderer used by Map → Tree.
+- `src/a1/web/static/process-links.js` — process ancestry/relationship layout used by Map → Links.
+- `src/a1/web/static/vendor/` — vendored marked/purify assets served locally (no CDN).
 
 ## Backend changes
 

@@ -83,7 +83,7 @@ EVIDENCE CITATION & RIGOR:
 - Telemetry records describe observations:
    * CONFIRMED MALICIOUS (boundary: confirmed_malicious): A causally linked, multi-stage attack chain establishes malicious behavior. Examples include credential theft followed by lateral movement and remote execution, or sensitive data staging followed by persistence, repeated outbound connections to an unexplained external destination, and cleanup. Match the criteria to the attack type; credential dumping and lateral movement are not universal prerequisites.
    * SUSPICIOUS (boundary: unconfirmed_malicious): An anomalous technique or uncorrelated indicators are present, but telemetry does not establish a coherent malicious chain.
-  * INCONCLUSIVE (boundary: unconfirmed_malicious): Uncorrelated events without causal link (e.g. isolated normal network connection, or failed auth followed days later by routine user login).
+  * INCONCLUSIVE (boundary: inconclusive): Uncorrelated events without causal link (e.g. isolated normal network connection, or failed auth followed days later by routine user login). Use boundary telemetry_gap_inconclusive when the gap is specifically missing telemetry.
   * BENIGN (boundary: benign): Verified authorized system/administrative activity. Never conclude benign just because an initial query returned empty—verify that you queried the correct host and time window!
 - Evaluate authentication noise separately from the attack chain. Do not attribute an unrelated failed-then-successful interactive logon pair to the attack or label it brute force without supporting telemetry.
 """

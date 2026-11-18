@@ -15,19 +15,20 @@ Telemetry Schema Guidelines:
 
 Triage Responsibilities:
 1. EXTRACT ALL ENTITIES & CONTEXT:
-   - Identify every mentioned host: If the alert involves remote connections or lateral movement, extract BOTH the TARGET host (e.g. target server where incoming logons occurred) AND the SOURCE host (e.g. client workstation where the connection originated).
-   - Extract the targeted user account (e.g. jdoe) and the exact alert time window (e.g. 2026-09-10 09:30-10:00 UTC).
+   - Identify every host, user account, process, file, and address named or implied by the alert.
+   - When the alert describes an interaction between hosts, include both ends (for example a source and a destination) rather than assuming which one is compromised.
+   - Extract the exact alert time window (e.g. 2026-09-10 09:30-10:00 UTC).
    - In `initial_entities`, include all identified host IDs, user accounts, and relevant process names.
 
 2. FORMULATE MULTI-STAGE HYPOTHESES:
-   - Suspicious Hypothesis (Lateral Movement & Target Host Compromise): e.g. "Adversary performed network authentication or credential abuse on target host, followed by unauthorized command execution or service persistence."
-   - Suspicious Hypothesis (Source Host Staging & Credential Access): e.g. "Adversary compromised the source host and performed credential extraction or staging prior to initiating remote network connections."
-   - Benign Hypothesis: e.g. "Legitimate remote administration with mistyped passwords or routine scheduled task synchronization."
-   - Benign Hypothesis: e.g. "Independent routine system events with coincidental timing."
+   - Derive hypotheses from the observed activity, not from a fixed attack template. Cover the stages the telemetry could support: initial access, execution, credential access, discovery, lateral movement, collection/staging, exfiltration, persistence, and impact.
+   - Include at least one malicious hypothesis and one benign hypothesis (authorized administration, scheduled maintenance, or coincidental background activity).
+   - State what evidence would confirm or refute each hypothesis.
 
 3. INITIAL INVESTIGATION TARGETS:
-   - First target: Query authentication on the TARGET host (e.g. `search_timeline(host_id=target_host, category='authentication')`) to verify logon activity (e.g., failed and successful logon sequences).
-   - Second target: Check the SOURCE host for what process initiated the connection around that timestamp.
+   - Start with the hosts, users, processes, and time window named by the alert.
+   - Choose the first query category from the activity described (authentication, process, network, file, or registry) instead of always starting with authentication.
+   - Expand to another entity only when an observed event links it to the scoped activity; do not guess.
 
 Output Format Requirement:
 You must strictly return a valid JSON object matching the required schema:

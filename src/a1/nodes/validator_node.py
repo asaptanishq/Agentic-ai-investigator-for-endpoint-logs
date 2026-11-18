@@ -195,11 +195,10 @@ def validator_node(state: InvestigationState) -> Dict[str, Any]:
 
     # From confirmed correlations
     for corr in state.get("confirmed_correlations") or []:
-        if isinstance(corr, dict):
-            corr_text = str(corr)
-            extracted = extract_cited_ids_from_text(corr_text)
-            cited_event_ids.update(extracted["event_ids"])
-            cited_process_ids.update(extracted["process_ids"])
+        corr_text = str(corr)
+        extracted = extract_cited_ids_from_text(corr_text)
+        cited_event_ids.update(extracted["event_ids"])
+        cited_process_ids.update(extracted["process_ids"])
 
     # 2. Check existence in database
     db = get_active_db()

@@ -6,11 +6,7 @@ from a1.nodes.validator_node import (
     detect_adversarial_telemetry_strings,
     extract_cited_ids_from_text,
 )
-from a1.nodes.planner_node import (
-    planner_node,
-    generate_candidate_actions,
-    score_actions,
-)
+from a1.nodes.planner_node import generate_candidate_actions, score_actions
 from a1.evidence_graph import EvidenceGraph, EvidenceEntity, EntityType
 from a1.hypothesis import HypothesisTracker, HypothesisStatus
 

@@ -9,7 +9,7 @@ class InvestigationState(TypedDict):
     hypothesis_status: Optional[Dict[str, str]]
     iteration_count: int
     alert_context: str
-    confirmed_correlations: Optional[List[dict]]
+    confirmed_correlations: Optional[List[str]]
     inconsistencies_or_benign_explanations: Optional[List[str]]
     evidence_gaps: Optional[List[str]]
     verdict: Optional[str]
@@ -30,9 +30,7 @@ class InvestigationState(TypedDict):
     # stuck re-issuing identical tool calls is forced to correlation instead of
     # looping until MAX_INVESTIGATION_STEPS.
     repeat_nudges: int
-    lateral_network_nudge_sent: Optional[bool]
-    requested_auth_nudge_sent: Optional[bool]
-    requested_archive_nudge_sent: Optional[bool]
+    memory_processed_msg_count: Optional[int]
     evidence: Optional[List[dict]]
     enriched_alert: Optional[Dict[str, Any]]
     evidence_pack: Optional[Dict[str, Any]]

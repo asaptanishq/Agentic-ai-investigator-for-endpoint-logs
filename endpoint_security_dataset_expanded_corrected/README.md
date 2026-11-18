@@ -20,7 +20,7 @@
 Generation ID: `gen-20260920-expanded`
 Seed: `20260920`
 Schema version: `1.0.0`
-Events: `1050` (original bundle; the two shipped attack databases hold a subset)
+Events: `4490` total across the eight shipped databases.
 
 This expanded synthetic dataset supports agentic investigation across diverse scenarios (malicious intrusions, benign administrative tasks, ambiguous developer utility executions, and incomplete telemetry gaps). Agent-accessible telemetry is stored in the shipped `.db` files and queried via safe read-only connections. Ground truth is isolated in the `groundtruth/` subfolder and must remain unavailable to the investigating agent.
 

@@ -1,18 +1,15 @@
-"""Adaptive investigation planning module and graph node.
+"""Adaptive investigation planning helpers.
 
-Provides helper utilities (generate_candidate_actions, score_actions) consumed by
-investigator_node for goal-backward planning, as well as planner_node for direct
-workflow graph integration.
+Provides generate_candidate_actions/score_actions, consumed directly by
+investigator_node for goal-backward planning and budget allocation.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
 
-from a1.config import MAX_INVESTIGATION_STEPS
 from a1.evidence_graph import EvidenceGraph
 from a1.hypothesis import HypothesisTracker, HypothesisStatus
-from a1.state import InvestigationState
 
 logger = logging.getLogger(__name__)
 
@@ -103,51 +100,3 @@ def score_actions(candidates: List[Dict[str, Any]], budget_remaining: int) -> Li
             cand["budget_adjusted_score"] = base_score
     candidates.sort(key=lambda x: x.get("budget_adjusted_score", 0), reverse=True)
     return candidates
-
-
-def planner_node(state: InvestigationState) -> Dict[str, Any]:
-    """LangGraph node for adaptive investigation planning."""
-    iteration = state.get("iteration_count", 0)
-    budget_remaining = max(0, MAX_INVESTIGATION_STEPS - iteration)
-
-    eg_data = state.get("evidence_graph") or {}
-    graph = EvidenceGraph.from_dict(eg_data)
-
-    ht_data = state.get("hypothesis_tracker") or {}
-    tracker = HypothesisTracker.from_dict(ht_data)
-
-    # Initialize tracker with state hypotheses if empty
-    if not tracker.get_all() and state.get("hypotheses"):
-        for i, h_text in enumerate(state.get("hypotheses", [])):
-            tracker.add_hypothesis(h_text, hypothesis_id=f"H{i+1}")
-
-    candidates = generate_candidate_actions(graph, tracker, budget_remaining)
-    scored = score_actions(candidates, budget_remaining)
-
-    best_action = scored[0] if scored else None
-    trace_item = None
-    if best_action:
-        trace_item = {
-            "step": iteration + 1,
-            "budget_remaining": budget_remaining,
-            "objective": best_action["objective"],
-            "evidence_sought": best_action["evidence_sought"],
-            "tool_selected": best_action["tool"],
-            "reason": best_action["reason"],
-            "hypothesis_addressed": best_action["hypothesis_id"],
-        }
-
-    existing_trace = list(state.get("investigation_trace") or [])
-    if trace_item:
-        existing_trace.append(trace_item)
-
-    existing_rationale = list(state.get("structured_rationale") or [])
-    if trace_item:
-        existing_rationale.append(trace_item)
-
-    return {
-        "hypothesis_tracker": tracker.to_dict(),
-        "investigation_trace": existing_trace,
-        "structured_rationale": existing_rationale,
-        "active_hypothesis": best_action["hypothesis_id"] if best_action else state.get("active_hypothesis"),
-    }

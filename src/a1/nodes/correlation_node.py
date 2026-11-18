@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel, Field, field_validator
@@ -7,6 +8,8 @@ from typing import List, Literal
 from a1.llm import get_llm
 from a1.prompts import CORRELATION_SYSTEM_PROMPT
 from a1.nodes.structured_output import StructuredOutputRetryError, invoke_structured_with_retry, extract_outer_json
+
+logger = logging.getLogger(__name__)
 
 class CorrelationAndGapAnalysis(BaseModel):
     confirmed_correlations: List[str] = Field(default_factory=list, description="Confirmed process/event correlations")
@@ -59,7 +62,7 @@ def _extract_correlation_from_markdown(text: str) -> dict | None:
     return None
 
 
-def correlation_node(state):
+def correlation_node(state, enable_baseline_context: bool = True):
     llm = get_llm()
     structured_llm = llm.with_structured_output(CorrelationAndGapAnalysis)
 
@@ -82,19 +85,20 @@ def correlation_node(state):
                     rel_str += f" at {edge.timestamp}"
                 deterministic_correlations.append(rel_str)
         except Exception:
-            pass
+            logger.exception("Deterministic evidence-graph correlation extraction failed")
 
     # Deterministic Baseline Context checks (Issue #10)
     baseline_notes: List[str] = []
-    try:
-        from a1.baseline_context import assess_activity_context
-        for ev in (state.get("evidence") or []):
-            if isinstance(ev, dict):
-                ctx = assess_activity_context(ev)
-                if ctx.get("is_anomaly"):
-                    baseline_notes.extend(ctx.get("context_notes", []))
-    except Exception:
-        pass
+    if enable_baseline_context:
+        try:
+            from a1.baseline_context import assess_activity_context
+            for ev in (state.get("evidence") or []):
+                if isinstance(ev, dict):
+                    ctx = assess_activity_context(ev)
+                    if ctx.get("is_anomaly"):
+                        baseline_notes.extend(ctx.get("context_notes", []))
+        except Exception:
+            logger.exception("Baseline activity-context assessment failed")
 
     det_corr_str = "\n".join(f"- {c}" for c in deterministic_correlations) if deterministic_correlations else "- (No deterministic graph edges extracted)"
     baseline_str = "\n".join(f"- {n}" for n in set(baseline_notes)) if baseline_notes else "- (No baseline anomalies triggered)"

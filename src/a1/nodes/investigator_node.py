@@ -40,8 +40,8 @@ def _get_schema_hint() -> str:
 
     if db_key not in _SCHEMA_HINT_CACHE:
         try:
-            from a1.db import EndpointDatabase
-            schema = EndpointDatabase().get_schema()
+            from a1.db import get_active_db
+            schema = get_active_db().get_schema()
             lines = [f"  {t}({', '.join(cols)})" for t, cols in sorted(schema.items())]
             _SCHEMA_HINT_CACHE[db_key] = (
                 "DATABASE SCHEMA -- use exactly these table and column names, "
@@ -62,193 +62,37 @@ def _call_key(tool_call) -> tuple:
     )
 
 
-def _missing_smb_auth_correlation(messages):
-    rows = []
-    for message in messages:
-        if getattr(message, "type", "") != "tool":
-            continue
-        try:
-            payload = json.loads(getattr(message, "content", ""))
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, list):
-            rows.extend(row for row in payload if isinstance(row, dict))
-        elif isinstance(payload, dict):
-            for key in ("matches", "events", "network_connections", "files", "registry_events"):
-                value = payload.get(key)
-                if isinstance(value, list):
-                    rows.extend(row for row in value if isinstance(row, dict))
-
-    aliases = {
-        "source.ip": "source_ip",
-        "destination.ip": "destination_ip",
-        "destination.port": "destination_port",
-        "authentication.package": "authentication_package",
-        "logon.type": "logon_type",
-        "user.name": "user_name",
-        "user.domain": "user_domain",
-    }
-    normalized = []
-    for row in rows:
-        details = row.get("details", {})
-        projected = row.get("raw_json_projected", {})
-        if not isinstance(details, dict):
-            details = {}
-        if not isinstance(projected, dict):
-            projected = {}
-        fields = {aliases.get(key, key): value for key, value in projected.items()}
-        fields.update(row)
-        fields.update(details)
-        normalized.append({
-            "fields": fields,
-            "action": str(row.get("action", "")).lower(),
-            "host_id": str(row.get("host_id") or ""),
-            "timestamp": str(row.get("timestamp") or ""),
-        })
-
-    def field(record, key):
-        value = record["fields"].get(key)
-        return str(value) if value not in (None, "") else ""
-
-    failures = [record for record in normalized if (
-        record["action"] == "logon_failed"
-        and field(record, "authentication_package").casefold() == "ntlm"
-        and field(record, "logon_type") == "3"
-        and field(record, "source_ip")
-        and field(record, "destination_ip")
-        and field(record, "user_name")
-    )]
-    successes = [record for record in normalized if (
-        record["action"] == "logon_success"
-        and field(record, "authentication_package").casefold() == "ntlm"
-        and field(record, "logon_type") == "3"
-    )]
-
-    for success in successes:
-        related_failures = [failure for failure in failures if (
-            failure["host_id"] == success["host_id"]
-            and field(failure, "source_ip") == field(success, "source_ip")
-            and field(failure, "destination_ip") == field(success, "destination_ip")
-            and field(failure, "user_name").casefold() == field(success, "user_name").casefold()
-            and field(failure, "user_domain").casefold() == field(success, "user_domain").casefold()
-            and failure["timestamp"] < success["timestamp"]
-        )]
-        if len(related_failures) < 2:
-            continue
-        source_ip = field(success, "source_ip")
-        destination_ip = field(success, "destination_ip")
-        matching_smb = any(
-            record["action"] == "network_connection"
-            and record["host_id"] != success["host_id"]
-            and field(record, "source_ip") == source_ip
-            and field(record, "destination_ip") == destination_ip
-            and field(record, "destination_port") == "445"
-            for record in normalized
-        )
-        if not matching_smb:
-            return source_ip, destination_ip, success["host_id"]
-    return None
+_ANCHOR_KEYS = (
+    "event_id", "process_entity_id", "child_process_entity_id", "parent_entity_id",
+    "host_id", "timestamp", "action", "file_name", "file_path", "registry_path",
+    "command_line", "user_name", "source_ip", "destination_ip", "destination_port",
+)
 
 
-def _missing_requested_auth_hosts(state):
-    alert_text = str(state.get("alert_context", "")).casefold()
-    if not any(
-        term in alert_text for term in ("logon", "login", "authentication", "auth", "credential", "session")
-    ):
-        return []
+def _condense_older_tool_output(content: str) -> str:
+    """Keep structured anchors from older tool JSON instead of slicing mid-string."""
+    try:
+        payload = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return content[:700]
 
-    enriched_alert = state.get("enriched_alert") or {}
-    entities = enriched_alert.get("entities", {})
-    host_ids = entities.get("host_ids", [])
-    time_window = enriched_alert.get("time_window", {})
-    scope_start = str(time_window.get("start_time") or "")
-    scope_end = str(time_window.get("end_time") or "")
-    covered_hosts = set()
+    def trim(value, depth: int = 0):
+        if depth > 3:
+            return "..."
+        if isinstance(value, dict):
+            anchors = {key: value[key] for key in _ANCHOR_KEYS if key in value}
+            if anchors:
+                return anchors
+            return {
+                key: trim(item, depth + 1)
+                for key, item in value.items()
+                if isinstance(item, (dict, list))
+            }
+        if isinstance(value, list):
+            return [trim(item, depth + 1) for item in value[:20]]
+        return value
 
-    for message in state.get("messages", []):
-        for tool_call in getattr(message, "tool_calls", None) or []:
-            if tool_call.get("name") != "search_timeline":
-                continue
-            args = tool_call.get("args") or {}
-            category = args.get("category", "")
-            categories = (
-                [str(value).casefold() for value in category]
-                if isinstance(category, list)
-                else [value.strip().casefold() for value in str(category).split(",")]
-            )
-            if not any(value in ("authentication", "auth", "logon", "login") for value in categories):
-                continue
-
-            query_hosts = args.get("host_id", "")
-            if isinstance(query_hosts, list):
-                query_hosts = [str(value) for value in query_hosts]
-            else:
-                query_hosts = [value.strip() for value in str(query_hosts).split(",") if value.strip()]
-
-            query_start = str(args.get("start_time") or "")
-            query_end = str(args.get("end_time") or "")
-            if scope_start and query_start and query_start > scope_start:
-                continue
-            if scope_end and query_end and query_end < scope_end:
-                continue
-            covered_hosts.update(query_hosts)
-
-    return [host_id for host_id in host_ids if host_id not in covered_hosts]
-
-
-def _missing_requested_archive_files(state):
-    alert_text = str(state.get("alert_context", "")).casefold()
-    archive_names = {
-        name.casefold()
-        for name in re.findall(r"\b\w+(?:[.-]\w+)*\.(?:7z|zip|rar|tar|gz|cab)\b", alert_text)
-    }
-    if not archive_names:
-        return []
-
-    host_ids = (state.get("enriched_alert") or {}).get("entities", {}).get("host_ids", [])
-    created_names = set()
-    for message in state.get("messages", []):
-        if getattr(message, "type", "") != "tool":
-            continue
-        try:
-            payload = json.loads(getattr(message, "content", ""))
-        except (TypeError, json.JSONDecodeError):
-            continue
-        rows = []
-        if isinstance(payload, list):
-            rows.extend((row, "") for row in payload if isinstance(row, dict))
-        elif isinstance(payload, dict):
-            for key in ("matches", "events", "files", "network_connections", "registry_events"):
-                value = payload.get(key)
-                if isinstance(value, list):
-                    rows.extend((row, key) for row in value if isinstance(row, dict))
-
-        aliases = {"file.name": "file_name", "file.path": "file_path"}
-        for row, source in rows:
-            row_host = str(row.get("host_id") or payload.get("host_id") if isinstance(payload, dict) else row.get("host_id") or "")
-            if row_host and host_ids and row_host not in host_ids:
-                continue
-            details = row.get("details", {})
-            projected = row.get("raw_json_projected", {})
-            if not isinstance(details, dict):
-                details = {}
-            if not isinstance(projected, dict):
-                projected = {}
-            fields = {aliases.get(key, key): value for key, value in projected.items()}
-            fields.update(row)
-            fields.update(details)
-            action = str(row.get("action") or "").casefold()
-            is_file_creation = action == "file_created" or source == "files" or row.get("file_id") is not None
-            if not is_file_creation:
-                continue
-            file_name = str(fields.get("file_name") or "").casefold()
-            file_path = str(fields.get("file_path") or "").replace("/", "\\").rsplit("\\", 1)[-1].casefold()
-            if file_name in archive_names:
-                created_names.add(file_name)
-            if file_path in archive_names:
-                created_names.add(file_path)
-
-    return sorted(archive_names - created_names)
+    return json.dumps(trim(payload), default=str)
 
 
 def _update_investigation_memory(current_memory: dict, messages: list) -> dict:
@@ -507,17 +351,19 @@ def _extract_graph_and_metrics(
     iteration: int,
     active_hypo: Optional[str],
     working_memory: Optional[dict] = None,
+    enable_evidence_graph: bool = True,
 ) -> dict:
     # 1. Evidence Graph ingestion
     eg = EvidenceGraph.from_dict(state.get("evidence_graph") or {})
-    for m in state.get("messages", []):
-        if getattr(m, "type", "") == "tool":
-            content = getattr(m, "content", "")
-            if content:
-                try:
-                    eg.ingest_tool_result(getattr(m, "name", "tool"), {}, content)
-                except Exception:
-                    pass
+    if enable_evidence_graph:
+        for m in state.get("messages", []):
+            if getattr(m, "type", "") == "tool":
+                content = getattr(m, "content", "")
+                if content:
+                    try:
+                        eg.ingest_tool_result(getattr(m, "name", "tool"), {}, content)
+                    except Exception:
+                        pass
 
     # 2. Hypothesis Tracker & Dynamic Expansion
     ht = HypothesisTracker.from_dict(state.get("hypothesis_tracker") or {})
@@ -585,21 +431,42 @@ def _extract_graph_and_metrics(
     }
 
 
-def _build_investigator_return(base_dict: dict, state: dict, response: Any, iteration: int, active_hypo: Optional[str]) -> dict:
+def _build_investigator_return(
+    base_dict: dict,
+    state: dict,
+    response: Any,
+    iteration: int,
+    active_hypo: Optional[str],
+    enable_evidence_graph: bool = True,
+) -> dict:
     wm = base_dict.get("investigation_memory") or state.get("investigation_memory") or {}
-    meta = _extract_graph_and_metrics(state, response, iteration, active_hypo, wm)
+    meta = _extract_graph_and_metrics(
+        state, response, iteration, active_hypo, wm, enable_evidence_graph
+    )
     base_dict.update(meta)
     return base_dict
 
 
-def investigator_node(state):
+def investigator_node(state, enable_adaptive_planner: bool = True, enable_evidence_graph: bool = True):
     llm = get_llm().bind_tools(ALL_INVESTIGATION_TOOLS)
 
     iteration = state.get("iteration_count", 0) + 1
     budget_remaining = max(0, MAX_INVESTIGATION_STEPS - iteration)
 
-    # Accumulate working memory from all tool messages so far
-    working_memory = _update_investigation_memory(state.get("investigation_memory"), state.get("messages", []))
+    # Accumulate working memory only from messages added since the last visit.
+    history = state.get("messages", [])
+    processed = state.get("memory_processed_msg_count") or 0
+    if processed > len(history):
+        processed = 0
+    working_memory = _update_investigation_memory(
+        state.get("investigation_memory"), history[processed:]
+    )
+
+    def build(base_dict: dict) -> dict:
+        base_dict.setdefault("memory_processed_msg_count", len(history))
+        return _build_investigator_return(
+            base_dict, state, response, iteration, active_hypo, enable_evidence_graph
+        )
 
     # Adaptive investigation planning candidate actions (Issue #3)
     eg_for_plan = EvidenceGraph.from_dict(state.get("evidence_graph") or {})
@@ -629,17 +496,19 @@ def investigator_node(state):
             "the system will track dynamic hypotheses accordingly."
         )
 
-    candidates = generate_candidate_actions(eg_for_plan, ht_for_plan, budget_remaining)
-    scored_cands = score_actions(candidates, budget_remaining)
+    candidates = generate_candidate_actions(eg_for_plan, ht_for_plan, budget_remaining) if enable_adaptive_planner else []
+    scored_cands = score_actions(candidates, budget_remaining) if enable_adaptive_planner else []
     plan_lines = [
         f"  * Candidate {idx+1}: [{c.get('tool')}] {c.get('objective')} (Sought: {c.get('evidence_sought')})"
         for idx, c in enumerate(scored_cands[:3])
     ]
-    planner_block = (
-        f"\n\nADAPTIVE INVESTIGATION PLAN & BUDGET:\n"
-        f"- Investigation Step: {iteration} / {MAX_INVESTIGATION_STEPS} (Budget Remaining: {budget_remaining} tool calls)\n"
-        f"- Prioritized Action Recommendations:\n" + "\n".join(plan_lines)
-    )
+    planner_block = ""
+    if enable_adaptive_planner:
+        planner_block = (
+            f"\n\nADAPTIVE INVESTIGATION PLAN & BUDGET:\n"
+            f"- Investigation Step: {iteration} / {MAX_INVESTIGATION_STEPS} (Budget Remaining: {budget_remaining} tool calls)\n"
+            f"- Prioritized Action Recommendations:\n" + "\n".join(plan_lines)
+        )
 
     # Schema hint appended to the system prompt
     system = INVESTIGATOR_SYSTEM_PROMPT + "\n\n" + _get_schema_hint() + hypo_block + planner_block
@@ -663,16 +532,13 @@ def investigator_node(state):
             "If a hostname is unresolved or the scoped queries return no events, report that limitation instead of silently searching unrelated telemetry."
         )
 
-    # Optimize message history to prevent context explosion while preserving structured entity details
+    # Optimize message history to prevent context explosion while preserving structured anchors
     pruned_history = []
-    total_msgs = len(state["messages"])
-    for idx, m in enumerate(state["messages"]):
+    total_msgs = len(history)
+    for idx, m in enumerate(history):
         if idx < total_msgs - 3 and getattr(m, "type", "") == "tool" and len(str(getattr(m, "content", ""))) > 1000:
             from langchain_core.messages import ToolMessage
-            from a1.tools import summarize_tool_output
-            raw_str = str(m.content)
-            summary_info = summarize_tool_output(raw_str)
-            trimmed = f"[Summary: {summary_info}]\n[Telemetry sample]:\n" + raw_str[:700] + "\n... [older telemetry output condensed to preserve context]"
+            trimmed = "[Condensed older tool output: " + _condense_older_tool_output(str(m.content)) + "]"
             pruned_history.append(ToolMessage(content=trimmed, tool_call_id=getattr(m, "tool_call_id", ""), name=getattr(m, "name", "tool")))
         else:
             pruned_history.append(m)
@@ -702,107 +568,13 @@ def investigator_node(state):
                 "the investigation can move to correlation."
             )
         )
-        return _build_investigator_return({
+        return build({
             "messages": [response, nudge],
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0) + 1,
             "active_hypothesis": active_hypo,
             "investigation_memory": working_memory,
-        }, state, response, iteration, active_hypo)
-
-    missing_smb = _missing_smb_auth_correlation(state.get("messages", []))
-    if (
-        not new_calls
-        and missing_smb
-        and not state.get("lateral_network_nudge_sent")
-        and iteration < MAX_INVESTIGATION_STEPS
-    ):
-        source_ip, destination_ip, target_host = missing_smb
-        host_ids = enriched_alert.get("entities", {}).get("host_ids", [])
-        source_hosts = [host_id for host_id in host_ids if host_id != target_host]
-        source_scope = source_hosts[0] if len(source_hosts) == 1 else "the other resolved in-scope host"
-        nudge = HumanMessage(
-            content=(
-                _NUDGE_PREFIX + f" The collected telemetry has repeated NTLM type-3 failures followed by success "
-                f"on {target_host} from {source_ip} to {destination_ip}, but no matching source-host SMB event. "
-                f"Query search_timeline(host_id='{source_scope}', category='network') and verify an outbound "
-                "TCP/445 event with this source/destination and its process_entity_id before concluding."
-            )
-        )
-        return _build_investigator_return({
-            "messages": [response, nudge],
-            "iteration_count": iteration,
-            "repeat_nudges": state.get("repeat_nudges", 0),
-            "active_hypothesis": active_hypo,
-            "lateral_network_nudge_sent": True,
-            "investigation_memory": working_memory,
-        }, state, response, iteration, active_hypo)
-
-    missing_auth_hosts = _missing_requested_auth_hosts(state)
-    if (
-        not new_calls
-        and missing_auth_hosts
-        and not state.get("requested_auth_nudge_sent")
-        and iteration < MAX_INVESTIGATION_STEPS
-    ):
-        time_window = enriched_alert.get("time_window", {})
-        query_lines = [
-            f"search_timeline(host_id='{host_id}', category='authentication'"
-            + (f", start_time='{time_window['start_time']}'" if time_window.get("start_time") else "")
-            + (f", end_time='{time_window['end_time']}'" if time_window.get("end_time") else "")
-            + ")"
-            for host_id in missing_auth_hosts
-        ]
-        nudge = HumanMessage(
-            content=(
-                _NUDGE_PREFIX + " The alert indicates logon/authentication review is needed, but no "
-                "full-scope authentication query has been run for: " + ", ".join(missing_auth_hosts) + ". "
-                "Run " + "; ".join(query_lines) + ". Evaluate any interactive failure-success pair separately from "
-                "the primary attack chain; do not attribute it without causal links."
-            )
-        )
-        return _build_investigator_return({
-            "messages": [response, nudge],
-            "iteration_count": iteration,
-            "repeat_nudges": state.get("repeat_nudges", 0),
-            "active_hypothesis": active_hypo,
-            "requested_auth_nudge_sent": True,
-            "investigation_memory": working_memory,
-        }, state, response, iteration, active_hypo)
-
-    missing_archives = _missing_requested_archive_files(state)
-    if (
-        not new_calls
-        and missing_archives
-        and not state.get("requested_archive_nudge_sent")
-        and iteration < MAX_INVESTIGATION_STEPS
-    ):
-        time_window = enriched_alert.get("time_window", {})
-        host_ids = enriched_alert.get("entities", {}).get("host_ids", [])
-        query_lines = [
-            f"search_timeline(host_id='{host_id}', category='file', keyword='{archive_name}'"
-            + (f", start_time='{time_window['start_time']}'" if time_window.get("start_time") else "")
-            + (f", end_time='{time_window['end_time']}'" if time_window.get("end_time") else "")
-            + ")"
-            for host_id in host_ids
-            for archive_name in missing_archives
-        ]
-        nudge = HumanMessage(
-            content=(
-                _NUDGE_PREFIX + " The alert names archive artifact(s) " + ", ".join(missing_archives)
-                + ", but the retrieved telemetry does not include their file-creation event(s). Run "
-                + "; ".join(query_lines)
-                + " and distinguish the archive command from a separate file-created event before concluding."
-            )
-        )
-        return _build_investigator_return({
-            "messages": [response, nudge],
-            "iteration_count": iteration,
-            "repeat_nudges": state.get("repeat_nudges", 0),
-            "active_hypothesis": active_hypo,
-            "requested_archive_nudge_sent": True,
-            "investigation_memory": working_memory,
-        }, state, response, iteration, active_hypo)
+        })
 
     # FIX: Prevent premature termination before gathering data.
     tool_results_count = sum(1 for m in state.get("messages", []) if getattr(m, "type", "") == "tool")
@@ -814,20 +586,20 @@ def investigator_node(state):
                 "find_process_associations, or search_timeline) to query the database. Please invoke the tool now."
             )
         )
-        return _build_investigator_return({
+        return build({
             "messages": [response, nudge],
             "iteration_count": iteration,
             "repeat_nudges": state.get("repeat_nudges", 0),
             "active_hypothesis": active_hypo,
             "investigation_memory": working_memory,
-        }, state, response, iteration, active_hypo)
+        })
 
-    return _build_investigator_return({
+    return build({
         "messages": [response],
         "iteration_count": iteration,
         "active_hypothesis": active_hypo,
         "investigation_memory": working_memory,
-    }, state, response, iteration, active_hypo)
+    })
 
 def should_continue(state):
     messages = state.get("messages", [])

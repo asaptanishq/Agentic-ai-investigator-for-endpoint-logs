@@ -653,25 +653,23 @@ class EndpointDatabase:
 
 
 _db_lock = threading.Lock()
-_active_db: Optional[EndpointDatabase] = None
+_active_dbs: Dict[Path, EndpointDatabase] = {}
 
 
 def get_active_db(db_path: Optional[Any] = None) -> EndpointDatabase:
-    """Return the cached EndpointDatabase for the currently active DB path (or specified path)."""
-    global _active_db
+    """Return a cached EndpointDatabase per path, safe for concurrent investigations."""
+    current_path = (Path(db_path) if db_path else get_db_path()).resolve()
     with _db_lock:
-        current_path = Path(db_path) if db_path else get_db_path()
-        if _active_db is None or _active_db.db_path != current_path:
-            if _active_db is not None:
-                _active_db.close()
-            _active_db = EndpointDatabase(current_path)
-        return _active_db
+        db = _active_dbs.get(current_path)
+        if db is None:
+            db = EndpointDatabase(current_path)
+            _active_dbs[current_path] = db
+        return db
 
 
 def reset_active_db() -> None:
-    """Reset and close the cached active database instance."""
-    global _active_db
+    """Close and clear every cached database instance."""
     with _db_lock:
-        if _active_db is not None:
-            _active_db.close()
-            _active_db = None
+        for db in _active_dbs.values():
+            db.close()
+        _active_dbs.clear()

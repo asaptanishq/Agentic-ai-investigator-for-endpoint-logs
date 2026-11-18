@@ -79,7 +79,7 @@ Neither relationship type is treated as proof of maliciousness.
 
 Telemetry records describe observations. Ground truth contains evaluation annotations and expected correlations. A document-associated process, registry change, file creation, network connection, or authentication pattern is an investigation trigger—not an automatic malicious classification.
 
-Case-level evaluation labels are stored in `case_labels.json` and in scenario ground truth files (`groundtruth/groundtruth_*.json`), keyed by scenario IDs (e.g. `ATK-A` through `ATK-G`, `BEN-A`, `AMB-A`, `INC-A`). The allowed `case_label` values are `benign`, `suspicious`, `malicious`, and `inconclusive`. Labels are evaluator-only metadata and must not be exposed through `agent_events`.
+Case-level evaluation labels are stored in the scenario ground truth files (`groundtruth/groundtruth_*.json`), keyed by scenario IDs (e.g. `ATK-A` through `ATK-G`, `BEN-A`, `AMB-A`, `INC-A`). The allowed `case_label` values are `benign`, `suspicious`, `malicious`, and `inconclusive`. Labels are evaluator-only metadata and must not be exposed through agent queries.
 
 Each case label includes `confidence`, `expected_conclusion`, `evidence_basis`,
 and `verdict_boundary`. The verdict boundary records whether the evidence supports
@@ -98,31 +98,27 @@ The dataset intentionally permits missing parent events, absent process associat
 - `network_connections`, `files`, and `registry_events` reference `event_id`.
 - `ground_truth_events` references `events.event_id` but is logically isolated from agent-facing views.
 - Indexes cover timestamps, hosts, process entities, and scenario IDs.
-- `raw_json` is the authoritative observed payload. For every row, `raw_json` is
-  identical to the corresponding record in `events.jsonl`: `events.raw_json` holds
-  the event itself, and the normalized tables hold the parent event record
-  unchanged. Any consumer may therefore rely on `raw_json` alone for detection.
+- `raw_json` is the authoritative observed payload and holds the complete event
+  record. The normalized tables hold the same parent event record, so consumers
+  may rely on `raw_json` alone for detection.
 
 ## Agent-facing database
 
-`endpoint_security.db` is the complete evaluation database and contains the
-protected tables `ground_truth_events` and `scenario_metadata`. A SQLite view is
-not an access-control boundary: any process that can open the file can also read
-those tables directly.
+The shipped `.db` files are the agent-facing artifacts. Ground truth is kept in
+separate JSON files under `groundtruth/`, not in the telemetry databases.
 
-`agent_bundle/agent_endpoint_security.db` is the agent-facing subset. It contains
-only agent-accessible objects (`hosts`, `users`, `events`, `files`,
-`network_connections`, `registry_events`, `processes`) and the `agent_events`
-view. The protected tables are not present in that file, so the bundle can be
-handed to an investigating agent safely.
+For non-standard schemas (Suricata, Wazuh, LotL), `a1.db.EndpointDatabase` creates
+`TEMP VIEW`s that map source tables onto the canonical `events`/`hosts`/`etc.`
+interfaces. TEMP VIEWs live only on that connection: opening the file with an
+external `sqlite3` client will not expose them, so external queries must address
+the native source tables (`suricata_events`, `wazuh_events`, and so on).
 
 
 ## Schema Version and ECS Compatibility
 
 - `dataset.schema_version`: custom dataset schema version (`1.0.0`). It is present
-  on every telemetry record in `events.jsonl`, in `events.raw_json`, and in the
-  `raw_json` of every normalized table (`files`, `network_connections`,
-  `registry_events`, `processes`).
+  on every telemetry record in `events.raw_json` and in the `raw_json` of every
+  normalized table (`files`, `network_connections`, `registry_events`, `processes`).
 - `ecs.version`: omitted from all generated records because the dataset is
   ECS-inspired rather than a claim of complete ECS 8.11.0 compliance. No table
   embeds an `ecs.version` key.

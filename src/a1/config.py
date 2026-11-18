@@ -1,5 +1,8 @@
 from pathlib import Path
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 from dotenv import load_dotenv
 
 # Load .env if present
@@ -55,8 +58,25 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", None)
 
 # DB Path setting
+_DB_PATH_OVERRIDE: ContextVar[str] = ContextVar("a1_db_path_override", default="")
+
+
 def get_db_path() -> Path:
-    return Path(os.getenv("ENDPOINT_DB_PATH", str(DEFAULT_DB_PATH)))
+    return Path(_DB_PATH_OVERRIDE.get() or os.getenv("ENDPOINT_DB_PATH", str(DEFAULT_DB_PATH)))
+
+
+@contextmanager
+def database_request_context(db_path) -> Iterator[None]:
+    """Scope an explicit database path to one request thread."""
+    token = None
+    if db_path:
+        token = _DB_PATH_OVERRIDE.set(str(Path(db_path).resolve()))
+    try:
+        yield
+    finally:
+        if token is not None:
+            _DB_PATH_OVERRIDE.reset(token)
+
 
 DB_PATH = get_db_path()
 

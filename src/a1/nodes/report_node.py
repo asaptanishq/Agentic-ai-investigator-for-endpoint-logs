@@ -24,7 +24,7 @@ def _match_verdict(norm: str) -> str:
 
 
 def _match_verdict_boundary(norm: str) -> str:
-    valid = {"confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive"}
+    valid = {"confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive", "telemetry_gap_inconclusive"}
     if norm in valid:
         return norm
     if "confirmed_malicious" in norm:
@@ -33,6 +33,8 @@ def _match_verdict_boundary(norm: str) -> str:
         return "unconfirmed_malicious"
     if "benign" in norm:
         return "benign"
+    if "telemetry_gap" in norm:
+        return "telemetry_gap_inconclusive"
     if "inconclusive" in norm:
         return "inconclusive"
     return "unconfirmed_malicious"
@@ -73,7 +75,7 @@ def _dict_to_report_text(data: dict) -> str:
 
 class IncidentVerdict(BaseModel):
     verdict: Literal["benign", "suspicious", "malicious", "inconclusive"] = "suspicious"
-    verdict_boundary: Literal["confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive"] = "unconfirmed_malicious"
+    verdict_boundary: Literal["confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive", "telemetry_gap_inconclusive"] = "unconfirmed_malicious"
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     executive_summary: str = Field(
         default="",
@@ -162,7 +164,7 @@ class IncidentVerdict(BaseModel):
 _BOUNDARY_FOR_VERDICT = {
     "benign": "benign",
     "suspicious": "unconfirmed_malicious",
-    "inconclusive": "unconfirmed_malicious",
+    "inconclusive": "inconclusive",
     "malicious": "confirmed_malicious",
 }
 
@@ -280,7 +282,7 @@ def _parse_verdict_and_boundary_lines(lines: List[str]) -> Tuple[str, str]:
         b_match = re.search(r'\bverdict\s*boundary\s*:\s*([a-z_]+)', line_clean, re.IGNORECASE)
         if b_match:
             cand_b = b_match.group(1).lower().strip()
-            if cand_b in ("confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive"):
+            if cand_b in ("confirmed_malicious", "unconfirmed_malicious", "benign", "inconclusive", "telemetry_gap_inconclusive"):
                 verdict_boundary = cand_b
     return verdict, verdict_boundary
 
@@ -484,7 +486,7 @@ def _attempt_verdict_recovery(err_str: str, gaps: list, state: dict) -> dict:
 
     return {
         "verdict": "inconclusive",
-        "verdict_boundary": "unconfirmed_malicious",
+        "verdict_boundary": "inconclusive",
         "confidence": 0.40,
         "summary": "- Automated report generation encountered an error; insufficient evidence for definitive determination.",
         "reasoning": "- Automated structured report synthesis failed and no confirmed correlations exist; assigned inconclusive safety baseline.",

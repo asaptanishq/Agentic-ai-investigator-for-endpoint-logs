@@ -29,27 +29,28 @@ class ExperimentRunner:
 
     @staticmethod
     def _simulate_mock_case_state(case_info: Dict[str, Any], config: ExperimentConfig) -> Dict[str, Any]:
-        """Synthesize simulated state for offline or ablation testing."""
+        """Synthesize a clearly-labelled simulated state for offline plumbing tests.
+
+        This intentionally does not vary with feature flags: fabricated scores must
+        never be used as evidence that a feature improves investigation quality.
+        """
         expected_verdict = case_info.get("case_label", "malicious")
         expected_boundary = case_info.get("verdict_boundary", "confirmed_malicious")
-
-        hallucinated = 0 if config.enable_validator else 2
         evidence_items = case_info.get("evidence_basis", [])
-        recall_factor = 1.0 if config.enable_evidence_graph else 0.7
-        matched = int(len(evidence_items) * recall_factor)
-        matched_text = " ".join(evidence_items[:matched])
 
         return {
             "verdict": expected_verdict,
             "verdict_boundary": expected_boundary,
             "report_fallback_used": False,
-            "iteration_count": 4 if config.enable_adaptive_planner else 7,
-            "repeat_nudges": 0 if config.enable_adaptive_planner else 1,
+            "iteration_count": 4,
+            "repeat_nudges": 0,
+            "simulated": True,
             "messages": [
                 {
                     "content": (
-                        f"## Verdict\n{expected_verdict}\n\n## Evidence\n{matched_text}\n"
-                        + ("evt-exp-001 proc-exp-001 " if not hallucinated else "evt-fake-999 ")
+                        f"## Verdict\n{expected_verdict}\n\n## Evidence\n"
+                        + " ".join(evidence_items)
+                        + " evt-exp-001 proc-exp-001"
                     )
                 }
             ],
@@ -74,6 +75,7 @@ class ExperimentRunner:
             "messages": [],
             "hypotheses": [],
             "iteration_count": 0,
+            "repeat_nudges": 0,
             "alert_context": case_info.get("prompt", ""),
         }
         final_state = initial_state
@@ -130,6 +132,7 @@ class ExperimentRunner:
             "config_name": config.name,
             "flags": asdict(config),
             "cases_evaluated": len(results),
+            "simulated": mock_mode,
             "average_composite_score": round(avg_score, 2),
             "false_positives": total_fps,
             "false_negatives": total_fns,
@@ -142,7 +145,7 @@ class ExperimentRunner:
         config_a: ExperimentConfig,
         config_b: ExperimentConfig,
         cases: Optional[List[str]] = None,
-        mock_mode: bool = True,
+        mock_mode: bool = False,
     ) -> Dict[str, Any]:
         """A/B comparison between two system configurations (Issue #14)."""
         res_a = self.evaluate_configuration(config_a, cases, mock_mode=mock_mode)
@@ -154,6 +157,7 @@ class ExperimentRunner:
             "score_delta": round(res_b["average_composite_score"] - res_a["average_composite_score"], 2),
             "fp_reduction": res_a["false_positives"] - res_b["false_positives"],
             "fn_reduction": res_a["false_negatives"] - res_b["false_negatives"],
+            "simulated": mock_mode,
         }
 
         out_file = self.output_dir / "ab_comparison_results.json"
@@ -165,7 +169,7 @@ class ExperimentRunner:
     def run_ablation(
         self,
         cases: Optional[List[str]] = None,
-        mock_mode: bool = True,
+        mock_mode: bool = False,
     ) -> Dict[str, Any]:
         """Run full 5-stage ablation study (Issue #15)."""
         configs = [
@@ -188,6 +192,7 @@ class ExperimentRunner:
 
         ablation_summary = {
             "study_name": "Ablation Study: Incremental Capstone Enhancements",
+            "simulated": mock_mode,
             "stages": study_results,
         }
 
@@ -203,7 +208,8 @@ def main():
     from a1.benchmark import BENCHMARK_CASES
 
     parser = argparse.ArgumentParser(description="Run A1 benchmark experiments and ablation studies")
-    parser.add_argument("--live", action="store_true", help="Run live investigation pipeline instead of mock mode")
+    parser.add_argument("--live", action="store_true", help="Deprecated: live mode is now the default")
+    parser.add_argument("--mock", action="store_true", help="Run clearly-labelled simulated plumbing tests (no model calls)")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of benchmark cases")
     parser.add_argument("--ablation", action="store_true", help="Run full 5-stage ablation study")
     parser.add_argument("--cases", nargs="*", default=None, help="Specific case IDs to evaluate (e.g. ATK-A ATK-B)")
@@ -214,15 +220,15 @@ def main():
     if args.limit:
         case_ids = case_ids[:args.limit]
 
-    print(f"[*] Running ExperimentRunner (live={args.live}, ablation={args.ablation}, cases={case_ids})")
+    print(f"[*] Running ExperimentRunner (simulated={args.mock}, ablation={args.ablation}, cases={case_ids})")
     if args.ablation:
-        results = runner.run_ablation(cases=case_ids, mock_mode=not args.live)
+        results = runner.run_ablation(cases=case_ids, mock_mode=args.mock)
         print("\n=== Ablation Study Results ===")
         for stage in results["stages"]:
             print(f"  {stage['stage']}: Score {stage['avg_score']}/100, FPs: {stage['false_positives']}, FNs: {stage['false_negatives']}")
     else:
         full_cfg = ExperimentConfig("Full_System", True, True, True, True)
-        results = runner.evaluate_configuration(full_cfg, cases=case_ids, mock_mode=not args.live)
+        results = runner.evaluate_configuration(full_cfg, cases=case_ids, mock_mode=args.mock)
         print(f"\n=== Evaluation Summary ({results['config_name']}) ===")
         print(f"  Average Score: {results['average_composite_score']}/100")
         print(f"  False Positives: {results['false_positives']}, False Negatives: {results['false_negatives']}")

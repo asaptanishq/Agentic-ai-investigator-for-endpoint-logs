@@ -20,11 +20,12 @@ from a1.llm import (
     get_active_llm_info,
     set_active_llm,
     get_llm,
+    llm_request_context,
     opencode_session,
     invoke_with_network_retry,
 )
 from a1.tools import summarize_tool_output
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 logger = logging.getLogger("a1.web")
 logging.basicConfig(level=logging.INFO)
@@ -33,9 +34,27 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Active cancellation event tracking
-_active_investigations: Dict[str, asyncio.Event] = {}
+_active_investigations: Dict[str, threading.Event] = {}
 # Session storage for interactive analyst conversation & copilot Q&A
 _investigation_sessions: Dict[str, Dict[str, Any]] = {}
+_sessions_lock = threading.Lock()
+
+
+def _session_snapshot(session_id: str) -> Optional[Dict[str, Any]]:
+    with _sessions_lock:
+        return _investigation_sessions.get(session_id)
+
+
+def _save_session(session_id: str, data: Dict[str, Any]) -> None:
+    with _sessions_lock:
+        _investigation_sessions[session_id] = data
+
+
+def _append_chat_messages(session_id: str, *messages: Dict[str, str]) -> None:
+    with _sessions_lock:
+        session = _investigation_sessions.get(session_id)
+        if session is not None:
+            session.setdefault("messages", []).extend(messages)
 
 def get_available_databases() -> List[Dict[str, Any]]:
     """Scan the repository for SQLite database files."""
@@ -76,7 +95,7 @@ def get_available_databases() -> List[Dict[str, Any]]:
                 "display": display_name,
                 "path": str(resolved),
                 "size_bytes": resolved.stat().st_size,
-                "is_active": str(resolved) == str(Path(cfg.DB_PATH).resolve())
+                "is_active": resolved == Path(cfg.get_db_path()).resolve()
             })
 
     # Sort so default agent db is first
@@ -472,11 +491,15 @@ def _run_sync_investigation(
     queue: asyncio.Queue,
     query: str,
     session_id: str,
-    cancel_event: asyncio.Event,
+    cancel_event: threading.Event,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    db_path: Optional[str] = None,
 ) -> None:
     try:
-        with opencode_session(session_id):
+        with opencode_session(session_id), llm_request_context(provider, model), cfg.database_request_context(db_path):
             active_info = get_active_llm_info()
+            active_db_path = cfg.get_db_path()
             _safe_queue_put(
                 loop,
                 queue,
@@ -485,7 +508,7 @@ def _run_sync_investigation(
                     "query": query,
                     "session_id": session_id,
                     "llm": active_info,
-                    "db": Path(cfg.DB_PATH).name,
+                    "db": Path(active_db_path).name,
                 },
             )
 
@@ -494,6 +517,7 @@ def _run_sync_investigation(
                 "messages": [],
                 "hypotheses": [],
                 "iteration_count": 0,
+                "repeat_nudges": 0,
                 "alert_context": query,
             }
 
@@ -531,18 +555,18 @@ def _run_sync_investigation(
             if final_state and not cancel_event.is_set():
                 _emit_final_report_complete(loop, queue, final_state)
                 # Persist completed investigation for interactive chat & inquiry
-                _investigation_sessions[session_id] = {
+                _save_session(session_id, {
                     "session_id": session_id,
                     "query": query,
                     "state": final_state,
                     "report": _extract_report_content(final_state),
-                    "db": Path(cfg.DB_PATH).name,
-                    "db_path": str(cfg.DB_PATH),
+                    "db": Path(active_db_path).name,
+                    "db_path": str(active_db_path),
                     "messages": [
                         {"role": "user", "content": query},
                         {"role": "assistant", "content": _extract_report_content(final_state)},
                     ],
-                }
+                })
 
     except Exception as e:
         logger.exception("Investigation graph execution error")
@@ -556,14 +580,15 @@ def _run_sync_chat(
     queue: asyncio.Queue,
     message: str,
     session_id: str,
-    cancel_event: asyncio.Event,
+    cancel_event: threading.Event,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    db_path: Optional[str] = None,
 ) -> None:
     """Run interactive analyst chat copilot turn over completed investigation context."""
     try:
-        with opencode_session(session_id):
-            session_data = _investigation_sessions.get(session_id)
+        with opencode_session(session_id), llm_request_context(provider, model), cfg.database_request_context(db_path):
+            session_data = _session_snapshot(session_id)
             context_blocks = []
             if session_data:
                 state = session_data.get("state", {})
@@ -604,10 +629,14 @@ def _run_sync_chat(
                 system_prompt += "\n\n" + "\n\n".join(context_blocks)
 
             llm = get_llm(temperature=0.1, provider=provider, model=model)
-            prompt_msgs = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=message),
-            ]
+            prompt_msgs = [SystemMessage(content=system_prompt)]
+            for item in (session_data or {}).get("messages", []):
+                content = item.get("content") or ""
+                if item.get("role") == "user":
+                    prompt_msgs.append(HumanMessage(content=content))
+                elif item.get("role") == "assistant":
+                    prompt_msgs.append(AIMessage(content=content))
+            prompt_msgs.append(HumanMessage(content=message))
 
             _safe_queue_put(loop, queue, {"type": "start", "session_id": session_id, "query": message})
             response = invoke_with_network_retry(llm, prompt_msgs)
@@ -619,8 +648,11 @@ def _run_sync_chat(
             _safe_queue_put(loop, queue, {"type": "reasoning", "text": cleaned or raw_text})
 
             if session_data:
-                session_data.setdefault("messages", []).append({"role": "user", "content": message})
-                session_data["messages"].append({"role": "assistant", "content": cleaned or raw_text})
+                _append_chat_messages(
+                    session_id,
+                    {"role": "user", "content": message},
+                    {"role": "assistant", "content": cleaned or raw_text},
+                )
 
             _safe_queue_put(loop, queue, {"type": "complete", "data": {"reply": cleaned or raw_text}})
 
@@ -631,7 +663,7 @@ def _run_sync_chat(
         _safe_queue_put(loop, queue, None)
 
 
-async def _sse_generator(queue: asyncio.Queue, request: Request, session_id: str, cancel_event: asyncio.Event) -> AsyncGenerator[str, None]:
+async def _sse_generator(queue: asyncio.Queue, request: Request, session_id: str, cancel_event: threading.Event) -> AsyncGenerator[str, None]:
     try:
         while True:
             try:
@@ -645,7 +677,8 @@ async def _sse_generator(queue: asyncio.Queue, request: Request, session_id: str
                     break
                 yield ": keep-alive\n\n"
     finally:
-        _active_investigations.pop(session_id, None)
+        with _sessions_lock:
+            _active_investigations.pop(session_id, None)
 
 
 router = APIRouter()
@@ -658,7 +691,7 @@ async def get_status():
     return {
         "status": "ready",
         "active_llm": active,
-        "current_db": str(cfg.DB_PATH),
+        "current_db": str(cfg.get_db_path()),
         "databases": dbs,
     }
 
@@ -751,16 +784,23 @@ async def investigate_stream(req: InvestigateRequest, request: Request):
         except Exception as e:
             logger.warning(f"Could not switch database: {e}")
 
+    active_llm = get_active_llm_info()
     session_id = f"inv-{asyncio.get_event_loop().time()}"
-    cancel_event = asyncio.Event()
-    _active_investigations[session_id] = cancel_event
+    cancel_event = threading.Event()
+    with _sessions_lock:
+        _active_investigations[session_id] = cancel_event
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     worker = threading.Thread(
         target=_run_sync_investigation,
-        args=(loop, queue, req.query, session_id, cancel_event),
+        args=(
+            loop, queue, req.query, session_id, cancel_event,
+            req.provider or active_llm["provider"],
+            req.model or active_llm["model"],
+            str(cfg.get_db_path()),
+        ),
         daemon=True,
     )
     worker.start()
@@ -787,16 +827,23 @@ async def chat_stream(req: ChatRequest, request: Request):
         except Exception as e:
             logger.warning(f"Could not switch database: {e}")
 
+    active_llm = get_active_llm_info()
     session_id = req.session_id or f"chat-{asyncio.get_event_loop().time()}"
-    cancel_event = asyncio.Event()
-    _active_investigations[session_id] = cancel_event
+    cancel_event = threading.Event()
+    with _sessions_lock:
+        _active_investigations[session_id] = cancel_event
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     worker = threading.Thread(
         target=_run_sync_chat,
-        args=(loop, queue, req.message, session_id, cancel_event, req.provider, req.model),
+        args=(
+            loop, queue, req.message, session_id, cancel_event,
+            req.provider or active_llm["provider"],
+            req.model or active_llm["model"],
+            str(cfg.get_db_path()),
+        ),
         daemon=True,
     )
     worker.start()
@@ -806,7 +853,9 @@ async def chat_stream(req: ChatRequest, request: Request):
 
 @router.post("/api/cancel")
 async def cancel_all():
-    for cancel_event in _active_investigations.values():
+    with _sessions_lock:
+        events = list(_active_investigations.values())
+    for cancel_event in events:
         cancel_event.set()
     return {"status": "cancelling"}
 
