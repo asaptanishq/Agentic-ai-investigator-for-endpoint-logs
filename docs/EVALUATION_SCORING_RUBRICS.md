@@ -2,181 +2,214 @@
 
 ## 1. Executive Summary & Objective
 
-In modern Security Operations Centers (SOC) and Digital Forensics & Incident Response (DFIR), evaluating an autonomous investigation agent purely on binary accuracy ("did it output malicious?") is fundamentally flawed. When all evaluated attack datasets represent genuine intrusion incidents, an uncalibrated model that blindly declares "malicious" achieves 100% accuracy, despite hallucinating nonexistent indicators, overlooking root causes, or catastrophically false-positive alarming on benign operations.
+Binary accuracy ("did the agent say malicious?") is not a useful measure of a DFIR investigator. An agent can be right about the verdict while inventing citations, missing the attack chain, or flagging legitimate administration. The benchmark therefore scores six dimensions:
 
-To establish true forensic rigor, this specification defines an objective, transparent, 100-point multi-dimensional evaluation rubric that measures six critical capabilities across a balanced dataset of **Malicious Intrusions** (`ATK-A` through `ATK-G`), **Benign Administrative Operations** (`BEN-A`), **Ambiguous Dual-Use Activities** (`AMB-A`), and **Incomplete Telemetry Gaps** (`INC-A`).
+1. **Verdict & Boundary Accuracy** (20 points)
+2. **Ground-Truth Evidence Retrieval** (25 points)
+3. **Evidence Grounding & Claim Support** (20 points)
+4. **Confidence Calibration** (10 points)
+5. **Investigation Efficiency** (10 points)
+6. **Report Quality & Actionability** (15 points)
 
-### Core Evaluation Capabilities:
-1. **Verdict & Boundary Accuracy** (20 Points)
-2. **Ground Truth Evidence Retrieval** (25 Points)
-3. **Evidence Grounding & Zero-Hallucination Rate** (20 Points)
-4. **Confidence Calibration** (10 Points)
-5. **Investigation Efficiency & Query Quality** (10 Points)
-6. **Executive Incident Report Quality & Actionability** (15 Points)
+The suite covers the 10 shipped scenarios (7 malicious, 1 benign, 1 ambiguous, 1 incomplete-telemetry) plus optional AIT-ADS cases built from AMiner alert exports. Every case is scored against a SQLite database, not against the agent's own narrative.
 
 ---
 
 ## 2. Multi-Dimensional Scoring Breakdown
 
+| Dimension | Weight | What it measures |
+|---|---:|---|
+| 1. Verdict & boundary | 20 | Correct label and operational boundary |
+| 2. Evidence retrieval | 25 | Weighted checklist coverage (20) + key-IOC coverage (5) |
+| 3. Grounding & claim support | 20 | Cited IDs exist **and** support the surrounding claim |
+| 4. Confidence calibration | 10 | Brier score, rescaled so a 0.5 guess earns zero |
+| 5. Investigation efficiency | 10 | Work done, loops, retries, duplicate queries |
+| 6. Report quality | 15 | Case-specific timeline, attribution, rationale, actions, caveats |
+| **Total** | **100** | |
+
+### Dimension 1 — Incident Verdict & Boundary (20 Points)
+
+- **Verdict (15)**: exact match with `malicious`, `benign`, `suspicious`, or `inconclusive`.
+- **Boundary (5)**: match with `confirmed_malicious`, `unconfirmed_malicious`, `benign`, `inconclusive`, or `telemetry_gap_inconclusive` (with documented normalization).
+- **Fallback penalty**: a report recovered through the structured-output fallback receives 0 for this dimension.
+
+**FP/FN**:
+- **FP**: expected benign/inconclusive, agent says malicious/suspicious.
+- **FN**: expected malicious, agent says anything other than malicious (this now includes `suspicious`).
+- Ambiguous-case errors are counted separately via `is_ambiguous_error`.
+
+The summary also emits the full verdict confusion matrix, per-label precision/recall/F1, macro F1, and bootstrap 95% confidence intervals for verdict accuracy and mean rubric score.
+
+### Dimension 2 — Ground-Truth Evidence Retrieval (25 Points)
+
+**Checklist coverage (20 points).** Each case has weighted `checks` in `groundtruth/eval_checks.json`. A check is either matched by any of its phrases/indicators or not; critical checks receive weight 2, ordinary checks weight 1. Coverage is `sum(matched weights) / sum(all weights)`, and the score is `20 × coverage`. If a case has no checks, they are derived from `evidence_basis`. Evidence is searched in the report only, never in raw tool output or `investigation_memory`.
+
+**Key IOC coverage (5 points).** Each case's `key_iocs` (paths, hashes, IPs, service names, command lines) is tested independently: `5 × covered / total`. A case with no `key_iocs` folds its full 25 points into checklist coverage. `distractors` are reported diagnostically but are not scored yet.
+
+### Dimension 3 — Evidence Grounding & Claim Support (20 Points)
+
+Every cited `evt-*`, `proc-*`, and `suri-*` identifier is resolved against SQLite. Process IDs may resolve through `processes` or through `events.process_entity_id`; `suri-*` IDs resolve through the canonical `events` view.
+
+Existence is not enough: the cited row must share a distinctive token (host, process, path, IP, URL, etc.) with the sentence/line that cites it. A real ID attached to an unrelated claim is therefore **unsupported**, not verified.
+
 ```
-+-----------------------------------------------------------------------------------+
-|                        DFIR 100-POINT EVALUATION RUBRIC                           |
-+-----------------------------------------------------------------------------------+
-| Dimension                                              | Weight | Min-Max Points  |
-+--------------------------------------------------------+--------+-----------------+
-| 1. Incident Verdict & Boundary Precision               | 20%    | 0 to 20 pts     |
-| 2. Ground Truth Evidence Retrieval (Graded Recall)     | 25%    | 0 to 25 pts     |
-| 3. Evidence Grounding & Zero-Hallucination Integrity   | 20%    | 0 to 20 pts     |
-| 4. Confidence Calibration (Brier Score)                | 10%    | 0 to 10 pts     |
-| 5. Investigation Efficiency & Query Quality            | 10%    | 0 to 10 pts     |
-| 6. Executive Report Completeness & Actionability       | 15%    | 0 to 15 pts     |
-+--------------------------------------------------------+--------+-----------------+
-| TOTAL COMPOSITE BENCHMARK SCORE                        | 100%   | 0 to 100 pts    |
-+-----------------------------------------------------------------------------------+
+base       = 20 × supported / total_cited
+penalty    = min(10, 2 × hallucinated)
+Grounding  = max(0, base − penalty)
 ```
 
----
+- A fabricated ID costs a flat 2 points on top of losing its share of the ratio.
+- An ID that exists but does not support its surrounding claim loses its share but is not called a hallucination.
+- An unavailable table/view makes the citation **unverified**; it does not count as supported.
+- No citations ⇒ 0.
 
-### Dimension 1: Incident Verdict & Boundary Precision (20 Points)
+Reported diagnostics: `hallucinated_citations`, `unsupported_citations`, `unverified_citations`, `total_citations`, `supported_citations`, and `citation_support_rate`.
 
-Measures the agent's ability to accurately discriminate between genuine threats, legitimate IT administration, ambiguous developer tasks, and telemetry blind spots without relying on hardcoded fallback routines.
+### Dimension 4 — Confidence Calibration (10 Points)
 
-- **Verdict Match (15 Points)**:
-  - **15 pts**: Agent verdict matches scenario ground truth (`malicious`, `benign`, `suspicious`, `inconclusive`).
-    - For `BEN-A`: Agent must recognize benign administrative activity (`benign`) and avoid raising a false positive alarm.
-    - For `INC-A`: Agent must detect missing telemetry chains (parent process, network flows) and correctly report `inconclusive` / `insufficient_telemetry` rather than making unsupported accusations.
-    - For `AMB-A`: Agent evaluates dual-use utility intent and reaches the documented operational determination.
-  - **0 pts**: Agent verdict diverges from ground truth.
-- **Verdict Boundary Match (5 Points)**:
-  - **5 pts**: Correct operational confidence boundary (`confirmed_malicious`, `unconfirmed_malicious`, `benign`). Boundaries are normalized across evaluation datasets (`confirmed_benign` is treated as equivalent to `benign`).
-  - **0 pts**: Mismatched confidence boundary.
-- **Structured Output Fallback Penalty**:
-  - Automatic deduction of all 20 points if the report was produced via structured output recovery fallback (`report_fallback_used = True`).
+Calibration uses the Brier score of the **verdict** outcome only (boundary is scored in Dimension 1, so a near-miss boundary is not double-penalized):
 
-#### False Positive (FP) and False Negative (FN) Tracking:
-- **False Positive (FP)**: Marking a benign or incomplete scenario as `malicious` or `suspicious`.
-- **False Negative (FN)**: Marking a confirmed intrusion scenario as `benign` or `inconclusive`.
+```
+Brier = (confidence − outcome)²
+Calibration = 10 × max(0, 1 − Brier / 0.25)
+```
 
----
+A correct verdict at 90% confidence scores 9.6; at 50% it scores 0; a wrong verdict at 90% also scores 0. Constant 0.5 confidence no longer earns 7.5 points. Missing confidence defaults to 0.5.
 
-### Dimension 2: Ground Truth Evidence Retrieval (25 Points)
+### Dimension 5 — Investigation Efficiency (10 Points)
 
-Measures whether the agent uncovered the technical building blocks documented in `endpoint_security_dataset_expanded_corrected/groundtruth/groundtruth_*.json` (`evidence_basis`). Each evidence item becomes a set of distinctive indicators (paths, executables, IPs, event/process IDs, and content words after light stemming). An item earns graded coverage:
+- **Repetition freedom (3)**: 3 minus 1.2 per repetition nudge, floored at 0.
+- **Step economy (3)**: 3 for 1–6 iterations, 2 for 7–9, 1 for more.
+- **Retry/fallback (2)**: 2 with no report fallback/retry, 0.5 if a retry was used, 0 on fallback.
+- **Query quality (2)**: requires at least one tool call; 2 for zero duplicate calls, 1 for 1–2, 0 for more.
 
-$$\text{Coverage}_i = \frac{\text{matched indicators}_i}{\text{total indicators}_i}, \qquad \text{Recall} = \frac{1}{N}\sum_{i=1}^{N}\text{Coverage}_i$$
+A run with `iteration_count = 0` scores **0**, so "investigate nothing" is no longer maximally efficient.
 
-$$\text{Evidence Recall Score} = 25 \times \text{Recall}$$
+### Dimension 6 — Report Quality & Actionability (15 Points)
 
-`benchmark.py` also reports **evidence precision** (supported citations / total citations) and **evidence F1**, so mentioning many incidental tokens does not automatically earn full recall. A label with an empty `evidence_basis` scores 0 (there is nothing to verify), not full credit.
+- **Timeline (4)**: at least two dated table rows; full credit requires a citation in the timeline.
+- **Case attribution (4)**: 2 for an expected host, 2 for a key IOC. Without case metadata, 2 for naming a concrete target.
+- **Grounded rationale (3)**: a Reasoning/Analysis section with a citation; 1.5 for substantive prose without one.
+- **Concrete actions (2)**: a response section with an action verb and a named target.
+- **Caveats (2)**: a non-empty Evidence Gaps/Limitations section.
 
-### Dimension 3: Evidence Grounding & Zero-Hallucination Integrity (20 Points)
+Headings and a table alone cannot reach 15/15.
 
-Citing an event ID or process ID that does not exist in the active telemetry is a severe evidentiary breach. Every cited `evt-*`, `proc-*`, and `suri-*` identifier is queried against SQLite (process IDs may resolve through `processes` or through `events.process_entity_id`, since not every event-spawned process gets its own process row):
+### Scorecard Grade Scale
 
-$$\text{Grounding Score} = 20 \times \frac{\text{verified citations}}{\text{total citations}}$$
-
-- No citations at all ⇒ **0 points** (an unsupported report is not grounded).
-- A citation whose query fails because the table/view is unavailable is **UNVERIFIED** and does not count as verified.
-- `hallucinated_citations`, `total_citations`, and `unverified_citations` are reported per case.
-
-The validator separately checks claimed relationships (parentage, network flows, hostnames) and reports `validation_status` plus `relationship_correctness`; these are diagnostics, not double-counted points.
-
-### Dimension 4: Confidence Calibration (10 Points)
-
-An accurate verdict with unjustified certainty is operationally unsafe. Calibration uses the Brier score against binary correctness of the **verdict** (boundary precision is scored separately, so a near-miss boundary is not double-penalized):
-
-$$\text{Brier} = (c - o)^2, \qquad o \in \{0,1\}$$
-
-$$\text{Calibration Score} = 10 \times (1 - \text{Brier})$$
-
-Missing confidence defaults to 0.5. A correct verdict at 90% confidence scores 9.9; a correct verdict at 50% scores 7.5; an incorrect verdict at 90% scores 1.0.
-
-### Dimension 5: Investigation Efficiency & Query Quality (10 Points)
-
-- **Repetition loop freedom (3 pts)**: 3 minus 1.2 per repetition nudge, floored at 0.
-- **Step economy (3 pts)**: 3 for ≤4 iterations, 2 for 5–6, 1 for longer.
-- **Retry/fallback (2 pts)**: 2 when no report fallback/retry, 0.5 otherwise.
-- **Query quality (2 pts)**: 2 for zero duplicate tool calls, 1 for 1–2 duplicates, 0 for more (from `quality_metrics`).
-
-### Dimension 6: Executive Report Completeness & Actionability (15 Points)
-
-- **Forensic timeline (4 pts)**: Markdown table with at least two dated rows (1 pt if only a header/heading).
-- **Grounded citations (3 pts)**: 3 for ≥2 distinct `evt-*`/`proc-*`/`suri-*` IDs, 1 for one, 0 for none.
-- **Benign explanations / evidence gaps (2 pts)**: present and substantive.
-- **Containment & remediation (3 pts)**: Next Steps, Remediation, or Playbook section.
-- **Structure (3 pts)**: ≥1,000 characters and ≥3 level-2/3 headings (1 pt for ≥2 headings).
+| Composite | Grade | Meaning |
+|---:|:---:|---|
+| 90–100 | **A+** | Forensic-grade: correct verdict, strong checklist/IOC coverage, supported citations |
+| 80–89 | **A** | Strong, with minor evidence or reporting gaps |
+| 70–79 | **B** | Actionable but incomplete |
+| 60–69 | **C** | Premature conclusion or significant gaps |
+| <60 | **F** | Wrong verdict, fabricated evidence, or no usable report |
 
 ---
 
-## 3. Scorecard Grade Scale
+## 3. Reliability Notes
 
-| Composite Score | Grade | Operational Assessment |
-|:---|:---:|:---|
-| **90 - 100** | **A+ (Exemplary)** | Forensic-grade investigation: accurate verdict, high recall, zero hallucination, comprehensive timeline & IOC tables. |
-| **80 - 89** | **A (Superior)** | Strong investigation: accurate verdict and solid evidence grounding with minor omissions in background timeline. |
-| **70 - 79** | **B (Acceptable)** | Actionable verdict with partial IOC recall or minor query inefficiencies. |
-| **60 - 69** | **C (Deficient)** | Premature conclusion, significant telemetry gaps, or minor citation inconsistencies. |
-| **< 60** | **F (Unacceptable)** | Mismatched verdict, false positive alarm, hallucinated citations, or infinite tool repetition loop. |
-
----
-
-## 4. Benchmark Scenarios Catalog
-
-| Scenario ID | Class | Database | Telemetry Focus | Ground Truth Reference |
-|:---|:---|:---|:---|:---|
-| **ATK-A** | Malicious | `attack_lateral_movement.db` | LSASS memory dump, SMB connection, NTLM logon, service install | `groundtruth/groundtruth_attack_A_lateral_movement.json` |
-| **ATK-B** | Malicious | `attack_data_exfiltration.db` | Staged spreadsheet archive, scheduled task, outbound HTTPS, cleanup | `groundtruth/groundtruth_attack_B_data_exfiltration.json` |
-| **ATK-C** | Malicious | `ransomware_attack_complete_ecs.db` | Phishing attachment, vssadmin shadow delete, LockBit encryption | `groundtruth/groundtruth_attack_C_ransomware.json` |
-| **ATK-D** | Malicious | `attack_lotl_fileless.db` | LOLBins (mshta, certutil, wmic), encoded PowerShell, in-memory C2 | `groundtruth/groundtruth_attack_D_lotl_fileless.json` |
-| **ATK-E** | Malicious | `wazuh_lotl_attack_dataset.db` | Wazuh SIEM/EDR, LotL commands, SAM registry access, lateral movement | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
-| **ATK-F** | Malicious | `suricata_c2_intrusion.db` | Suricata NIDS alerts, CobaltStrike C2 beaconing, SMB reconnaissance | `groundtruth/groundtruth_attack_F_suricata.json` |
-| **ATK-G** | Malicious | `attack_supply_chain.db` | Enterprise supply chain compromise across 32 endpoints (1,890 events) | `groundtruth/groundtruth_attack_G_supply_chain.json` |
-| **BEN-A** | Benign | `benign_admin_activity.db` | Legitimate backup script (`backup_verification.ps1`), SMB flows, registry checks | `groundtruth/groundtruth_benign_A_admin_activity.json` |
-| **AMB-A** | Ambiguous | `attack_lotl_fileless.db` | Dual-use developer utility invocations (certutil, powershell flags) | `groundtruth/groundtruth_ambiguous_A_dev_activity.json` |
-| **INC-A** | Inconclusive | `attack_lateral_movement.db` | Alert on SRV-FILE-01 missing parent process and network connection telemetry | `groundtruth/groundtruth_incomplete_A_missing_telemetry.json` |
+- **Scoring is deterministic; the agent is not.** A single run per case is a snapshot. For a leaderboard, run each case at least 3–5 times and compare confidence intervals, not one composite.
+- The summary prints 95% bootstrap CIs for verdict accuracy and mean score. With four cases those intervals are necessarily wide; treat them as uncertainty bounds, not precision estimates.
+- Grounding claim support is a lexical heuristic, not semantic entailment. It blocks obvious "real ID, unrelated claim" citations but cannot prove that an inference is correct.
+- Checklist phrases are curated per case; inspect `eval_checks.json` before comparing across datasets. AIT-ADS cases use attack-step anchors and are coarser than the hand-written shipped checks.
+- The 100-point weights are design choices, not empirically validated against human experts. Report per-dimension scores alongside the composite.
+- AIT-ADS cases only include AMiner anomaly records, not full packet/process telemetry. They test triage under telemetry limits, not endpoint forensics.
 
 ---
 
-## 5. Ablation Studies & Experimental Comparison Framework
+## 4. Benchmark Scenarios
 
-To empirically evaluate system contributions, the repository includes an experiment runner (`src/a1/experiment.py`) for conducting ablation studies across four core architectural augmentations:
+| ID | Class | Database | Focus |
+|:---|:---|:---|:---|
+| **ATK-A** | Malicious | `attack_lateral_movement.db` | LSASS dump, SMB, NTLM logon, service persistence |
+| **ATK-B** | Malicious | `attack_data_exfiltration.db` | Staged archive, scheduled task, outbound HTTPS, cleanup |
+| **ATK-C** | Malicious | `ransomware_attack_complete_ecs.db` | Phishing, shadow-copy deletion, LockBit encryption |
+| **ATK-D** | Malicious | `attack_lotl_fileless.db` | LOLBins, encoded PowerShell, in-memory activity |
+| **ATK-E** | Malicious | `wazuh_lotl_attack_dataset.db` | Wazuh SIEM/EDR, LotL commands, SAM access |
+| **ATK-F** | Malicious | `suricata_c2_intrusion.db` | Suricata alerts, CobaltStrike beaconing, SMB recon |
+| **ATK-G** | Malicious | `attack_supply_chain.db` | 32-endpoint supply-chain compromise |
+| **BEN-A** | Benign | `benign_admin_activity.db` | Backup script, SMB flows, registry checks |
+| **AMB-A** | Ambiguous | `attack_lotl_fileless.db` | Dual-use developer tooling |
+| **INC-A** | Inconclusive | `attack_lateral_movement.db` | Missing parent/network telemetry |
+| **AIT-FOX** | Malicious (external) | `benchmark_ait/ait_fox.db` | AMiner anomaly alerts around a multi-step attack |
+| **AIT-HARRISON** | Malicious (external) | `benchmark_ait/ait_harrison.db` | Same adapter, different environment |
 
-1. **Evidence Graph** (`enable_evidence_graph`): Structured entity-relationship DAG linking processes, files, network flows, and hosts.
-2. **Adaptive Planner** (`enable_adaptive_planner`): Information-gain action candidate scoring minimizing wasted steps.
-3. **Evidence Validator** (`enable_validator`): Deterministic database grounding checking every cited artifact ID against SQLite.
-4. **Baseline Context** (`enable_baseline_context`): Enterprise baseline context injection separating normal operations from deviations.
-
-### Running Evaluations
+AIT-ADS source files are not redistributed. Point the runner at a local extract of `ait_ads`:
 
 ```powershell
-# Run the complete 10-scenario benchmark:
-.venv\Scripts\python.exe -m a1.benchmark
+.venv\Scripts\python.exe -m a1.benchmark --split ait --limit 2 `
+  --ait-ads-dir C:\Users\you\Downloads\ait_ads `
+  --out bench_ait.json
+```
 
-# Run the benchmark with a limit of 5 cases:
+Use `--ait-scenarios fox,harrison` to select scenarios and `--ait-rebuild` after changing the adapter. Generated databases go to `benchmark_ait/` (git-ignored).
+
+---
+
+## 5. Running Evaluations
+
+```powershell
+# All 10 shipped scenarios (limit defaults to 0 = all)
+.venv\Scripts\python.exe -m a1.benchmark --split all --out bench_all.json
+
+# Two shipped scenarios
+.venv\Scripts\python.exe -m a1.benchmark --split dev --limit 2 --out bench_dev.json
+
+# AIT-ADS cases
+.venv\Scripts\python.exe -m a1.benchmark --split ait --limit 2 `
+  --ait-ads-dir C:\path\to\ait_ads --out bench_ait.json
+
+# Benchmark through the CLI
 .venv\Scripts\python.exe -m a1.cli --benchmark --limit 5
 
-# Run baseline comparison and ablation experiments:
+# Ablation experiments
 .venv\Scripts\python.exe -m a1.experiment
 ```
 
-## 5. Latest Measured Results (Dev Split)
+`--out` writes per-case rubrics, reports, and aggregate metrics as JSON. The console summary prints verdict/boundary accuracy, macro F1, FPR/FNR, checklist/IOC coverage, citation support, Brier score, and 95% CIs.
 
-Command: `python -m a1.benchmark --split dev --limit 2 --out bench_after.json`
-Provider/model: opencode `glm-5.3-flash`. One run per case; LLM output is non-deterministic, so treat these as a snapshot rather than a stable leaderboard.
+---
 
-| Case | Database | Verdict / Boundary | Verdict | Recall | Grounding | Calibration | Efficiency | Report | Composite |
-|---|---|---|---|---|---|---|---|---|---|
-| ATK-A | `attack_lateral_movement.db` | malicious / confirmed_malicious (match) | 20/20 | 23.6/25 | 19.5/20 (1/43) | 9.9/10 | 10/10 | 15/15 | **98.0 (A+)** |
-| ATK-B | `attack_data_exfiltration.db` | malicious / confirmed_malicious (match) | 20/20 | 17.3/25 | 20/20 (0/47) | 9.9/10 | 9/10 | 15/15 | **91.2 (A+)** |
-| **Mean** | | 100% verdict/boundary | 20/20 | 20.5/25 | 19.75/20 | 9.9/10 | 9.5/10 | 15/15 | **94.6** |
+## 6. Latest Measured Results (4 Cases)
 
-Aggregate: evidence precision 98.8%, evidence recall 81.8%, evidence F1 88.9%, average Brier 0.008, FPR 0%, FNR 0%, structured-output fallbacks 0/2. The held-out eval split (ATK-F, ATK-G, BEN-A, AMB-A, INC-A) was not run in this pass.
+Command:
 
-Scoring fixes applied before this run:
+```powershell
+.venv\Scripts\python.exe -m a1.benchmark --split dev --limit 2 --out bench_final_existing.json
+.venv\Scripts\python.exe -m a1.benchmark --split ait --limit 2 `
+  --ait-ads-dir C:\Users\vanam\Downloads\ait_ads --out bench_final_ait.json
+```
 
-- `proc-*` citations now resolve through `processes` **or** `events.process_entity_id`; noise processes that only appear on events are real telemetry. Re-scoring the same ATK-A report moved grounding from 17.2 to 19.5 (6 → 1 citations flagged).
-- Citation regex ignores truncated fragments such as `proc-atk`, and report-quality citation credit includes `suri-*`.
-- Brier calibration now measures correctness of the verdict only, so a near-miss boundary is not double-penalized.
-- A label with an empty `evidence_basis` now scores 0 recall instead of free full credit.
+Provider/model: opencode `glm-5.3-flash`; one run per case, temperature-controlled but not deterministic. Snapshot date: 2026-11-18.
 
-`investigation_completeness` remains a diagnostic and reads 0% on these runs because hypotheses stay `active`/`unresolved`; it is not part of the composite score.
+| Case | Verdict / Boundary | Verdict | Recall | Grounding | Calib. | Effic. | Report | Composite |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| ATK-A | malicious / confirmed (match) | 20 | 25.0 | 17.6 (1/48) | 9.4 | 8.0 | 15.0 | **95.0 (A+)** |
+| ATK-B | malicious / confirmed (match) | 20 | 25.0 | 20.0 (0/51) | 9.7 | 10.0 | 15.0 | **99.7 (A+)** |
+| AIT-FOX | malicious / confirmed (match) | 20 | 21.5 | 20.0 (0/34) | 9.7 | 10.0 | 15.0 | **96.2 (A+)** |
+| AIT-HARRISON | inconclusive / inconclusive (miss) | 0 | 13.3 | 19.4 (0/34) | 0.0 | 6.8 | 13.5 | **53.0 (F)** |
+| **Mean** | 3/4 verdict & boundary | 15.0 | 21.2 | 19.3 | 7.2 | 8.7 | 14.6 | **86.0** |
+
+Descriptive aggregates across the four cases: evidence precision **98.8%**, evidence recall **84.8%**, evidence F1 **90.0%**, checklist coverage **85.2%**, key-IOC coverage **83.4%**, citation support **98.8%**, mean Brier **0.136**, structured-output fallbacks **0/4**.
+
+Per-split summary:
+
+- Existing two: mean **97.3/100** (95% CI 95.0–99.7), 2/2 verdict/boundary, precision 99.0%, recall 100%, F1 99.4%, Brier 0.010.
+- AIT two: mean **74.6/100** (95% CI 53.0–96.2), 1/2 verdict/boundary, precision 98.6%, recall 70.5%, F1 80.6%, Brier 0.262, FNR 50%.
+
+**Interpretation.** ATK-A and ATK-B are strong attacks with complete endpoint telemetry; the only grounding deduction was one unsupported citation each in ATK-A and an earlier ATK-B run. AIT-FOX is also detected, but AIT-HARRISON is reported `inconclusive`: its AMiner extract contains first-seen log-format anomalies without process, DNS, or authentication telemetry, so the agent correctly describes a telemetry gap rather than inventing a chain. That is the honest result of the adapter, not a fabricated pass. FPR is not estimable from this slice because no benign case was included; run BEN-A with `--split eval` for that.
+
+**Known limitations.** One run per case; four cases do not support a leaderboard claim. Claim support is lexical. AIT checks are coarse. The rubric weights are asserted, not validated by human raters.
+
+---
+
+## 7. Changes From Rubric v2
+
+- Replaced free-text token recall with case-specific weighted checks plus separate IOC coverage.
+- Grounding now checks the claim around a citation, not just ID existence; fabricated IDs cost 2 points each.
+- Calibration is rescaled so a 0.5 guess earns 0 and a 0.9 correct verdict earns 9.6.
+- Efficiency gives zero credit for zero investigation and requires tool calls for query-quality points.
+- Report quality scores timeline citations, case attribution, rationale, concrete actions, and caveats instead of heading/table presence.
+- FN now includes `suspicious` for malicious cases; the summary adds a full confusion matrix, per-label metrics, macro F1, ambiguous-error tracking, and bootstrap CIs.
+- Added AIT-ADS ingestion across AMiner JSONL with cached SQLite databases and attack-window labels.

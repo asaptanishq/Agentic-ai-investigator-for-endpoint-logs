@@ -1,0 +1,95 @@
+{
+  "ATK-A": {
+    "expected_hosts": ["WS-OPS-01", "SRV-FILE-01"],
+    "checks": [
+      {"id": "credential_dump", "description": "LSASS access or credential dump", "any_of": ["procdump", "lsass.dmp", "lsass"], "weight": 2, "critical": true},
+      {"id": "logon_sequence", "description": "Failed-then-successful NTLM network logon", "any_of": ["4625", "4624", "ntlm"], "weight": 1},
+      {"id": "smb_lateral", "description": "SMB lateral movement between the two hosts", "any_of": ["smb", "445", "srv-file-01"], "weight": 1},
+      {"id": "service_persistence", "description": "Service persistence with an unsigned SYSTEM binary", "any_of": ["updatersvc2", "service", "imagepath"], "weight": 2, "critical": true}
+    ]
+  },
+  "ATK-B": {
+    "expected_hosts": ["WS-DEV-02"],
+    "checks": [
+      {"id": "archive_staging", "description": "Password-protected archive staged in Temp", "any_of": ["7z", "stage.7z", "archive"], "weight": 2, "critical": true},
+      {"id": "scheduled_task", "description": "Logon scheduled task persistence", "any_of": ["onedrivesync", "scheduled task", "schtasks"], "weight": 1},
+      {"id": "external_exfil", "description": "Repeated HTTPS exfiltration to an external host", "any_of": ["203.0.113.77", "sync-cdn", "https"], "weight": 2, "critical": true},
+      {"id": "cleanup", "description": "Archive deletion / anti-forensic cleanup", "any_of": ["stage.7z was deleted", "deleted", "cleanup"], "weight": 1}
+    ]
+  },
+  "ATK-C": {
+    "expected_hosts": ["WS-ACCT-01"],
+    "checks": [
+      {"id": "phishing_chain", "description": "Office document spawning hidden PowerShell", "any_of": ["invoice_2026-q3.docx", "winword"], "weight": 2, "critical": true},
+      {"id": "shadow_copy_deletion", "description": "Shadow copy deletion to inhibit recovery", "any_of": ["vssadmin", "shadow cop"], "weight": 2, "critical": true},
+      {"id": "encryption", "description": "Mass file encryption with .locked files", "any_of": ["lockbit", ".locked"], "weight": 2, "critical": true}
+    ]
+  },
+  "ATK-D": {
+    "expected_hosts": ["WS-EXEC-02", "DC-AUTH-01"],
+    "checks": [
+      {"id": "fileless_execution", "description": "mshta/encoded in-memory execution", "any_of": ["mshta", "encoded", "fileless"], "weight": 2, "critical": true},
+      {"id": "c2", "description": "Outbound C2 channel", "any_of": ["198.51.100.77", "c2", "beacon"], "weight": 2, "critical": true},
+      {"id": "discovery", "description": "LOLBin discovery commands", "any_of": ["wmic", "nltest", "net.exe"], "weight": 1},
+      {"id": "persistence", "description": "Scheduled task or Run-key persistence", "any_of": ["schtasks", "run key", "onedrivesync"], "weight": 1},
+      {"id": "wmi_lateral", "description": "Remote WMI execution against DC-AUTH-01", "any_of": ["wmi", "dc-auth-01"], "weight": 1}
+    ]
+  },
+  "ATK-E": {
+    "expected_hosts": ["WS-DEV-01", "WS-ADMIN-01"],
+    "checks": [
+      {"id": "hidden_powershell", "description": "Hidden/encoded PowerShell execution", "any_of": ["powershell", "hidden", "encoded"], "weight": 2, "critical": true},
+      {"id": "sam_access", "description": "SAM registry hive access", "any_of": ["sam", "hive", "registry"], "weight": 2, "critical": true},
+      {"id": "c2", "description": "Outbound C2 or exfiltration destination", "any_of": ["attacker.com", "198.51.100.45", "c2"], "weight": 2, "critical": true},
+      {"id": "credential_staging", "description": "Credential staging files in Temp", "any_of": ["credentials.txt", "clipboard.txt", "temp"], "weight": 1}
+    ]
+  },
+  "ATK-F": {
+    "expected_hosts": ["WS-FINANCE-01", "DC-AUTH-01"],
+    "checks": [
+      {"id": "c2_beacon", "description": "Cobalt Strike beacon on 8443", "any_of": ["cobaltstrike", "beacon", "8443"], "weight": 2, "critical": true},
+      {"id": "dns_resolution", "description": "Beacon domain resolution to the external C2 IP", "any_of": ["beacon.apt29-c2.net", "dns", "203.0.113.88"], "weight": 1},
+      {"id": "smb_recon", "description": "SMB reconnaissance against the domain controller", "any_of": ["smb", "445", "dc-auth-01"], "weight": 1},
+      {"id": "exfiltration", "description": "High-volume outbound exfiltration", "any_of": ["94.5", "exfil", "outbound"], "weight": 2, "critical": true}
+    ]
+  },
+  "ATK-G": {
+    "expected_hosts": ["WS-DEV-07", "WS-DBA-03", "DC-CORP-01"],
+    "checks": [
+      {"id": "dll_sideload", "description": "Trojanized DLL side-loaded by CorpTools", "any_of": ["corptoolshelper.dll", "sideload", "update.corptoolscdn"], "weight": 2, "critical": true},
+      {"id": "discovery", "description": "Encoded PowerShell discovery", "any_of": ["systeminfo", "whoami", "net user"], "weight": 1},
+      {"id": "rogue_admin", "description": "Rogue local administrator account", "any_of": ["svc_backup", "administrator", "admin"], "weight": 1},
+      {"id": "service_persistence", "description": "Persistence service installed", "any_of": ["corptoolssyncsvc", "service"], "weight": 1},
+      {"id": "kerberoasting", "description": "Kerberos service-ticket requests for SQL SPNs", "any_of": ["kerberos", "spn", "kerberoast"], "weight": 1},
+      {"id": "winrm_lateral", "description": "WinRM lateral movement", "any_of": ["winrm", "ws-dba-03", "dc-corp-01"], "weight": 1},
+      {"id": "exfiltration", "description": "Data staging and HTTPS exfiltration", "any_of": ["api.megaupload-cdn.com", "exfil", "cab"], "weight": 2, "critical": true},
+      {"id": "anti_forensics", "description": "Event log clearing", "any_of": ["wevtutil", "event log", "clear"], "weight": 1}
+    ]
+  },
+  "BEN-A": {
+    "expected_hosts": ["WS-ADMIN-05", "SRV-FILE-02"],
+    "checks": [
+      {"id": "backup_script", "description": "Scheduled backup verification script", "any_of": ["backup_verification.ps1", "backup verification"], "weight": 2, "critical": true},
+      {"id": "kerberos_auth", "description": "Legitimate Kerberos domain authentication", "any_of": ["kerberos", "sysadmin", "legitimate"], "weight": 1},
+      {"id": "clean_exit", "description": "Clean exit with no persistence", "any_of": ["exit code 0", "clean exit", "code 0"], "weight": 1},
+      {"id": "benign_absence", "description": "Explicit absence of malicious behavior", "any_of": ["no malicious", "no credential", "no persistence", "benign"], "weight": 2, "critical": true}
+    ]
+  },
+  "AMB-A": {
+    "expected_hosts": ["WS-EXEC-02"],
+    "checks": [
+      {"id": "dual_use", "description": "Dual-use certutil/PowerShell activity", "any_of": ["certutil", "dual-use", "dual use"], "weight": 2, "critical": true},
+      {"id": "no_persistence", "description": "No established persistence", "any_of": ["no persistence", "without persistence", "not established"], "weight": 2, "critical": true},
+      {"id": "no_c2", "description": "No confirmed C2 egress", "any_of": ["no c2", "no confirmed c2", "no egress"], "weight": 1},
+      {"id": "ambiguity", "description": "Explicit uncertainty about intent", "any_of": ["ambiguous", "mixed signals", "inconclusive", "cannot definitively"], "weight": 2, "critical": true}
+    ]
+  },
+  "INC-A": {
+    "expected_hosts": ["SRV-FILE-01"],
+    "checks": [
+      {"id": "missing_parent", "description": "Missing parent process telemetry", "any_of": ["missing parent", "no parent", "parent process"], "weight": 2, "critical": true},
+      {"id": "network_gap", "description": "Absent endpoint network visibility", "any_of": ["no network", "network telemetry", "absent network", "network visibility"], "weight": 2, "critical": true},
+      {"id": "inconclusive", "description": "Inconclusive verdict tied to telemetry gaps", "any_of": ["inconclusive", "insufficient telemetry", "cannot determine"], "weight": 2, "critical": true}
+    ]
+  }
+}

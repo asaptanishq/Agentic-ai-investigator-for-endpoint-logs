@@ -188,6 +188,7 @@ None: endpoint telemetry covers process creation and file writes.
         "confidence": 0.9,
         "iteration_count": 3,
         "repeat_nudges": 0,
+        "quality_metrics": {"total_tool_calls": 3, "duplicate_calls": 0},
         "messages": [AIMessage(content=grounded_report)],
         "investigation_memory": {
             "discovered_processes": {real_pid: {"process_name": "procdump.exe"}},
@@ -199,11 +200,11 @@ None: endpoint telemetry covers process creation and file writes.
     assert rubric["verdict_score"] == 20.0
     assert rubric["recall_score"] == 25.0
     assert rubric["grounding_score"] == 20.0
-    assert rubric["calibration_score"] == 9.9
+    assert rubric["calibration_score"] == 9.6
     assert rubric["brier_score"] == 0.01
     assert rubric["efficiency_score"] == 10.0
-    assert rubric["report_score"] == 13.0
-    assert rubric["composite_score"] == 97.9
+    assert rubric["report_score"] == 10.0
+    assert rubric["composite_score"] == 94.6
     assert "A+" in rubric["grade"]
 
 

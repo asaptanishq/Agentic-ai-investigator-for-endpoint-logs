@@ -219,21 +219,24 @@ The ingester auto-detects JSON, JSONL/NDJSON and text, recognises Wazuh rule/age
 
 ### 3. Benchmark Runner & Evaluation
 
-Evaluate agent accuracy and reasoning across all 10 shipped scenarios covering malicious intrusions, benign operations, ambiguous tasks, and incomplete telemetry:
+Evaluate agent accuracy and reasoning across all 10 shipped scenarios covering malicious intrusions, benign operations, ambiguous tasks, and incomplete telemetry, or on external AIT-ADS AMiner exports:
 
 ```bash
-# Run complete benchmark
-python -m a1.benchmark
+# Run complete shipped benchmark
+python -m a1.benchmark --split all
 
-# Run with a limit of cases
-python -m a1.cli --benchmark --limit 5
+# Run two shipped cases
+python -m a1.benchmark --split dev --limit 2
+
+# Run AIT-ADS cases from a local extract
+python -m a1.benchmark --split ait --limit 2 --ait-ads-dir C:\path\to\ait_ads
 ```
 
-The benchmark switches telemetry databases automatically per scenario, validates verdicts against ground truth, measures False Positive Rate (FPR) and False Negative Rate (FNR), audits evidence grounding against SQLite tables, and computes composite 100-point scores. Add `--out results.json` to persist per-case rubrics and full report text.
+The benchmark switches telemetry databases automatically per scenario, validates verdicts against ground truth, measures FPR/FNR and macro F1, audits citations against SQLite **and** the claim around each citation, and computes composite 100-point scores. `--out results.json` persists per-case rubrics, full reports, and aggregate metrics.
 
-**Latest dev-split check (2 cases):** ATK-A **98.0/100**, ATK-B **91.2/100** (mean **94.6**, verdict/boundary 2/2, evidence precision 98.8%, evidence F1 88.9%, Brier 0.008, FPR/FNR 0%). One run with the configured opencode model; see `docs/EVALUATION_SCORING_RUBRICS.md` for the per-dimension table and scoring-fix notes.
+**Latest 4-case check:** ATK-A **95.0/100**, ATK-B **99.7/100**, AIT-FOX **96.2/100**, AIT-HARRISON **53.0/100** (mean **86.0**, verdict/boundary 3/4, evidence precision 98.8%, citation support 98.8%). The AIT-HARRISON case is marked inconclusive because its AMiner extract lacks process/DNS/auth telemetry; that is a real telemetry-gap result, not a passing verdict. One run per case with opencode `glm-5.3-flash`; see [`docs/EVALUATION_SCORING_RUBRICS.md`](docs/EVALUATION_SCORING_RUBRICS.md) for per-dimension results, confidence intervals, and limitations.
 
-Rubric v2 weights verdict/boundary **20**, graded evidence recall **25**, grounding/anti-hallucination **20**, Brier confidence calibration **10**, investigation efficiency **10**, and report actionability **15**. It also reports evidence precision/F1 so over-citing cannot mask weak recall.
+Rubric v3 weights verdict/boundary **20**, weighted evidence checklist + key IOCs **25**, claim-supported grounding/anti-hallucination **20**, rescaled Brier calibration **10**, investigation efficiency **10**, and case-specific report quality **15**. A run that investigates nothing gets zero efficiency credit, and a single fabricated citation costs 2 grounding points.
 
 ---
 

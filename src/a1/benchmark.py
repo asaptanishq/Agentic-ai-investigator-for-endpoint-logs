@@ -1,4 +1,5 @@
 import json
+import random
 import re
 from pathlib import Path
 import sys
@@ -142,15 +143,16 @@ def load_case_labels() -> list:
     labels_path = Path(DATASET_DIR) / "case_labels.json"
     if labels_path.exists():
         with open(labels_path, encoding="utf-8") as f:
-            return json.load(f)
-    derived = _labels_from_groundtruth_files()
-    if derived:
-        return derived
-    raise FileNotFoundError(
-        f"Benchmark labels not found at {labels_path}, and no "
-        "groundtruth_attack_*.json files could be used as a fallback. "
-        "Restore the evaluator metadata before scoring a benchmark run."
-    )
+            labels = json.load(f)
+    else:
+        labels = _labels_from_groundtruth_files()
+    if not labels:
+        raise FileNotFoundError(
+            f"Benchmark labels not found at {labels_path}, and no "
+            "groundtruth_attack_*.json files could be used as a fallback. "
+            "Restore the evaluator metadata before scoring a benchmark run."
+        )
+    return _attach_eval_metadata(labels)
 
 
 def _extract_case_id_from_gt(gt_path: Path, gt: dict) -> str:
@@ -199,7 +201,36 @@ def _load_single_gt_file(gt_path: Path) -> Optional[dict]:
         "verdict_boundary": gt.get("verdict_boundary", "confirmed_malicious"),
         "confidence": "high",
         "evidence_basis": gt.get("evidence_basis", []),
+        "key_iocs": gt.get("key_iocs", []),
+        "distractors": gt.get("distractors", []),
     }
+
+
+def _load_eval_checks() -> dict:
+    path = Path(DATASET_DIR) / "groundtruth" / "eval_checks.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _attach_eval_metadata(labels: list) -> list:
+    """Attach checked evidence checks and ground-truth IOCs to each case."""
+    checks = _load_eval_checks()
+    derived = {c.get("case_id"): c for c in _labels_from_groundtruth_files()}
+    for case in labels:
+        cid = case.get("case_id")
+        meta = checks.get(cid, {})
+        fallback = derived.get(cid, {})
+        case.setdefault("key_iocs", fallback.get("key_iocs", []))
+        case.setdefault("distractors", fallback.get("distractors", []))
+        case["expected_hosts"] = meta.get("expected_hosts", [])
+        case["evidence_checks"] = meta.get("checks", [])
+        case.setdefault("prompt", BENCHMARK_PROMPTS.get(cid, ""))
+    return labels
 
 
 def _labels_from_groundtruth_files() -> list:
@@ -222,7 +253,9 @@ def activate_case_database(database_name) -> None:
     """Switch to the telemetry database a scenario lives in, when available."""
     if not database_name:
         return
-    candidate = Path(DATASET_DIR) / database_name
+    candidate = Path(database_name)
+    if not candidate.is_absolute():
+        candidate = Path(DATASET_DIR) / database_name
     if not candidate.exists():
         print(f"  [!] Scenario database '{database_name}' not found -- using {Path(cfg.DB_PATH).name}")
         return
@@ -263,8 +296,257 @@ def _extract_report_text_from_state(final_state: dict) -> str:
 _EVIDENCE_STOPWORDS = {
     "the", "and", "for", "with", "from", "that", "this", "via", "was", "were",
     "into", "then", "than", "after", "before", "same", "host", "event", "process",
-    "activity", "execution", "sequence", "observed", "using", "used", "user",
+    "activity", "execution", "sequence", "observed", "using", "used", "user", "parent",
+    "child", "access", "created", "connection", "network", "file", "registry",
 }
+
+
+_IOC_STOPWORDS = _EVIDENCE_STOPWORDS | {
+    "binary", "command", "domain", "external", "file", "host", "http", "https",
+    "large", "local", "network", "process", "service", "system", "target", "type",
+    "user", "windows", "with", "from", "into", "port", "task", "account",
+}
+
+
+def _normalize_phrase_text(text: str) -> str:
+    text = str(text or "").lower().replace("_", " ").replace("-", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _phrase_present(text_norm: str, phrase: str) -> bool:
+    """Match a phrase without letting short tokens match inside other words."""
+    phrase_norm = _normalize_phrase_text(phrase)
+    if not phrase_norm:
+        return False
+    if " " in phrase_norm:
+        return phrase_norm in text_norm
+    return re.search(rf"(?<![a-z0-9]){re.escape(phrase_norm)}(?![a-z0-9])", text_norm) is not None
+
+
+def _derive_checks(evidence_basis: list) -> list:
+    checks = []
+    for i, item in enumerate(evidence_basis):
+        terms = sorted(_evidence_terms(item))
+        if not terms:
+            continue
+        checks.append({
+            "id": f"basis_{i}",
+            "description": str(item),
+            "any_of": terms[:8],
+            "min_matches": min(2, len(terms)),
+            "weight": 1,
+        })
+    return checks
+
+
+def _score_evidence_checks(checks: list, report_text: str) -> Tuple[float, float, list]:
+    """Weighted, report-only evidence checklist (20 points).
+
+    Evidence is scored against the report, not investigation memory, so dumping
+    raw tool output into state cannot earn credit. Critical checks carry weight 2.
+    """
+    if not checks:
+        return 0.0, 0.0, []
+    text_norm = _normalize_phrase_text(report_text)
+    total_weight = sum(float(c.get("weight", 1) or 1) for c in checks)
+    earned = 0.0
+    results = []
+    for check in checks:
+        phrases = check.get("any_of") or []
+        matches = [p for p in phrases if _phrase_present(text_norm, p)]
+        need = int(check.get("min_matches", 1) or 1)
+        passed = len(matches) >= need
+        weight = float(check.get("weight", 1) or 1)
+        if passed:
+            earned += weight
+        results.append({
+            "id": check.get("id", ""),
+            "passed": passed,
+            "critical": bool(check.get("critical")),
+            "weight": weight,
+            "matches": matches,
+        })
+    coverage = earned / total_weight if total_weight else 0.0
+    return round(20.0 * coverage, 1), round(coverage, 3), results
+
+
+def _ioc_terms(item: Any) -> set:
+    """Distinctive tokens from a prose IOC string (IPs, domains, paths, filenames)."""
+    text = str(item or "")
+    terms = set()
+    for path in re.findall(r"[A-Za-z]:\\[^\s,;)\"']+|(?:[\w.-]+/)+[\w.-]+", text):
+        clean = path.rstrip(".,;:)").lower()
+        if len(clean) >= 5:
+            terms.add(clean)
+            base = clean.replace("\\", "/").rsplit("/", 1)[-1]
+            if len(base) >= 4:
+                terms.add(base)
+    for token in re.findall(r"\b[a-z0-9][a-z0-9_.-]{3,}\b", text.lower()):
+        token = token.strip(".")
+        if token in _IOC_STOPWORDS or len(token) < 4:
+            continue
+        if token.isdigit() and len(token) < 4:
+            continue
+        terms.add(token)
+    return terms
+
+
+def _score_ioc_coverage(key_iocs: list, report_text: str) -> Tuple[float, float, list]:
+    """5 points for covering ground-truth key IOCs; reports the covered items."""
+    if not key_iocs:
+        return 0.0, 0.0, []
+    text_norm = _normalize_phrase_text(report_text)
+    covered = []
+    for item in key_iocs:
+        terms = _ioc_terms(item)
+        hit = any(_phrase_present(text_norm, term) for term in terms)
+        if hit:
+            covered.append(str(item))
+    ratio = len(covered) / len(key_iocs)
+    return round(5.0 * ratio, 1), round(ratio, 3), covered
+
+
+def _score_evidence_recall(evidence_basis: list, combined_evidence_text: str) -> Tuple[float, float]:
+    """Legacy token-overlap score, retained for compatibility/tests only."""
+    if not evidence_basis:
+        return 0.0, 0.0
+    coverage = 0.0
+    for item in evidence_basis:
+        terms = _evidence_terms(item)
+        if not terms:
+            continue
+        matched = sum(1 for term in terms if term in combined_evidence_text)
+        coverage += matched / len(terms)
+    recall_pct = coverage / len(evidence_basis)
+    return round(25.0 * recall_pct, 1), recall_pct
+
+
+_CITATION_RE = re.compile(r"\b(?:evt|proc|suri)-(?=[A-Za-z0-9_.:-]*\d)[A-Za-z0-9_.:-]*[A-Za-z0-9_]\b")
+
+_SUPPORT_STOPWORDS = _EVIDENCE_STOPWORDS | {
+    "about", "above", "according", "after", "again", "against", "also", "among",
+    "analysis", "associated", "because", "been", "before", "being", "between",
+    "both", "could", "during", "each", "evidence", "following", "found", "further",
+    "have", "identified", "indicates", "into", "likely", "more", "most", "other",
+    "over", "possible", "reported", "shows", "such", "than", "their", "there",
+    "these", "they", "this", "those", "through", "under", "upon", "very", "which",
+    "while", "would", "confirmed", "observed", "consistent", "activity", "details",
+}
+
+
+def _claim_context(report_text: str, citation: str, radius: int = 180) -> str:
+    idx = report_text.find(citation)
+    if idx < 0:
+        return ""
+    line_start = report_text.rfind("\n", 0, idx) + 1
+    line_end = report_text.find("\n", idx)
+    if line_end < 0:
+        line_end = len(report_text)
+    context = report_text[line_start:line_end]
+    if len(context) < 60:
+        context = report_text[max(0, idx - radius): min(len(report_text), idx + radius)]
+    return context
+
+
+def _salient_claim_tokens(context: str) -> set:
+    clean = _CITATION_RE.sub(" ", context.lower())
+    tokens = set()
+    for token in re.findall(r"[a-z0-9][a-z0-9_.\\/-]{3,}", clean):
+        token = token.strip(".,;:'\"()")
+        if token in _SUPPORT_STOPWORDS or len(token) < 4:
+            continue
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}t[\d:.+-]+z?", token):
+            continue
+        if token.isdigit() and len(token) < 4:
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _citation_row(db, citation: str) -> Optional[dict]:
+    candidates = [citation]
+    if citation.startswith("evt-"):
+        candidates.append(citation[4:])
+    try:
+        if citation.startswith("proc-"):
+            for candidate in candidates:
+                rows = db.execute_query(
+                    "SELECT * FROM processes WHERE process_entity_id = ? LIMIT 1", (candidate,)
+                )
+                if rows:
+                    return rows[0]
+            for candidate in candidates:
+                rows = db.execute_query(
+                    "SELECT * FROM events WHERE process_entity_id = ? LIMIT 1", (candidate,)
+                )
+                if rows:
+                    return rows[0]
+            return None
+        for candidate in candidates:
+            rows = db.execute_query(
+                "SELECT * FROM events WHERE event_id = ? LIMIT 1", (candidate,)
+            )
+            if rows:
+                return rows[0]
+    except Exception:
+        return None
+    return None
+
+
+def _score_evidence_grounding(report_text: str, detailed: bool = False):
+    """Score citation existence and claim support against cited telemetry rows.
+
+    A citation earns support only when its surrounding claim shares a distinctive
+    token with the cited row. Each fabricated citation costs 2 points; the
+    ratio still rewards citing many real IDs.
+    """
+    from a1.db import EndpointDatabase
+    citations = list(dict.fromkeys(_CITATION_RE.findall(report_text)))
+    total_cited = len(citations)
+    if total_cited == 0:
+        return (0.0, 0, 0, 0, 0, 0.0) if detailed else (0.0, 0, 0, 0)
+
+    hallucinated = 0
+    unverified = 0
+    supported = 0
+    unsupported = []
+    db = EndpointDatabase()
+    for citation in citations:
+        row = _citation_row(db, citation)
+        if row is None:
+            # Distinguish a DB failure from a genuinely absent identifier.
+            try:
+                if citation.startswith("proc-"):
+                    exists = db.execute_query(
+                        "SELECT count(*) AS c FROM events WHERE process_entity_id = ?", (citation,)
+                    )
+                else:
+                    exists = db.execute_query(
+                        "SELECT count(*) AS c FROM events WHERE event_id = ?", (citation,)
+                    )
+                if exists and exists[0].get("c", 0) > 0:
+                    unverified += 1
+                else:
+                    hallucinated += 1
+            except Exception:
+                unverified += 1
+            continue
+        context = _claim_context(report_text, citation)
+        claim_tokens = _salient_claim_tokens(context)
+        row_text = json.dumps(row, default=str).lower()
+        if claim_tokens and any(token in row_text for token in claim_tokens):
+            supported += 1
+        else:
+            unsupported.append(citation)
+
+    score = 20.0 * (supported / total_cited)
+    if hallucinated:
+        score = max(0.0, score - min(10.0, 2.0 * hallucinated))
+    score = round(score, 1)
+    support_rate = round(supported / total_cited, 3)
+    if detailed:
+        return score, hallucinated, total_cited, unverified, supported, support_rate
+    return score, hallucinated, total_cited, unverified
 
 
 def _stem(term: str) -> str:
@@ -311,50 +593,6 @@ def _score_evidence_recall(evidence_basis: list, combined_evidence_text: str) ->
 _CITATION_RE = re.compile(r"\b(?:evt|proc|suri)-(?=[A-Za-z0-9_.:-]*\d)[A-Za-z0-9_.:-]*[A-Za-z0-9_]\b")
 
 
-def _score_evidence_grounding(report_text: str) -> Tuple[float, int, int, int]:
-    from a1.db import EndpointDatabase
-    citations = list(dict.fromkeys(_CITATION_RE.findall(report_text)))
-    cited_eids = [c for c in citations if not c.startswith("proc-")]
-    cited_pids = [c for c in citations if c.startswith("proc-")]
-    total_cited = len(cited_eids) + len(cited_pids)
-    if total_cited == 0:
-        return 0.0, 0, 0, 0
-
-    def _exists(db, table: str, column: str, identifier: str) -> bool:
-        candidates = [identifier]
-        if identifier.startswith("evt-"):
-            candidates.append(identifier[4:])
-        for candidate in candidates:
-            rows = db.execute_query(
-                f"SELECT count(*) as c FROM {table} WHERE {column} = ?", (candidate,)
-            )
-            if rows and rows[0].get("c", 0) > 0:
-                return True
-        return False
-
-    hallucinated = 0
-    unverified = 0
-    db = EndpointDatabase()
-    for eid in cited_eids:
-        try:
-            if not _exists(db, "events", "event_id", eid):
-                hallucinated += 1
-        except Exception:
-            unverified += 1
-    for pid in cited_pids:
-        try:
-            # Process rows are materialized only for process-bearing events; a cited
-            # process_entity_id that appears solely on events.* is still real telemetry.
-            if not _exists(db, "processes", "process_entity_id", pid) and not _exists(
-                db, "events", "process_entity_id", pid
-            ):
-                hallucinated += 1
-        except Exception:
-            unverified += 1
-    valid = max(0, total_cited - hallucinated - unverified)
-    return round(20.0 * valid / total_cited, 1), hallucinated, total_cited, unverified
-
-
 def _score_confidence_calibration(final_state: dict, verdict_match: bool, boundary_match: bool, fallback_used: bool) -> Tuple[float, float, float]:
     confidence = final_state.get("confidence")
     try:
@@ -366,38 +604,96 @@ def _score_confidence_calibration(final_state: dict, verdict_match: bool, bounda
     confidence = max(0.0, min(1.0, confidence))
     outcome = 1.0 if verdict_match and not fallback_used else 0.0
     brier = (confidence - outcome) ** 2
-    return round(10.0 * (1.0 - brier), 1), round(brier, 3), confidence
+    # Brier 0 is perfect, 0.25 is a neutral 0.5 guess, 1 is maximally wrong.
+    calibration = max(0.0, min(1.0, 1.0 - brier / 0.25))
+    return round(10.0 * calibration, 1), round(brier, 3), confidence
 
 
 def _score_investigation_efficiency(final_state: dict, fallback_used: bool) -> float:
-    repeat_nudges = final_state.get("repeat_nudges", 0)
+    iter_count = int(final_state.get("iteration_count", 0) or 0)
+    # A run that never investigated earns no efficiency credit at all.
+    if iter_count <= 0:
+        return 0.0
+    repeat_nudges = int(final_state.get("repeat_nudges", 0) or 0)
     rep_pts = max(0.0, 3.0 - (repeat_nudges * 1.2))
-    iter_count = final_state.get("iteration_count", 0)
-    if iter_count <= 4:
+    if iter_count <= 6:
         step_pts = 3.0
-    elif iter_count <= 6:
+    elif iter_count <= 9:
         step_pts = 2.0
     else:
         step_pts = 1.0
-    retry_pts = 2.0 if not fallback_used and not final_state.get("report_retry_used") else 0.5
+    retry_pts = 0.0 if fallback_used else (2.0 if not final_state.get("report_retry_used") else 0.5)
     metrics = final_state.get("quality_metrics") or {}
+    total_calls = int(metrics.get("total_tool_calls", 0) or 0)
     duplicates = int(metrics.get("duplicate_calls", 0) or 0)
-    query_pts = 2.0 if duplicates == 0 else 1.0 if duplicates <= 2 else 0.0
+    if total_calls <= 0:
+        query_pts = 0.0
+    else:
+        query_pts = 2.0 if duplicates == 0 else 1.0 if duplicates <= 2 else 0.0
     return round(rep_pts + step_pts + retry_pts + query_pts, 1)
 
 
-def _score_report_quality(report_text: str) -> float:
-    """Score report usefulness: timeline, grounded citations, caveats, actions."""
-    has_timeline = "| Timestamp" in report_text or "Forensic Timeline Matrix" in report_text
-    timeline_rows = len(re.findall(r"(?m)^\|\s*\d{4}-\d{2}-\d{2}", report_text))
-    timeline_pts = 4.0 if has_timeline and timeline_rows >= 2 else 1.0 if has_timeline else 0.0
-    citations = len(set(_CITATION_RE.findall(report_text)))
-    citation_pts = 3.0 if citations >= 2 else 1.0 if citations == 1 else 0.0
-    caveat_pts = 2.0 if ("Benign Explanation" in report_text or "Evidence Gap" in report_text) else 0.0
-    action_pts = 3.0 if ("Next Steps" in report_text or "Remediation" in report_text or "Playbook" in report_text) else 0.0
-    headings = len(re.findall(r"(?m)^#{2,3}\s+", report_text))
-    structure_pts = 3.0 if len(report_text) >= 1000 and headings >= 3 else 1.0 if headings >= 2 else 0.0
-    return round(timeline_pts + citation_pts + caveat_pts + action_pts + structure_pts, 1)
+def _section_text(report_text: str, names: tuple) -> str:
+    """Return the body under the first matching markdown heading."""
+    headings = list(re.finditer(r"(?m)^(#{1,6})\s+(.+?)\s*$", report_text))
+    for i, match in enumerate(headings):
+        title = match.group(2).lower()
+        if any(name in title for name in names):
+            start = match.end()
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(report_text)
+            return report_text[start:end]
+    return ""
+
+
+_ACTION_RE = re.compile(
+    r"\b(isolat|contain|block|disable|reset|revoke|quarantin|collect|hunt|remove|patch|investigat|review|monitor)\w*",
+    re.IGNORECASE,
+)
+_TARGET_RE = re.compile(
+    r"\b(?:[A-Z]{2,}-[A-Z0-9-]{2,}|\d{1,3}(?:\.\d{1,3}){3}|[\w.-]+\.[a-z]{2,6})\b",
+    re.IGNORECASE,
+)
+
+
+def _score_report_quality(report_text: str, case: Optional[dict] = None) -> float:
+    """Score report usefulness on case-specific content, not just headings.
+
+    Breakdown: timeline 4, case attribution 4, grounded rationale 3,
+    concrete actions 2, caveats 2. Boilerplate alone cannot reach full marks.
+    """
+    case = case or {}
+    timeline = _section_text(report_text, ("timeline", "event sequence"))
+    timeline_rows = len(re.findall(r"(?m)^\|\s*\d{4}-\d{2}-\d{2}", timeline or report_text))
+    timeline_pts = 4.0 if timeline_rows >= 2 and _CITATION_RE.search(timeline or "") else 2.0 if timeline_rows >= 2 else 0.0
+
+    expected_hosts = case.get("expected_hosts") or []
+    key_iocs = case.get("key_iocs") or []
+    report_norm = _normalize_phrase_text(report_text)
+    host_pts = 2.0 if any(_phrase_present(report_norm, h) for h in expected_hosts) else 0.0
+    ioc_pts = 2.0 if key_iocs and any(
+        _phrase_present(report_norm, term) for ioc in key_iocs for term in _ioc_terms(ioc)
+    ) else 0.0
+    attribution_pts = host_pts + ioc_pts
+    if not expected_hosts and not key_iocs:
+        attribution_pts = 2.0 if _TARGET_RE.search(report_text) else 0.0
+
+    rationale = _section_text(report_text, ("reasoning", "rationale", "analysis"))
+    if rationale and _CITATION_RE.search(rationale):
+        rationale_pts = 3.0
+    elif rationale and len(rationale.strip()) >= 80:
+        rationale_pts = 1.5
+    else:
+        rationale_pts = 0.0
+
+    actions = _section_text(report_text, ("next steps", "remediation", "recommend", "response"))
+    action_hit = bool(_ACTION_RE.search(actions))
+    target_hit = bool(_TARGET_RE.search(actions))
+    action_pts = 2.0 if action_hit and target_hit else 1.0 if action_hit else 0.0
+
+    caveats = _section_text(report_text, ("evidence gap", "limitation", "caveat", "benign explanation"))
+    caveat_pts = 2.0 if len(caveats.strip()) >= 20 else 1.0 if caveats.strip() else 0.0
+
+    return round(timeline_pts + attribution_pts + rationale_pts + action_pts + caveat_pts, 1)
 
 
 def _score_to_grade(score: float) -> str:
@@ -424,31 +720,47 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
 
     verdict_pts = _score_verdict(agent_verdict, expected_label, agent_boundary, expected_boundary, fallback_used)
     report_text = _extract_report_text_from_state(final_state)
-    memory = final_state.get("investigation_memory") or {}
-    combined_evidence_text = (report_text + " " + json.dumps(memory, default=str)).lower()
+    report_norm = _normalize_phrase_text(report_text)
 
     verdict_match = (agent_verdict == expected_label) and not fallback_used
     boundary_match = (_normalize_boundary(agent_boundary) == _normalize_boundary(expected_boundary)) and not fallback_used
-    recall_pts, recall_pct = _score_evidence_recall(evidence_basis, combined_evidence_text)
-    grounding_pts, hallucinated, total_cited, unverified = _score_evidence_grounding(report_text)
+
+    checks = case.get("evidence_checks") or _derive_checks(evidence_basis)
+    check_pts, check_coverage, check_results = _score_evidence_checks(checks, report_text)
+    ioc_pts, ioc_coverage, ioc_covered = _score_ioc_coverage(case.get("key_iocs") or [], report_text)
+    if case.get("key_iocs"):
+        recall_pts = round(check_pts + ioc_pts, 1)
+    else:
+        recall_pts = round(25.0 * check_coverage, 1)
+    recall_pct = check_coverage
+
+    grounding_pts, hallucinated, total_cited, unverified, supported, support_rate = (
+        _score_evidence_grounding(report_text, detailed=True)
+    )
     calibration_pts, brier_score, confidence = _score_confidence_calibration(
         final_state, verdict_match, boundary_match, fallback_used
     )
     efficiency_pts = _score_investigation_efficiency(final_state, fallback_used)
-    report_quality_pts = _score_report_quality(report_text)
+    report_quality_pts = _score_report_quality(report_text, case)
 
     composite_score = round(verdict_pts + recall_pts + grounding_pts + calibration_pts + efficiency_pts + report_quality_pts, 1)
     grade = _score_to_grade(composite_score)
 
     is_fp = (expected_label in ("benign", "inconclusive")) and (agent_verdict in ("malicious", "suspicious"))
-    is_fn = (expected_label == "malicious") and (agent_verdict in ("benign", "inconclusive"))
-    supported = max(0, total_cited - hallucinated - unverified)
+    is_fn = (expected_label == "malicious") and (agent_verdict != "malicious")
+    is_ambiguous_error = (expected_label == "suspicious") and (agent_verdict != "suspicious")
+    distractor_mentions = sum(
+        1 for d in case.get("distractors") or []
+        if any(_phrase_present(report_norm, term) for term in _ioc_terms(d))
+    )
+    unsupported = max(0, total_cited - supported - hallucinated - unverified)
     ev_precision = round(supported / total_cited, 3) if total_cited > 0 else 0.0
-    ev_recall = round(recall_pct, 3) if evidence_basis else 0.0
+    ev_recall = round(recall_pct, 3) if (checks or evidence_basis) else 0.0
     ev_f1 = round((2 * ev_precision * ev_recall) / (ev_precision + ev_recall), 3) if (ev_precision + ev_recall) else 0.0
-    iter_count = final_state.get("iteration_count", 0)
-    repeat_nudges = final_state.get("repeat_nudges", 0)
-    dup_query_rate = round(repeat_nudges / max(1, iter_count), 3)
+    iter_count = int(final_state.get("iteration_count", 0) or 0)
+    repeat_nudges = int(final_state.get("repeat_nudges", 0) or 0)
+    metrics = final_state.get("quality_metrics") or {}
+    dup_query_rate = round(int(metrics.get("duplicate_calls", 0) or 0) / max(1, iter_count), 3)
 
     # Validation correctness & unverified evidence metrics (Issue #2, #3, #5)
     val_results = final_state.get("validation_results") or {}
@@ -490,12 +802,21 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
         "total_citations": total_cited,
         "is_false_positive": is_fp,
         "is_false_negative": is_fn,
+        "is_ambiguous_error": is_ambiguous_error,
         "evidence_precision": ev_precision,
         "evidence_recall": ev_recall,
         "evidence_f1": ev_f1,
+        "evidence_check_coverage": check_coverage,
+        "evidence_checks": check_results,
+        "ioc_coverage": ioc_coverage,
+        "ioc_covered": ioc_covered,
+        "distractor_mentions": distractor_mentions,
+        "citation_support_rate": support_rate,
+        "supported_citations": supported,
+        "unsupported_citations": unsupported,
         "unverified_citations": unverified,
         "duplicate_query_rate": dup_query_rate,
-        "unsupported_claims_count": hallucinated,
+        "unsupported_claims_count": unsupported + hallucinated,
         "validation_status": val_status,
         "unverified_evidence_count": unverified_count,
         "relationship_correctness": rel_correctness,
@@ -509,16 +830,25 @@ DEV_SPLIT_CASES = ["ATK-A", "ATK-B", "ATK-C", "ATK-D", "ATK-E"]
 EVAL_SPLIT_CASES = ["ATK-F", "ATK-G", "BEN-A", "AMB-A", "INC-A"]
 
 
-def _filter_benchmark_scenarios(case_labels: list, split: Optional[str], limit: int) -> Tuple[list, dict]:
+def _filter_benchmark_scenarios(case_labels: list, split: Optional[str], limit: int, extra_ids: Optional[list] = None) -> Tuple[list, dict]:
+    split_ids = {
+        "dev": DEV_SPLIT_CASES,
+        "eval": EVAL_SPLIT_CASES,
+        "ait": [],
+    }
+    allowed = split_ids.get(split)
+    scenario_ids = []
     labels_by_id = {c["case_id"]: c for c in case_labels}
-    if split == "dev":
-        allowed_cases = set(DEV_SPLIT_CASES)
-    elif split == "eval":
-        allowed_cases = set(EVAL_SPLIT_CASES)
-    else:
-        allowed_cases = set(BENCHMARK_CASES.keys())
+    for cid in BENCHMARK_CASES:
+        if cid not in labels_by_id:
+            continue
+        if allowed is not None and cid not in allowed:
+            continue
+        scenario_ids.append(cid)
+    scenario_ids.extend(extra_ids or [])
+    if limit and limit > 0:
+        scenario_ids = scenario_ids[:limit]
 
-    scenario_ids = [cid for cid in BENCHMARK_CASES if cid in labels_by_id and cid in allowed_cases][:limit]
     missing = [cid for cid in BENCHMARK_CASES if cid not in labels_by_id]
     if missing:
         print(f"[!] No case labels found for: {', '.join(missing)} -- skipping.")
@@ -533,13 +863,18 @@ def _execute_benchmark_case(app, case_id: str, case: dict, db_path: Optional[str
     print(f"Expected: {expected_label} / {expected_boundary}")
 
     if not db_path:
-        activate_case_database(BENCHMARK_CASES[case_id].get("database"))
+        database = (
+            case.get("db_path")
+            or case.get("database")
+            or BENCHMARK_CASES.get(case_id, {}).get("database")
+        )
+        activate_case_database(database)
 
     initial_state = {
         "messages": [],
         "hypotheses": [],
         "iteration_count": 0,
-        "alert_context": BENCHMARK_PROMPTS[case_id],
+        "alert_context": case.get("prompt") or BENCHMARK_PROMPTS.get(case_id, ""),
     }
     final_state = app.invoke(initial_state)
 
@@ -582,12 +917,59 @@ def _execute_benchmark_case(app, case_id: str, case: dict, db_path: Optional[str
     }
 
 
+def _mean(values: list) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _bootstrap_ci(values: list, seed: int = 17, samples: int = 1000) -> list:
+    """Percentile 95% bootstrap CI for the mean (deterministic seed)."""
+    if len(values) < 2:
+        return [round(_mean(values), 3), round(_mean(values), 3)]
+    rng = random.Random(seed)
+    means = []
+    for _ in range(samples):
+        means.append(sum(values[rng.randrange(len(values))] for _ in range(len(values))) / len(values))
+    means.sort()
+    return [round(means[int(0.025 * samples)], 3), round(means[int(0.975 * samples) - 1], 3)]
+
+
+def _confusion_metrics(results: list) -> dict:
+    labels = ["malicious", "suspicious", "benign", "inconclusive"]
+    matrix = {expected: {predicted: 0 for predicted in labels + ["unknown"]} for expected in labels}
+    for result in results:
+        expected = str(result.get("expected_label", "unknown")).lower()
+        predicted = str(result.get("agent_verdict", "unknown")).lower()
+        if expected not in matrix:
+            matrix[expected] = {label: 0 for label in labels + ["unknown"]}
+        if predicted not in matrix[expected]:
+            predicted = "unknown"
+        matrix[expected][predicted] += 1
+
+    per_label = {}
+    for label in labels:
+        tp = matrix.get(label, {}).get(label, 0)
+        fp = sum(matrix.get(other, {}).get(label, 0) for other in matrix if other != label)
+        fn = sum(count for predicted, count in matrix.get(label, {}).items() if predicted != label)
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        per_label[label] = {
+            "precision": round(precision, 3),
+            "recall": round(recall, 3),
+            "f1": round(f1, 3),
+            "support": sum(matrix.get(label, {}).values()),
+        }
+    supported_labels = [m for m in per_label.values() if m["support"] > 0]
+    macro_f1 = _mean([m["f1"] for m in supported_labels])
+    return {"matrix": matrix, "per_label": per_label, "macro_f1": round(macro_f1, 3)}
+
+
 def _compute_and_print_benchmark_summary(results: list) -> dict:
     total = len(results)
     verdict_acc = sum(r["verdict_match"] for r in results) / total if total else 0
     boundary_acc = sum(r["boundary_match"] for r in results) / total if total else 0
     fallback_count = sum(r["fallback_used"] for r in results)
-    avg_score = sum(r["rubric"]["composite_score"] for r in results) / total if total else 0
+    avg_score = _mean([r["rubric"]["composite_score"] for r in results])
 
     fps = sum(1 for r in results if r["rubric"].get("is_false_positive"))
     fns = sum(1 for r in results if r["rubric"].get("is_false_negative"))
@@ -595,54 +977,83 @@ def _compute_and_print_benchmark_summary(results: list) -> dict:
     total_malicious = sum(1 for r in results if r["expected_label"].lower() == "malicious")
     fpr = (fps / total_benign_inconclusive) if total_benign_inconclusive else 0.0
     fnr = (fns / total_malicious) if total_malicious else 0.0
-    avg_ev_precision = sum(r["rubric"].get("evidence_precision", 0.0) for r in results) / total if total else 0.0
-    avg_ev_recall = sum(r["rubric"].get("evidence_recall", 1.0) for r in results) / total if total else 1.0
-    avg_ev_f1 = sum(r["rubric"].get("evidence_f1", 0.0) for r in results) / total if total else 0.0
-    avg_brier = sum(r["rubric"].get("brier_score", 0.25) for r in results) / total if total else 0.25
-    avg_rel_correctness = sum(r["rubric"].get("relationship_correctness", 1.0) for r in results) / total if total else 1.0
-    avg_completeness = sum(r["rubric"].get("investigation_completeness", 1.0) for r in results) / total if total else 1.0
+    ambiguous_cases = [r for r in results if r["expected_label"].lower() == "suspicious"]
+    ambiguous_acc = sum(r["agent_verdict"].lower() == "suspicious" for r in ambiguous_cases) / len(ambiguous_cases) if ambiguous_cases else 0.0
+    avg_ev_precision = _mean([r["rubric"].get("evidence_precision", 0.0) for r in results])
+    avg_ev_recall = _mean([r["rubric"].get("evidence_recall", 0.0) for r in results])
+    avg_ev_f1 = _mean([r["rubric"].get("evidence_f1", 0.0) for r in results])
+    avg_check_coverage = _mean([r["rubric"].get("evidence_check_coverage", 0.0) for r in results])
+    avg_ioc_coverage = _mean([r["rubric"].get("ioc_coverage", 0.0) for r in results])
+    avg_support = _mean([r["rubric"].get("citation_support_rate", 0.0) for r in results])
+    avg_brier = _mean([r["rubric"].get("brier_score", 0.25) for r in results])
+    avg_rel_correctness = _mean([r["rubric"].get("relationship_correctness", 1.0) for r in results])
+    avg_completeness = _mean([r["rubric"].get("investigation_completeness", 1.0) for r in results])
     total_dynamic_hypos = sum(r["rubric"].get("dynamic_hypotheses_created", 0) for r in results)
+    distractor_mentions = sum(r["rubric"].get("distractor_mentions", 0) for r in results)
+    score_ci = _bootstrap_ci([r["rubric"]["composite_score"] for r in results])
+    verdict_ci = _bootstrap_ci([1.0 if r["verdict_match"] else 0.0 for r in results])
+    confusion = _confusion_metrics(results)
 
     print(f"\n{'='*60}\nBenchmark Summary\n{'='*60}")
-    print(f"Verdict accuracy:          {verdict_acc:.0%} ({sum(r['verdict_match'] for r in results)}/{total})")
+    print(f"Verdict accuracy:          {verdict_acc:.0%} ({sum(r['verdict_match'] for r in results)}/{total})  95% CI {verdict_ci[0]:.0%}-{verdict_ci[1]:.0%}")
     print(f"Verdict-boundary accuracy: {boundary_acc:.0%} ({sum(r['boundary_match'] for r in results)}/{total})")
-    print(f"Average Rubric Score:      {avg_score:.1f}/100")
-    print(f"False-Positive Rate:       {fpr:.1%}")
-    print(f"False-Negative Rate:       {fnr:.1%}")
-    print(f"Avg Evidence Precision:    {avg_ev_precision:.1%}")
-    print(f"Avg Evidence Recall:       {avg_ev_recall:.1%}")
+    print(f"Average Rubric Score:      {avg_score:.1f}/100  95% CI {score_ci[0]:.1f}-{score_ci[1]:.1f}")
+    print(f"False-Positive Rate:       {fpr:.1%} ({fps}/{total_benign_inconclusive})")
+    print(f"False-Negative Rate:       {fnr:.1%} ({fns}/{total_malicious})")
+    print(f"Ambiguous-case accuracy:   {ambiguous_acc:.0%} ({len(ambiguous_cases)} case(s))")
+    print(f"Macro F1 (4 labels):       {confusion['macro_f1']:.1%}")
+    print(f"Avg Evidence Precision:    {avg_ev_precision:.1%} (claim-supported citations)")
+    print(f"Avg Evidence Recall:       {avg_ev_recall:.1%} (weighted checklist)")
     print(f"Avg Evidence F1:           {avg_ev_f1:.1%}")
+    print(f"Avg Checklist Coverage:    {avg_check_coverage:.1%}")
+    print(f"Avg Key-IOC Coverage:      {avg_ioc_coverage:.1%}")
+    print(f"Avg Citation Support:      {avg_support:.1%}")
     print(f"Avg Confidence Brier:      {avg_brier:.3f}")
     print(f"Avg Relationship Corr:     {avg_rel_correctness:.1%}")
     print(f"Avg Inv. Completeness:     {avg_completeness:.1%}")
     print(f"Total Dynamic Hypotheses:  {total_dynamic_hypos}")
+    print(f"Distractor Mentions:       {distractor_mentions} (diagnostic only, not scored)")
     print(f"Fallback runs (auto-FAIL):  {fallback_count}/{total}")
 
     return {
         "results": results,
         "verdict_accuracy": verdict_acc,
+        "verdict_accuracy_ci_95": verdict_ci,
         "boundary_accuracy": boundary_acc,
         "average_rubric_score": avg_score,
+        "average_rubric_score_ci_95": score_ci,
         "false_positive_rate": fpr,
         "false_negative_rate": fnr,
+        "ambiguous_accuracy": ambiguous_acc,
+        "macro_f1": confusion["macro_f1"],
+        "confusion_matrix": confusion["matrix"],
+        "per_label_metrics": confusion["per_label"],
         "avg_evidence_precision": avg_ev_precision,
         "avg_evidence_recall": avg_ev_recall,
         "avg_evidence_f1": avg_ev_f1,
+        "avg_checklist_coverage": avg_check_coverage,
+        "avg_ioc_coverage": avg_ioc_coverage,
+        "avg_citation_support": avg_support,
         "avg_confidence_brier": avg_brier,
         "avg_relationship_correctness": avg_rel_correctness,
         "avg_investigation_completeness": avg_completeness,
         "total_dynamic_hypotheses": total_dynamic_hypos,
+        "distractor_mentions": distractor_mentions,
         "fallback_count": fallback_count,
     }
 
 
 def run_benchmark(
-    limit: int = 5,
+    limit: int = 0,
     provider: str = None,
     model: str = None,
     db_path: str = None,
     split: str = None,
     out_path: str = None,
+    ait_ads_dir: str = None,
+    ait_labels: str = "labels.csv",
+    ait_scenarios: str = None,
+    ait_rebuild: bool = False,
 ) -> Dict[str, Any]:
     """Evaluate the LangGraph investigator agent against the shipped attack scenarios.
 
@@ -673,6 +1084,19 @@ def run_benchmark(
         return empty_return
 
     scenario_ids, labels_by_id = _filter_benchmark_scenarios(case_labels, split, limit)
+    if ait_ads_dir and split in (None, "all", "ait"):
+        from a1.ait_ads import build_ait_cases
+        requested = [s.strip() for s in (ait_scenarios or "fox,harrison").split(",") if s.strip()]
+        ait_cases = build_ait_cases(
+            ait_ads_dir,
+            ait_labels,
+            scenarios=requested,
+            rebuild=ait_rebuild,
+        )
+        for case in ait_cases:
+            labels_by_id[case["case_id"]] = case
+            if case["case_id"] not in scenario_ids:
+                scenario_ids.append(case["case_id"])
     if not scenario_ids:
         print("[!] No benchmark cases matched the supplied labels -- nothing to run.")
         return empty_return
@@ -688,13 +1112,21 @@ def run_benchmark(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run DFIR evaluation benchmark")
-    parser.add_argument("--limit", "-l", type=int, default=5, help="Number of scenarios to test")
-    parser.add_argument("--split", "-s", type=str, choices=["dev", "eval", "all"], default="all",
-                        help="Scenario split: dev, eval, or all")
-    parser.add_argument("--provider", "-p", type=str, choices=["ollama", "openai"], default=None, help="LLM provider")
+    parser.add_argument("--limit", "-l", type=int, default=0, help="Number of scenarios to test (0 = all)")
+    parser.add_argument("--split", "-s", type=str, choices=["dev", "eval", "ait", "all"], default="all",
+                        help="Scenario split: dev, eval, ait, or all")
+    parser.add_argument("--provider", "-p", type=str, choices=["ollama", "openai", "opencode"], default=None, help="LLM provider")
     parser.add_argument("--model", "-m", type=str, default=None, help="LLM model name")
     parser.add_argument("--db", type=str, default=None,
                         help="Pin every case to one SQLite telemetry database instead of switching per scenario")
     parser.add_argument("--out", type=str, default=None, help="Write full results (including reports) as JSON")
+    parser.add_argument("--ait-ads-dir", type=str, default=None,
+                        help="AIT-ADS folder with *_aminer.json files; adds AIT cases")
+    parser.add_argument("--ait-labels", type=str, default="labels.csv",
+                        help="AIT-ADS labels.csv path")
+    parser.add_argument("--ait-scenarios", type=str, default="fox,harrison",
+                        help="Comma-separated AIT-ADS scenarios (default: fox,harrison)")
+    parser.add_argument("--ait-rebuild", action="store_true", help="Rebuild cached AIT telemetry databases")
     args = parser.parse_args()
-    run_benchmark(limit=args.limit, provider=args.provider, model=args.model, db_path=args.db, split=args.split, out_path=args.out)
+    run_benchmark(limit=args.limit, provider=args.provider, model=args.model, db_path=args.db, split=args.split, out_path=args.out,
+                  ait_ads_dir=args.ait_ads_dir, ait_labels=args.ait_labels, ait_scenarios=args.ait_scenarios, ait_rebuild=args.ait_rebuild)

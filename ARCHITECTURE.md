@@ -377,11 +377,15 @@ The case menu supports uploading raw `.db`/log files, switching datasets, and de
 | `AMB-A` | Ambiguous | `attack_lotl_fileless.db` | Dual-use developer utility invocations (certutil, powershell flags) requiring intent analysis | `groundtruth/groundtruth_ambiguous_A_dev_activity.json` |
 | `INC-A` | Inconclusive | `attack_lateral_movement.db` | Missing parent process and network connection telemetry requiring `inconclusive` verdict | `groundtruth/groundtruth_incomplete_A_missing_telemetry.json` |
 
-### Key Evaluation Metrics (Rubric v2)
-**Latest dev snapshot** (`--split dev --limit 2`, opencode `glm-5.3-flash`): ATK-A **98.0**, ATK-B **91.2**, mean **94.6/100**; verdict/boundary 2/2, evidence precision 98.8%, evidence F1 88.9%, Brier 0.008, FPR/FNR 0%. Single run; full per-dimension table and scoring-fix notes live in `docs/EVALUATION_SCORING_RUBRICS.md`.
-* **Verdict Accuracy & Boundary Precision (20 Pts):** Discrimination across malicious, benign, suspicious, and inconclusive cases.
-* **Graded Evidence Recall (25 Pts):** Per-indicator coverage of critical processes, parentage, network egress, and persistence, with evidence precision/F1 reported alongside.
-* **Evidence Grounding / Zero-Hallucination Rate (20 Pts):** Deterministic SQL verification of all cited event IDs, process IDs (resolved through `processes` or `events.process_entity_id`), and `suri-*` event IDs; unverified or hallucinated citations reduce the score. Relationship and hostname validation results are reported separately as diagnostics.
+### Key Evaluation Metrics (Rubric v3)
+
+**Latest 4-case snapshot** (`--split dev --limit 2` plus `--split ait --limit 2`, opencode `glm-5.3-flash`): ATK-A **95.0**, ATK-B **99.7**, AIT-FOX **96.2**, AIT-HARRISON **53.0**; mean **86.0/100**, verdict/boundary 3/4, evidence precision 98.8%. AIT-HARRISON is honestly `inconclusive` because its AMiner extract lacks process/DNS/auth telemetry. Single run per case; full per-dimension table, CIs, and limitations live in `docs/EVALUATION_SCORING_RUBRICS.md`.
+* **Verdict Accuracy & Boundary Precision (20 Pts):** Exact verdict/boundary match, fallback penalty, full confusion matrix, per-label metrics, macro F1, and bootstrap 95% CIs.
+* **Ground-Truth Evidence Retrieval (25 Pts):** Case-specific weighted checklist over the report (20) plus independent key-IOC coverage (5); raw tool output and `investigation_memory` do not earn credit.
+* **Evidence Grounding / Claim Support (20 Pts):** Deterministic SQL verification of cited event/process/`suri-*` IDs, plus a check that the cited row shares a distinctive token with its surrounding claim. Fabricated IDs cost 2 points each; unsupported and unverified citations are reported separately.
+* **Confidence Calibration (10 Pts):** Brier score against verdict correctness, rescaled so a 0.5 guess earns 0 and a 0.9 correct verdict earns 9.6.
+* **Investigation Efficiency (10 Pts):** Zero credit for zero investigation; rewards step economy, no repetition loops, no retries, and duplicate-free tool use.
+* **Report Quality & Actionability (15 Pts):** Case-specific timeline citations, host/IOC attribution, grounded rationale, concrete actions, and substantive caveats; heading/table presence alone cannot reach full marks.
 
 * **Confidence Calibration (10 Pts):** Brier score against verdict correctness, rewarding calibrated certainty; boundary precision is scored separately.
 * **Investigation Efficiency & Step Economy (10 Pts):** Suppression of repetition nudges, duplicate queries, retries, and excess steps.
