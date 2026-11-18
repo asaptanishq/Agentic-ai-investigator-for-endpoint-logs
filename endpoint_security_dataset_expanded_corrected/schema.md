@@ -12,7 +12,7 @@
 
 ## Separation of concerns
 
-`events.jsonl` contains agent-accessible observed telemetry only. It excludes scenario IDs, event roles, relevance, explanations, expected correlations, and investigative conclusions. Evaluation information is stored in `ground_truth.jsonl` and the protected database table `ground_truth_events`.
+The SQLite telemetry databases contain agent-accessible observed telemetry only (`events`, `processes`, `files`, `network_connections`, `registry_events`, `hosts`, `users`). They exclude scenario IDs, event roles, relevance, explanations, expected correlations, and investigative conclusions. Evaluation ground truth is stored in the `groundtruth/` directory.
 
 ## Core event fields
 

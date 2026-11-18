@@ -14,6 +14,8 @@ def test_index_page(client):
     assert "A1 DFIR Investigator" in res.text
     assert "promptInput" in res.text
     assert "modelSelectorPill" in res.text
+    assert "processLinksContainer" in res.text
+    assert "process-links.js" in res.text
 
 def test_api_status(client):
     res = client.get("/api/status")
@@ -28,9 +30,33 @@ def test_api_models(client):
     res = client.get("/api/models")
     assert res.status_code == 200
     data = res.json()
+    assert "opencode" in data
     assert "ollama" in data
     assert "openai" in data
+    assert len(data["opencode"]) > 0
     assert len(data["ollama"]) > 0
+
+
+def test_api_chat_empty_message_rejected(client):
+    res = client.post("/api/chat", json={"message": "   "})
+    assert res.status_code == 400
+
+
+def test_api_chat_stream_endpoint(client, monkeypatch):
+    class FakeLLM:
+        def invoke(self, messages):
+            class Response:
+                content = "Test copilot reply explaining evidence"
+            return Response()
+
+    import a1.web.server as server_mod
+    monkeypatch.setattr(server_mod, "get_llm", lambda **kwargs: FakeLLM())
+
+    res = client.post("/api/chat", json={"message": "Why was PID 4151 flagged?"})
+    assert res.status_code == 200
+    assert "text/event-stream" in res.headers["content-type"]
+    text = res.text
+    assert "Test copilot reply explaining evidence" in text
 
 def test_api_set_model(client):
     res = client.post("/api/models/set", json={"provider": "ollama", "model": "gemma4:31b"})
@@ -43,6 +69,7 @@ def test_api_databases(client):
     assert res.status_code == 200
     data = res.json()
     assert len(data["databases"]) > 0
+    assert all("scratch" not in d["path"].lower() for d in data["databases"])
 
 
 def test_api_set_database_valid(client):

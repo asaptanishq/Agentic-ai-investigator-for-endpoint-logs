@@ -1,4 +1,9 @@
-"""Adaptive investigation planning node (Issue #3, #17)."""
+"""Adaptive investigation planning module and graph node.
+
+Provides helper utilities (generate_candidate_actions, score_actions) consumed by
+investigator_node for goal-backward planning, as well as planner_node for direct
+workflow graph integration.
+"""
 from __future__ import annotations
 
 import logging

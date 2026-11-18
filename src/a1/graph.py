@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage
@@ -14,8 +14,12 @@ from a1.nodes.correlation_node import correlation_node
 from a1.nodes.validator_node import validator_node
 from a1.nodes.report_node import report_node
 
-def create_investigation_graph():
+def create_investigation_graph(config: Optional[Any] = None):
     workflow = StateGraph(InvestigationState)
+
+    enable_validator = True
+    if config is not None:
+        enable_validator = getattr(config, "enable_validator", True)
 
     # Input-reflection Stage 1: Alert Prep (runs before triage)
     workflow.add_node("alert_prep", alert_prep_node)
@@ -26,7 +30,8 @@ def create_investigation_graph():
     workflow.add_node("evidence_packing", evidence_packing_node)
     workflow.add_node("correlate", correlation_node)
     # Stage 3: Deterministic Evidence Validation (Issue #6)
-    workflow.add_node("validate", validator_node)
+    if enable_validator:
+        workflow.add_node("validate", validator_node)
     workflow.add_node("report", report_node)
 
     workflow.set_entry_point("alert_prep")
@@ -44,8 +49,11 @@ def create_investigation_graph():
     )
     workflow.add_edge("tools", "investigator")
     workflow.add_edge("evidence_packing", "correlate")
-    workflow.add_edge("correlate", "validate")
-    workflow.add_edge("validate", "report")
+    if enable_validator:
+        workflow.add_edge("correlate", "validate")
+        workflow.add_edge("validate", "report")
+    else:
+        workflow.add_edge("correlate", "report")
     workflow.add_edge("report", END)
 
     return workflow.compile()

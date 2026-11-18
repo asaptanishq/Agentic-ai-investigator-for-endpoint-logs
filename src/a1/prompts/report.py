@@ -12,7 +12,7 @@ VERDICT RULES (Forensic Standards):
   * For data theft, a chain such as sensitive data staged into a password-protected archive, persistence created, repeated outbound connections to an unexplained external destination from the same process, and subsequent archive deletion is sufficient for `malicious` / `confirmed_malicious` when those links are present in telemetry. A payload capture or byte count is not required to identify the malicious operation; record the lack of payload proof as an evidence gap.
   * Other sufficient chains may include verified credential theft followed by lateral movement and unauthorized remote execution.
   * When a coherent chain is established, do not downgrade it solely because evidence of credential dumping, lateral movement, payload contents, or impact is absent.
-  * A linked ProcDump-to-LSASS event and dump file, same-process SMB connection, matching failed-then-successful NTLM type-3 logons, and remote service ImagePath/binary/SYSTEM execution establish confirmed malicious activity. Missing parent telemetry for the service-creation command is an attribution gap, not a reason to downgrade this chain.
+  * A linked credential-dump-to-memory event and dump file, source process network connection, matching authentication sequence, and remote service installation/execution establish confirmed malicious activity. Missing parent telemetry for the service-creation command is an attribution gap, not a reason to downgrade this chain.
 
 - `suspicious`: An anomalous technique or suspicious but uncorrelated indicators occurred, but the available telemetry does not establish a coherent malicious chain.
 
@@ -23,7 +23,8 @@ VERDICT RULES (Forensic Standards):
 
 VERDICT BOUNDARY RULES:
 - If verdict is `malicious`, verdict_boundary MUST BE `confirmed_malicious`.
-- If verdict is `suspicious` or `inconclusive`, verdict_boundary MUST BE `unconfirmed_malicious`.
+- If verdict is `suspicious`, verdict_boundary MUST BE `unconfirmed_malicious`.
+- If verdict is `inconclusive`, verdict_boundary MUST BE `inconclusive` or `telemetry_gap_inconclusive`.
 - If verdict is `benign`, verdict_boundary MUST BE `benign`.
 
 EVIDENCE CITATION REQUIREMENT:

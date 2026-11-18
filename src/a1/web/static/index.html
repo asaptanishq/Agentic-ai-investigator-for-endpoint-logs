@@ -1,743 +1,220 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>A1 DFIR Investigator</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-  <meta http-equiv="Pragma" content="no-cache" />
-  <meta http-equiv="Expires" content="0" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=v3_clean_thinking_20261003_final" />
-  <!-- Offline-first bundled Markdown & DOMPurify with CDN fallback -->
-  <script src="/static/vendor/marked.min.js"></script>
-  <script src="/static/vendor/purify.min.js"></script>
-  <script>
-    if (window.marked === undefined) {
-      document.write(String.raw`<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>`);
-    }
-    if (window.DOMPurify === undefined) {
-      document.write(String.raw`<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"><\/script>`);
-    }
-  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='3' fill='%230a0b0c'/%3E%3Cpath d='M8 23V9h7l3 5h6v9z' fill='none' stroke='%23e6e9eb' stroke-width='1.6'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/style.css?v=wsb_20261119l" />
 </head>
+<body>
+  <a class="skip-link" href="#promptInput">Skip to prompt</a>
 
-<body class="theme-dark">
-  <div class="app-layout">
-    <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar" aria-label="Investigation Sidebar">
-      <div class="sidebar-header">
-        <button class="new-chat-btn" id="newChatBtn" title="Start New Investigation">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-          <span>New Investigation</span>
+  <div class="app" id="app">
+    <header class="top">
+      <div class="top-left">
+        <span class="mark" aria-hidden="true">A1</span>
+        <button id="newCaseBtn" class="icon-btn" title="New investigation" aria-label="New investigation">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         </button>
-        <button class="icon-btn sidebar-close-btn" id="sidebarCollapseBtn" title="Toggle Sidebar (Ctrl+B)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="9" y1="3" x2="9" y2="21"></line>
-          </svg>
+
+        <div class="case-anchor">
+          <button id="caseBtn" class="case-btn" aria-haspopup="true" aria-expanded="false" aria-controls="caseMenu" title="Datasets and case log">
+            <span id="headerDbName">no dataset</span>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          <div class="menu case-menu" id="caseMenu" hidden>
+            <div class="menu-section">
+              <div class="menu-row">
+                <span class="eyebrow">datasets</span>
+                <span class="menu-note" id="dbHint">loading…</span>
+              </div>
+              <div class="db-list" id="dbList"></div>
+            </div>
+            <div class="menu-section">
+              <div class="menu-row">
+                <span class="eyebrow">case log</span>
+                <button id="clearHistoryBtn" class="text-btn">clear</button>
+              </div>
+              <div class="history" id="historyList"></div>
+            </div>
+            <div class="menu-foot">
+              <span class="status" id="railStatus"><i class="dot"></i><span>local workspace</span></span>
+            </div>
+          </div>
+        </div>
+
+        <span class="top-meta" id="headerDbMeta"></span>
+      </div>
+
+      <div class="top-right">
+        <span class="stamp" id="verdictStamp" data-verdict="none" title="Latest verdict">
+          <span class="stamp-label" id="verdictStampLabel">no verdict</span>
+          <span class="stamp-conf" id="verdictStampConf"></span>
+        </span>
+
+        <button id="evidenceBtn" class="top-btn" aria-pressed="false" aria-controls="drawer" title="Evidence (Ctrl+E)">
+          Evidence
+          <span class="badge" id="evidenceBadge">0</span>
         </button>
-      </div>
 
-      <!-- Dataset Selector in Sidebar -->
-      <div class="sidebar-section">
-        <label class="section-label" for="dbSelect">Active Telemetry Database</label>
-        <div class="db-select-wrapper">
-          <select id="dbSelect" class="soft-select" title="Switch Telemetry SQLite DB"
-            aria-label="Active Telemetry Database">
-            <option value="">Loading databases...</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Investigation History -->
-      <div class="sidebar-section history-section">
-        <div class="history-header">
-          <span class="section-label">Recent Investigations</span>
-          <button class="clear-history-btn" id="clearHistoryBtn" title="Clear all saved history">Clear</button>
-        </div>
-        <div class="history-list" id="historyList">
-          <div class="history-empty">No previous investigations</div>
-        </div>
-      </div>
-
-      <!-- Sidebar Footer -->
-      <div class="sidebar-footer">
-        <div class="footer-actions">
-          <button class="theme-toggle-btn" id="themeToggleBtn" title="Switch Light/Dark Theme">
-            <svg class="sun-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="2">
-              <circle cx="12" cy="12" r="5"></circle>
-              <line x1="12" y1="1" x2="12" y2="3"></line>
-              <line x1="12" y1="21" x2="12" y2="23"></line>
-              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-              <line x1="1" y1="12" x2="3" y2="12"></line>
-              <line x1="21" y1="12" x2="23" y2="12"></line>
-              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-            </svg>
-            <svg class="moon-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="2">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-            </svg>
+        <div class="model-anchor" id="modelDropdownContainer">
+          <button class="model-pill" id="modelSelectorPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu">
+            <span id="activeModelName">model</span>
+            <span class="provider-tag" id="activeProviderBadge">provider</span>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
-        </div>
-      </div>
-    </aside>
-
-    <!-- Main Content Area -->
-    <main class="main-content">
-      <!-- Top Navigation Header -->
-      <header class="top-nav">
-        <div class="nav-left">
-          <!-- Permanent Sidebar Toggle Button (Open/Close) -->
-          <button class="icon-btn sidebar-toggle-btn" id="sidebarToggleBtn" title="Toggle Sidebar (Ctrl+B)"
-            aria-label="Toggle Sidebar">
-            <svg class="sidebar-icon-collapse" width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="9" y1="3" x2="9" y2="21"></line>
-            </svg>
-            <svg class="sidebar-icon-expand" style="display:none;" width="18" height="18" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="3" y1="12" x2="21" y2="12"></line>
-              <line x1="3" y1="6" x2="21" y2="6"></line>
-              <line x1="3" y1="18" x2="21" y2="18"></line>
-            </svg>
-          </button>
-
-          <!-- Model Selection Dropdown Trigger -->
-          <div class="model-dropdown-container" id="modelDropdownContainer">
-            <button class="model-selector-pill" id="modelSelectorPill" aria-haspopup="true" aria-expanded="false"
-              type="button">
-              <span class="model-sparkle">✨</span>
-              <span class="active-model-name" id="activeModelName">Loading model...</span>
-              <span class="provider-badge" id="activeProviderBadge">ollama</span>
-              <svg class="chevron-down" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2.5">
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
-            </button>
-
-            <!-- Dropdown Menu -->
-            <div class="model-menu" id="modelMenu">
-              <div class="model-menu-header">
-                <span class="menu-title">Select LLM Model</span>
-                <div class="provider-switch">
-                  <button class="provider-tab active" data-provider="ollama" id="tabOllama"
-                    type="button">Ollama</button>
-                  <button class="provider-tab" data-provider="openai" id="tabOpenai" type="button">OpenAI</button>
-                </div>
+          <div class="menu model-menu" id="modelMenu" role="listbox" aria-label="Model" hidden>
+            <div class="menu-section">
+              <div class="seg" id="providerTabs">
+                <button class="seg-btn is-active" id="tabOpencode" data-provider="opencode">OpenCode</button>
+                <button class="seg-btn" id="tabOllama" data-provider="ollama">Ollama</button>
+                <button class="seg-btn" id="tabOpenai" data-provider="openai">OpenAI</button>
               </div>
-
-              <!-- Search or quick filter -->
-              <div class="model-search-box">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
-                <input type="text" id="modelSearchInput" placeholder="Filter models..." aria-label="Filter models" />
-              </div>
-
-              <!-- Model List -->
-              <div class="model-list" id="modelList">
-                <!-- Dynamically populated -->
-              </div>
-
-              <!-- Custom model input footer -->
-              <div class="model-menu-footer">
-                <div class="custom-model-form">
-                  <input type="text" id="customModelInput" placeholder="Or enter custom model name..."
-                    aria-label="Custom model name" />
-                  <button class="apply-custom-btn" id="applyCustomModelBtn" type="button">Apply</button>
-                </div>
-              </div>
+            </div>
+            <div class="menu-search">
+              <input id="modelSearchInput" type="text" placeholder="Filter models" autocomplete="off" aria-label="Filter models" />
+            </div>
+            <div id="modelList" class="model-list"></div>
+            <div class="menu-foot model-custom">
+              <input id="customModelInput" type="text" placeholder="custom model id" aria-label="Custom model id" autocomplete="off" />
+              <button id="applyCustomModelBtn" class="ghost-btn">Use</button>
             </div>
           </div>
         </div>
 
-        <div class="nav-right">
-          <!-- Permanent Telemetry Data Table Option Button -->
-          <button class="action-pill-btn header-table-btn" id="headerTableBtn" title="Display Telemetry Data Table">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-              <path d="M3 9h18M3 15h18M9 3v18m6-18v18"></path>
-            </svg>
-            <span>Telemetry Table</span>
-            <span class="header-table-badge" id="headerTableBadge">View</span>
-          </button>
+        <button id="shortcutsBtn" class="icon-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      </div>
+    </header>
 
-          <!-- DB Quick Badge -->
-          <div class="header-db-pill" id="headerDbPill" title="Active SQLite Telemetry DB">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
-              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
-            </svg>
-            <span id="headerDbName">agent_endpoint_security.db</span>
+    <div class="work">
+      <main class="main">
+        <div class="stream" id="stream">
+          <div class="stream-inner">
+            <section class="empty" id="welcomeScreen">
+              <p class="eyebrow">case file</p>
+              <h1 class="empty-title" id="emptyTitle">no dataset</h1>
+              <p class="empty-meta" id="emptyMeta"></p>
+              <div class="examples" id="examplesBlock">
+                <div class="section-rule"><span class="eyebrow">starting points</span></div>
+                <div id="suggestionsList"></div>
+                <p class="empty-note" id="examplesEmpty" hidden>No saved patterns for this dataset. Ask a question below.</p>
+              </div>
+            </section>
+
+            <div class="turns" id="messagesContainer" aria-live="polite"></div>
           </div>
-
-          <!-- Clear / Reset Chat Button -->
-          <button class="icon-btn" id="clearChatBtn" title="Clear current conversation">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="1 4 1 10 7 10"></polyline>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-            </svg>
-          </button>
         </div>
-      </header>
 
-      <!-- Investigation Mode & Workbench Switcher -->
-      <div class="workbench-bar" id="workbenchBar">
-        <div class="view-switcher" role="tablist" aria-label="Investigation View Modes">
-          <button class="view-tab-btn" id="tabViewGraph" role="tab" aria-selected="false" data-view="graph" title="Interactive Process Tree & Attack Map">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="18" cy="5" r="3"></circle>
-              <circle cx="6" cy="12" r="3"></circle>
-              <circle cx="18" cy="19" r="3"></circle>
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-            </svg>
-            <span>Forensic Graph</span>
-            <span class="view-tab-badge" id="graphNodeCountBadge">0</span>
-          </button>
-          <button class="view-tab-btn active" id="tabViewChat" role="tab" aria-selected="true" data-view="chat" title="Live Investigation Stepper & Tool Trace">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-            <span>Investigation Trail</span>
-          </button>
-          <button class="view-tab-btn" id="tabViewReport" role="tab" aria-selected="false" data-view="report" title="Executive Incident Report & Verdict">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-            </svg>
-            <span>Incident Report</span>
+        <div class="composer">
+          <div class="composer-inner">
+            <div class="composer-box" id="inputCapsule">
+              <label class="sr-only" for="promptInput">Investigation prompt</label>
+              <textarea id="promptInput" rows="1" placeholder="Ask about this dataset…" autocomplete="off" spellcheck="false"></textarea>
+              <div class="composer-bar">
+                <span class="composer-meta" id="composerMeta"><span id="composerModel">model</span><span class="sep">·</span><span id="composerDb">dataset</span></span>
+                <button id="sendBtn" class="send-btn" aria-label="Send investigation">
+                  <svg class="i-send" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+                  <span class="i-stop" aria-hidden="true"></span>
+                </button>
+              </div>
+            </div>
+            <p class="composer-hint" id="composerHint">Enter to send · Shift+Enter for a new line</p>
+          </div>
+        </div>
+      </main>
+
+      <aside class="drawer" id="drawer" aria-label="Evidence drawer" hidden>
+        <div class="drawer-grip" id="drawerGrip" role="separator" aria-orientation="vertical" tabindex="0" aria-valuemin="380" aria-valuemax="900" aria-label="Resize evidence panel" title="Drag to resize (double-click to reset)"></div>
+        <div class="drawer-head">
+          <div class="tabs" role="tablist" aria-label="Evidence views">
+            <button class="tab is-active" id="tabViewGraph" role="tab" aria-selected="true" aria-controls="graphStage">Map<span class="tab-count" id="graphNodeCountBadge">0</span></button>
+            <button class="tab" id="tabViewTelemetry" role="tab" aria-selected="false" aria-controls="telemetryStage">Events</button>
+            <button class="tab" id="tabViewReport" role="tab" aria-selected="false" aria-controls="reportStage">Report</button>
+          </div>
+          <button id="mapCloseBtn" class="icon-btn" title="Close evidence (Esc)" aria-label="Close evidence">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
           </button>
         </div>
 
-        <div class="workbench-quick-meta" id="workbenchQuickMeta">
-          <span class="live-status-pill" id="graphLiveStatus">Ready</span>
-        </div>
-      </div>
+        <div class="drawer-body">
+          <section class="pane is-active" id="graphStage" role="tabpanel" aria-labelledby="tabViewGraph">
+            <div class="pane-tools">
+              <input id="graphSearchInput" class="filter" type="search" placeholder="Filter entities or processes" aria-label="Filter entities" autocomplete="off" />
+              <div class="seg" role="group" aria-label="Map layout">
+                <button type="button" class="seg-btn is-active" id="mapViewTree" aria-pressed="true">Tree</button>
+                <button type="button" class="seg-btn" id="mapViewLinks" aria-pressed="false">Links</button>
+              </div>
+              <button id="treeCollapseBtn" class="ghost-btn" title="Collapse all groups">Collapse</button>
+            </div>
+            <div class="type-filter" id="graphLegend" aria-label="Entity types"></div>
+            <div class="map-status">
+              <span id="graphStats">0 entities</span>
+              <button id="scopeClearBtn" class="text-btn" hidden>clear evidence scope</button>
+            </div>
+            <div class="tree-wrap" id="graphCanvasContainer"></div>
+            <div class="links-wrap" id="processLinksContainer" hidden></div>
 
-      <!-- Interactive Forensic Graph Stage -->
-      <div class="graph-stage" id="graphStage" style="display:none;">
-        <!-- Graph Control & Filter Toolbar -->
-        <div class="graph-toolbar">
-          <fieldset class="graph-filter-group" aria-label="Entity Category Filters">
-            <button class="filter-pill active" data-filter="all">All</button>
-            <button class="filter-pill filter-pill-proc" data-filter="process">Processes</button>
-            <button class="filter-pill filter-pill-net" data-filter="network">Network</button>
-            <button class="filter-pill filter-pill-file" data-filter="file">Files</button>
-            <button class="filter-pill filter-pill-reg" data-filter="registry">Registry</button>
-            <button class="filter-pill filter-pill-alert" data-filter="alert">Suspicious</button>
-          </fieldset>
-
-          <div class="graph-search-wrap">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input type="text" id="graphSearchInput" class="graph-search-input" placeholder="Search node name, PID, IP, command..." aria-label="Search graph nodes" />
-          </div>
-
-          <div class="graph-actions-group">
-            <button class="icon-btn-sm" id="graphExpandAllBtn" title="Expand All Connected Nodes" type="button">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
-            </button>
-            <button class="icon-btn-sm" id="graphCollapseAllBtn" title="Collapse to Root Nodes" type="button">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
-            </button>
-            <button class="icon-btn-sm" id="graphZoomInBtn" title="Zoom In (+)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
-            <button class="icon-btn-sm" id="graphZoomOutBtn" title="Zoom Out (-)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
-            <button class="icon-btn-sm" id="graphFitBtn" title="Fit to Screen">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
-            </button>
-            <!-- Sample Scenarios Quick Selector -->
-            <div class="scenario-dropdown-wrap">
-              <button class="action-pill-btn-sm" id="scenarioDropdownBtn" title="Load Pre-configured Attack Scenario" type="button">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                <span>Sample Attacks</span>
-              </button>
-              <div class="scenario-menu" id="scenarioMenu">
-                <button class="scenario-menu-item" data-scenario="ransomware" type="button">
-                  <strong>LockBit Ransomware</strong>
-                  <span>Word &rarr; Hidden PowerShell &rarr; vssadmin shadow deletion</span>
-                </button>
-                <button class="scenario-menu-item" data-scenario="exfil" type="button">
-                  <strong>Data Exfiltration</strong>
-                  <span>7-Zip staging &rarr; Outbound C2 upload</span>
-                </button>
-                <button class="scenario-menu-item" data-scenario="lateral" type="button">
-                  <strong>Lateral Movement</strong>
-                  <span>PowerShell WinRM &rarr; WMI remote exec on DC</span>
+            <aside class="inspector" id="graphInspectorDrawer" aria-hidden="true" aria-label="Entity inspector">
+              <div class="inspector-head">
+                <span class="inspector-type" id="inspectorTypeBadge">process</span>
+                <button id="inspectorCloseBtn" class="icon-btn" aria-label="Close inspector">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5l14 14M19 5L5 19"/></svg>
                 </button>
               </div>
+              <h2 class="inspector-title" id="inspectorTitle"></h2>
+              <p class="inspector-sub" id="inspectorSubtitle"></p>
+              <div class="inspector-body" id="inspectorBody"></div>
+            </aside>
+          </section>
+
+          <section class="pane" id="telemetryStage" role="tabpanel" aria-labelledby="tabViewTelemetry" hidden>
+            <div class="pane-tools">
+              <input id="globalDialogSearchInput" class="filter" type="search" placeholder="Filter host, action, process, summary, id" aria-label="Filter events" autocomplete="off" />
+              <button id="globalDialogCopyBtn" class="ghost-btn">Copy CSV</button>
             </div>
-          </div>
+            <div class="pane-meta-row">
+              <span id="globalDialogMeta">no events loaded</span>
+              <span id="globalDialogCountBadge"></span>
+            </div>
+            <div class="table-wrap" id="globalDialogTableWrap"></div>
+          </section>
+
+          <section class="pane" id="reportStage" role="tabpanel" aria-labelledby="tabViewReport" hidden>
+            <div class="pane-tools">
+              <span class="report-tag" id="reportStageVerdictTag" data-verdict="none">no verdict</span>
+              <span class="pane-meta" id="reportStageVerdictTime"></span>
+              <button id="reportStageCopyBtn" class="ghost-btn">Copy markdown</button>
+            </div>
+            <article class="md report-md" id="reportStageContent">
+              <p class="empty-note">No report yet. A completed investigation writes its report here.</p>
+            </article>
+          </section>
         </div>
-
-        <!-- SVG Visualizer Container -->
-        <div class="graph-canvas-container" id="graphCanvasContainer">
-          <!-- ForensicGraph renders here -->
-        </div>
-
-        <!-- Entity Inspector Drawer (Slide-out panel) -->
-        <aside class="graph-inspector-drawer" id="graphInspectorDrawer" aria-label="Entity Inspector">
-          <div class="inspector-header">
-            <div class="inspector-badge-row">
-              <span class="inspector-type-badge" id="inspectorTypeBadge">Process</span>
-              <span class="inspector-threat-badge" id="inspectorThreatBadge" style="display:none;">Suspicious</span>
-            </div>
-            <button class="icon-btn-sm" id="inspectorCloseBtn" title="Close Inspector (Esc)" type="button">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-          </div>
-          <div class="inspector-title" id="inspectorTitle">powershell.exe</div>
-          <div class="inspector-subtitle" id="inspectorSubtitle">PID 4820 &middot; Host WS-ACCT-01</div>
-
-          <div class="inspector-body" id="inspectorBody">
-            <!-- Dynamically populated entity attributes -->
-          </div>
-        </aside>
-      </div>
-
-      <!-- Incident Report Stage -->
-      <div class="report-stage" id="reportStage" style="display:none;">
-        <div class="report-stage-inner">
-          <div class="report-stage-header">
-            <div class="report-verdict-card" id="reportStageVerdict">
-              <div class="verdict-tag" id="reportStageVerdictTag">No Report Generated</div>
-              <div class="verdict-time" id="reportStageVerdictTime">Run an investigation to generate a verified incident report</div>
-            </div>
-            <div class="report-stage-actions">
-              <button class="action-pill-btn" id="reportStageCopyBtn" title="Copy Report Markdown" type="button">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                <span>Copy Markdown</span>
-              </button>
-            </div>
-          </div>
-          <div class="report-stage-content report-markdown" id="reportStageContent">
-            <div class="history-empty" style="padding:60px 20px;">
-              No investigation report generated yet. Submit a query below or select a sample investigation from the suggestions to begin.
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Chat Messages Scroll Stage -->
-      <div class="chat-stage" id="chatStage">
-        <div class="chat-stage-inner" id="chatStageInner">
-          <!-- Welcome Screen (Shown when empty) -->
-          <div class="welcome-screen" id="welcomeScreen">
-            <div class="welcome-icon">
-              <div class="shield-halo"></div>
-              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                <circle cx="12" cy="11" r="3"></circle>
-                <line x1="12" y1="14" x2="12" y2="16"></line>
-              </svg>
-            </div>
-            <h1 class="welcome-title">Where would you like to investigate?</h1>
-            <p class="welcome-desc">A1 agent evaluates hypotheses across endpoint security telemetry, processes,
-              network, and file operations.</p>
-
-            <div class="suggestions-list-wrapper">
-              <div class="suggestions-list-header">
-                <div class="suggestions-list-title-wrap">
-                  <span class="suggestions-list-title">Investigation Scenarios by Database</span>
-                  <span class="suggestions-count-badge" id="suggestionsCountBadge">10 Available</span>
-                </div>
-                <div class="suggestions-filter-bar" id="suggestionsFilterBar" role="tablist" aria-label="Filter Prompts by Category">
-                  <button class="sugg-filter-pill active" data-filter="all" type="button">All (10)</button>
-                  <button class="sugg-filter-pill" data-filter="active" id="filterActiveDbBtn" type="button" title="Show only prompts for the currently active database">Active DB</button>
-                  <button class="sugg-filter-pill" data-filter="attack" type="button">Attacks (7)</button>
-                  <button class="sugg-filter-pill" data-filter="benign" type="button">Benign (1)</button>
-                  <button class="sugg-filter-pill" data-filter="eval" type="button">Gaps &amp; Ambiguity (2)</button>
-                </div>
-              </div>
-
-              <div class="suggestions-list" id="suggestionsList">
-                <!-- 1. attack_lateral_movement.db - ATK-A -->
-                <button class="suggestion-item"
-                  data-db="attack_lateral_movement.db"
-                  data-category="attack"
-                  data-query="Investigate suspicious activity on WS-OPS-01: a process accessed lsass.exe memory and a dump file appeared in a user Temp directory, the same session then opened SMB connections to SRV-FILE-01, and repeated failed network logons for one account were followed by a successful one and a new Windows service installation. Determine whether this is credential dumping and lateral movement or benign administrative activity."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-attack">Attack</span>
-                      <span class="suggestion-case-id">ATK-A</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>attack_lateral_movement.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Credential Dumping &amp; Lateral Movement</span>
-                    </div>
-                    <div class="suggestion-title">LSASS memory dumping, SMB reconnaissance, and remote service installation on WS-OPS-01</div>
-                    <div class="suggestion-snippet">Investigate suspicious activity on WS-OPS-01: a process accessed lsass.exe memory and a dump file appeared in a user Temp directory, then opened SMB to SRV-FILE-01...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 2. attack_lateral_movement.db - INC-A -->
-                <button class="suggestion-item"
-                  data-db="attack_lateral_movement.db"
-                  data-category="eval"
-                  data-query="Investigate an alert claiming unauthorized execution on SRV-FILE-01. Examine telemetry for the parent process, network flows, and authentication. If essential telemetry is absent to prove or disprove malicious activity, render an inconclusive outcome citing the specific missing telemetry."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-eval">Telemetry Gap</span>
-                      <span class="suggestion-case-id">INC-A</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>attack_lateral_movement.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Missing Telemetry Gap Analysis</span>
-                    </div>
-                    <div class="suggestion-title">Assess unauthorized execution alert on SRV-FILE-01 with missing telemetry gap analysis</div>
-                    <div class="suggestion-snippet">Examine telemetry for parent process, network flows, and authentication; if telemetry is absent to prove maliciousness, render inconclusive...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 3. attack_data_exfiltration.db - ATK-B -->
-                <button class="suggestion-item"
-                  data-db="attack_data_exfiltration.db"
-                  data-category="attack"
-                  data-query="Investigate suspicious activity on WS-DEV-02: PowerShell spawned an archiver that staged the user's spreadsheets into a password-protected archive in Temp, then dropped a script and created a logon scheduled task, made repeated outbound HTTPS connections to an external address, and the archive was later deleted. Determine whether this is data exfiltration or benign software activity."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-attack">Attack</span>
-                      <span class="suggestion-case-id">ATK-B</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>attack_data_exfiltration.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">PowerShell Staging &amp; Data Exfiltration</span>
-                    </div>
-                    <div class="suggestion-title">PowerShell 7-Zip file staging, scheduled task creation, and outbound HTTPS exfiltration on WS-DEV-02</div>
-                    <div class="suggestion-snippet">Investigate suspicious activity on WS-DEV-02: PowerShell staged spreadsheets into an encrypted archive in Temp and uploaded via HTTPS...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 4. ransomware_attack_complete_ecs.db - ATK-C -->
-                <button class="suggestion-item"
-                  data-db="ransomware_attack_complete_ecs.db"
-                  data-category="attack"
-                  data-query="Investigate suspicious ransomware activity on WS-ACCT-01: Microsoft Word opened invoice_2026-Q3.docx, hidden PowerShell invoked vssadmin.exe to delete shadow copies, and LockBit executed encrypting user documents with .locked extensions. Determine whether this is ransomware or benign activity."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-attack">Attack</span>
-                      <span class="suggestion-case-id">ATK-C</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>ransomware_attack_complete_ecs.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">LockBit Ransomware &amp; VSS Deletion</span>
-                    </div>
-                    <div class="suggestion-title">Word phishing doc, vssadmin shadow copy deletion, and LockBit ransomware encryption on WS-ACCT-01</div>
-                    <div class="suggestion-snippet">Microsoft Word opened invoice_2026-Q3.docx, hidden PowerShell invoked vssadmin to delete shadow copies, and LockBit encrypted documents...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 5. attack_lotl_fileless.db - ATK-D -->
-                <button class="suggestion-item"
-                  data-db="attack_lotl_fileless.db"
-                  data-category="attack"
-                  data-query="Investigate suspicious Living-off-the-Land and fileless execution on WS-EXEC-02: mshta.exe spawned hidden encoded PowerShell establishing outbound C2, discovery LOLBins executed, certutil staged payloads, and remote WMI execution occurred against DC-AUTH-01. Determine whether this is a fileless intrusion or benign administrative activity."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-attack">Attack</span>
-                      <span class="suggestion-case-id">ATK-D</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>attack_lotl_fileless.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Fileless LotL &amp; Remote WMI Execution</span>
-                    </div>
-                    <div class="suggestion-title">mshta.exe spawned encoded PowerShell, discovery LOLBins, certutil staging, and WMI on DC-AUTH-01</div>
-                    <div class="suggestion-snippet">Investigate mshta hidden encoded PowerShell C2, discovery LOLBins (wmic, net, nltest), certutil staging, and remote WMI execution...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 6. attack_lotl_fileless.db - AMB-A -->
-                <button class="suggestion-item"
-                  data-db="attack_lotl_fileless.db"
-                  data-category="eval"
-                  data-query="Investigate command-line and utility activity on WS-EXEC-02: certutil.exe and PowerShell with flags were invoked during business hours. Evaluate whether this represents malicious C2 staging, dual-use developer activity, or benign administration, noting any ambiguity in intent."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-eval">Dual-Use Ambiguity</span>
-                      <span class="suggestion-case-id">AMB-A</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>attack_lotl_fileless.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Dual-Use Utility &amp; Ambiguous Intent</span>
-                    </div>
-                    <div class="suggestion-title">Evaluate certutil.exe and PowerShell invocation during business hours for dual-use ambiguity</div>
-                    <div class="suggestion-snippet">Evaluate whether certutil and flagged PowerShell represent malicious C2 staging, dual-use developer activity, or administration...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 7. wazuh_lotl_attack_dataset.db - ATK-E -->
-                <button class="suggestion-item"
-                  data-db="wazuh_lotl_attack_dataset.db"
-                  data-category="attack"
-                  data-query="Investigate suspicious Living-off-the-Land PowerShell execution and SAM registry access on WS-DEV-01 on 2026-10-15. Trace discovery commands, persistence tasks, and C2 exfiltration in Wazuh telemetry."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-attack">Attack</span>
-                      <span class="suggestion-case-id">ATK-E</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>wazuh_lotl_attack_dataset.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Wazuh SIEM / EDR Telemetry</span>
-                    </div>
-                    <div class="suggestion-title">Wazuh telemetry: Living-off-the-Land execution, SAM hive access, and C2 on WS-DEV-01</div>
-                    <div class="suggestion-snippet">Hidden PowerShell executed, SAM registry hive was accessed, C2 connections were made to attacker.com, and lateral movement attempted...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 8. suricata_c2_intrusion.db - ATK-F -->
-                <button class="suggestion-item"
-                  data-db="suricata_c2_intrusion.db"
-                  data-category="attack"
-                  data-query="Investigate critical Suricata NIDS alerts on WS-FINANCE-01:multiple ET MALWARE CobaltStrike C2 beaconing alerts to 203.0.113.88:8443 between 2026-10-16T14:00:00Z and 2026-10-16T16:02:00Z"
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-attack">Attack</span>
-                      <span class="suggestion-case-id">ATK-F</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>suricata_c2_intrusion.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Suricata NIDS &amp; CobaltStrike C2</span>
-                    </div>
-                    <div class="suggestion-title">Suricata NIDS alerts: Win32/CobaltStrike Malleable C2 Beaconing on port 8443 on WS-FINANCE-01</div>
-                    <div class="suggestion-snippet">ET MALWARE CobaltStrike C2 beacon alerts to 203.0.113.88:8443, internal SMB reconnaissance against DC-AUTH-01, and outbound exfiltration...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 9. attack_supply_chain.db - ATK-G -->
-                <button class="suggestion-item"
-                  data-db="attack_supply_chain.db"
-                  data-category="attack"
-                  data-query="Investigate a potential supply chain compromise on WS-DEV-07: the CorpTools application auto-updated and shortly after, discovery commands were executed, a new local administrator account appeared, Kerberos ticket requests targeted SQL service accounts, and WinRM sessions were established to WS-DBA-03 and DC-CORP-01. Determine whether this is a supply chain attack or legitimate software activity."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-attack">Attack</span>
-                      <span class="suggestion-case-id">ATK-G</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>attack_supply_chain.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Supply Chain Auto-Update Compromise</span>
-                    </div>
-                    <div class="suggestion-title">CorpTools software auto-update, rogue local admin account, and Kerberos ticket requests on WS-DEV-07</div>
-                    <div class="suggestion-snippet">CorpTools updated and shortly after, discovery ran, new local admin appeared, Kerberos tickets targeted SQL accounts, and WinRM sessions opened...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-
-                <!-- 10. benign_admin_activity.db - BEN-A -->
-                <button class="suggestion-item"
-                  data-db="benign_admin_activity.db"
-                  data-category="benign"
-                  data-query="Investigate scheduled activity on WS-ADMIN-05: svchost.exe spawned PowerShell running backup_verification.ps1 under CORP\sysadmin, which opened SMB connections to SRV-FILE-02, wrote to backup_audit_20260915.log, and checked W32Time registry settings. Determine whether this is an attack or benign administrative activity."
-                  type="button">
-                  <div class="suggestion-item-main">
-                    <div class="suggestion-item-meta">
-                      <span class="suggestion-type-badge type-benign">Benign Baseline</span>
-                      <span class="suggestion-case-id">BEN-A</span>
-                      <span class="suggestion-db-badge">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                        <span>benign_admin_activity.db</span>
-                      </span>
-                      <span class="active-db-indicator">● Active DB</span>
-                      <span class="suggestion-topic">Scheduled Admin &amp; Backup Verification</span>
-                    </div>
-                    <div class="suggestion-title">svchost.exe spawned backup_verification.ps1 under sysadmin, SMB to file server on WS-ADMIN-05</div>
-                    <div class="suggestion-snippet">Investigate scheduled backup verification script under sysadmin, SMB connections to SRV-FILE-02, audit log writing, and W32Time registry access...</div>
-                  </div>
-                  <div class="suggestion-item-action">
-                    <span class="suggestion-run-pill">
-                      <span>Investigate</span>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                    </span>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Messages List Container -->
-          <div class="messages-container" id="messagesContainer"></div>
-        </div>
-      </div>
-
-      <!-- ChatGPT-Style Floating Input Capsule -->
-      <div class="input-region">
-        <div class="input-capsule-wrapper">
-          <div class="input-capsule" id="inputCapsule">
-            <textarea id="promptInput" class="prompt-textarea" placeholder="Message A1 DFIR Investigator..."
-              aria-label="Message A1 DFIR Investigator" rows="1"></textarea>
-
-            <div class="capsule-bottom-bar">
-              <div class="capsule-meta">
-                <span class="meta-pill" id="inputMetaModel">gemma4:31b</span>
-                <span class="meta-pill" id="inputMetaDb">agent_endpoint_security.db</span>
-              </div>
-
-              <div class="capsule-actions">
-                <button class="send-action-btn" id="sendBtn" title="Send message (Enter)">
-                  <svg class="send-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="19" x2="12" y2="5"></line>
-                    <polyline points="5 12 12 5 19 12"></polyline>
-                  </svg>
-                  <span class="stop-icon" style="display: none;">■</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </main>
+      </aside>
+    </div>
   </div>
 
-  <!-- Global High-Density Telemetry Table Sheet Modal -->
-  <dialog class="evidence-table-dialog" id="globalTableDialog" aria-label="Telemetry events table">
-    <div class="ios-sheet-handle"></div>
-    <div class="evidence-table-dialog-heading">
-      <div>
-        <h2 id="globalDialogTitle">Telemetry Database Events</h2>
-        <div class="evidence-dialog-meta" id="globalDialogMeta">Loading events...</div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <button type="button" class="table-copy-btn" id="globalDialogCopyBtn" title="Copy events as CSV">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-          </svg>
-          <span>Copy CSV</span>
-        </button>
-        <button class="icon-btn evidence-table-close" id="globalDialogCloseBtn" type="button"
-          aria-label="Close telemetry table" title="Close (Esc)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 6 6 18M6 6l12 12"></path>
-          </svg>
-        </button>
-      </div>
-    </div>
-    <div class="table-toolbar" style="border-radius:0; border-left:none; border-right:none;">
-      <div class="table-search-box">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-        </svg>
-        <input type="text" id="globalDialogSearchInput" class="table-search-input"
-          placeholder="Search across all columns (host, action, process, summary)..."
-          aria-label="Search telemetry events" />
-      </div>
-      <div class="table-toolbar-actions">
-        <span class="table-count-badge" id="globalDialogCountBadge"></span>
-      </div>
-    </div>
-    <div class="evidence-table-wrap dialog-table-wrap" id="globalDialogTableWrap"></div>
-  </dialog>
+  <div class="shortcuts" id="shortcutsPop" hidden role="dialog" aria-label="Keyboard shortcuts">
+    <div class="shortcuts-head"><span class="eyebrow">keyboard</span><button id="shortcutsCloseBtn" class="icon-btn" aria-label="Close">×</button></div>
+    <dl>
+      <div><dt><kbd>enter</kbd></dt><dd>send</dd></div>
+      <div><dt><kbd>shift</kbd>+<kbd>enter</kbd></dt><dd>new line</dd></div>
+      <div><dt><kbd>ctrl</kbd>+<kbd>e</kbd></dt><dd>evidence drawer</dd></div>
+      <div><dt><kbd>ctrl</kbd>+<kbd>k</kbd></dt><dd>model</dd></div>
+      <div><dt><kbd>esc</kbd></dt><dd>close menu / panel</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>this list</dd></div>
+    </dl>
+  </div>
 
-  <script src="/static/forensic-graph.js?v=v3_clean_thinking_20261003_final"></script>
-  <script src="/static/app.js?v=v3_clean_thinking_20261003_final"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/static/vendor/marked.min.js?v=wsb_20261119h"></script>
+  <script src="/static/vendor/purify.min.js?v=wsb_20261119h"></script>
+  <script src="/static/forensic-graph.js?v=wsb_20261119l"></script>
+  <script src="/static/evidence-tree.js?v=wsb_20261119l"></script>
+  <script src="/static/process-links.js?v=wsb_20261119l"></script>
+  <script src="/static/app.js?v=wsb_20261119l"></script>
 </body>
-
 </html>

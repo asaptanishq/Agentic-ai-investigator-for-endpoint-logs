@@ -1,6 +1,13 @@
-from typing import Any, Dict, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Dict, Iterator, Optional
+from uuid import uuid4
+
 from a1.config import (
     LLM_PROVIDER,
+    OPENCODE_API_KEY,
+    OPENCODE_BASE_URL,
+    OPENCODE_MODEL_NAME,
     OPENAI_API_KEY,
     OPENAI_MODEL_NAME,
     OPENAI_BASE_URL,
@@ -12,6 +19,32 @@ from a1.config import (
 
 _ACTIVE_PROVIDER: Optional[str] = None
 _ACTIVE_MODEL: Optional[str] = None
+_OPENCODE_SESSION_ID: ContextVar[Optional[str]] = ContextVar(
+    "a1_opencode_session_id",
+    default=None,
+)
+
+
+@contextmanager
+def opencode_session(session_id: Optional[str] = None) -> Iterator[str]:
+    """Keep OpenCode's session header stable across one investigation."""
+    value = session_id or f"a1-{uuid4().hex}"
+    token = _OPENCODE_SESSION_ID.set(value)
+    try:
+        yield value
+    finally:
+        _OPENCODE_SESSION_ID.reset(token)
+
+
+def stream_investigation(
+    graph: Any,
+    state: dict,
+    session_id: Optional[str] = None,
+) -> Iterator[dict]:
+    """Stream a graph run with one OpenCode session ID shared by its model calls."""
+    with opencode_session(session_id):
+        yield from graph.stream(state, stream_mode="values")
+
 
 def set_active_llm(provider: Optional[str] = None, model: Optional[str] = None) -> None:
     """Set the active LLM provider and model dynamically at runtime."""
@@ -21,16 +54,20 @@ def set_active_llm(provider: Optional[str] = None, model: Optional[str] = None) 
     if model:
         _ACTIVE_MODEL = model.strip()
 
+
 def get_active_llm_info() -> Dict[str, str]:
     """Return the active provider and model name."""
     provider = (_ACTIVE_PROVIDER or LLM_PROVIDER).lower()
-    if provider == "ollama":
+    if provider == "opencode":
+        model = _ACTIVE_MODEL or OPENCODE_MODEL_NAME
+    elif provider == "ollama":
         model = _ACTIVE_MODEL or OLLAMA_MODEL_NAME
     elif provider == "openai":
         model = _ACTIVE_MODEL or OPENAI_MODEL_NAME
     else:
         model = _ACTIVE_MODEL or "unknown"
     return {"provider": provider, "model": model}
+
 
 def _create_ollama_llm(chosen_model: str, temperature: float, kwargs: dict) -> Any:
     from langchain_ollama import ChatOllama
@@ -51,6 +88,7 @@ def _create_ollama_llm(chosen_model: str, temperature: float, kwargs: dict) -> A
         **ollama_kwargs
     )
 
+
 def _create_openai_llm(chosen_model: str, temperature: float, kwargs: dict) -> Any:
     from langchain_openai import ChatOpenAI
     params: dict = {
@@ -65,29 +103,75 @@ def _create_openai_llm(chosen_model: str, temperature: float, kwargs: dict) -> A
 
     return ChatOpenAI(**params)
 
+
+def _create_opencode_llm(chosen_model: str, temperature: float, kwargs: dict) -> Any:
+    from langchain_openai import ChatOpenAI
+
+    if not OPENCODE_API_KEY:
+        raise ValueError("OPENCODE_API_KEY is required to use the OpenCode provider")
+
+    headers = dict(kwargs.pop("default_headers", {}) or {})
+    headers = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in {"user-agent", "x-opencode-session"}
+    }
+    headers["User-Agent"] = "a1-dfir-investigator/0.1.0"
+    headers["x-opencode-session"] = _OPENCODE_SESSION_ID.get() or f"a1-{uuid4().hex}"
+    params: dict = {
+        "model": chosen_model,
+        "temperature": temperature,
+        "base_url": OPENCODE_BASE_URL,
+        "api_key": OPENCODE_API_KEY,
+        "default_headers": headers,
+        **kwargs,
+    }
+    return ChatOpenAI(**params)
+
+
 def get_llm(
     temperature: float = 0.0,
     provider: Optional[str] = None,
     model: Optional[str] = None,
     **kwargs: Any
 ) -> Any:
-    """Factory function returning the configured LangChain chat model.
-    Supports Ollama and OpenAI. Accepts provider and model overrides.
+    """Factory returning the configured chat model with optional overrides.
+    Supports OpenCode, Ollama, and OpenAI.
     """
     chosen_provider = (provider or _ACTIVE_PROVIDER or LLM_PROVIDER).lower()
+    active_model = (
+        _ACTIVE_MODEL
+        if _ACTIVE_PROVIDER is None or _ACTIVE_PROVIDER == chosen_provider
+        else None
+    )
 
+    if chosen_provider == "opencode":
+        chosen_model = model or active_model or OPENCODE_MODEL_NAME
+        return _create_opencode_llm(chosen_model, temperature, kwargs)
     if chosen_provider == "ollama":
-        chosen_model = model or _ACTIVE_MODEL or OLLAMA_MODEL_NAME
+        chosen_model = model or active_model or OLLAMA_MODEL_NAME
         return _create_ollama_llm(chosen_model, temperature, kwargs)
     if chosen_provider == "openai":
-        chosen_model = model or _ACTIVE_MODEL or OPENAI_MODEL_NAME
+        chosen_model = model or active_model or OPENAI_MODEL_NAME
         return _create_openai_llm(chosen_model, temperature, kwargs)
-    raise ValueError(f"Unknown LLM_PROVIDER: '{chosen_provider}'. Supported providers: 'ollama', 'openai'")
+    raise ValueError(
+        f"Unknown LLM_PROVIDER: '{chosen_provider}'. "
+        "Supported providers: 'opencode', 'ollama', 'openai'"
+    )
+
 
 def check_llm_status() -> Dict[str, Any]:
     """Check LLM connection and retrieve active provider & model info."""
-    provider = LLM_PROVIDER.lower()
-    if provider == "ollama":
+    provider = (_ACTIVE_PROVIDER or LLM_PROVIDER).lower()
+    if provider == "opencode":
+        return {
+            "status": "configured" if OPENCODE_API_KEY else "missing_api_key",
+            "provider": provider,
+            "model": _ACTIVE_MODEL or OPENCODE_MODEL_NAME,
+            "base_url": OPENCODE_BASE_URL,
+            "api_key_set": bool(OPENCODE_API_KEY),
+        }
+    elif provider == "ollama":
         try:
             llm = get_llm()
             # Send a fast test prompt to verify API connectivity & model availability
@@ -95,7 +179,7 @@ def check_llm_status() -> Dict[str, Any]:
             return {
                 "status": "ok",
                 "provider": provider,
-                "model": OLLAMA_MODEL_NAME,
+                "model": _ACTIVE_MODEL or OLLAMA_MODEL_NAME,
                 "base_url": OLLAMA_BASE_URL,
                 "api_key_set": bool(OLLAMA_API_KEY),
                 "response_preview": str(response.content)[:50],
@@ -104,7 +188,7 @@ def check_llm_status() -> Dict[str, Any]:
             return {
                 "status": "error",
                 "provider": provider,
-                "model": OLLAMA_MODEL_NAME,
+                "model": _ACTIVE_MODEL or OLLAMA_MODEL_NAME,
                 "base_url": OLLAMA_BASE_URL,
                 "error": str(e),
             }
@@ -112,7 +196,7 @@ def check_llm_status() -> Dict[str, Any]:
         return {
             "status": "configured",
             "provider": provider,
-            "model": OPENAI_MODEL_NAME,
+            "model": _ACTIVE_MODEL or OPENAI_MODEL_NAME,
             "api_key_set": bool(OPENAI_API_KEY),
         }
     return {"status": "unknown", "provider": provider}
@@ -138,4 +222,3 @@ def invoke_with_network_retry(runnable: Any, messages: Any, max_attempts: int = 
                 time.sleep(delay)
                 continue
             raise
-

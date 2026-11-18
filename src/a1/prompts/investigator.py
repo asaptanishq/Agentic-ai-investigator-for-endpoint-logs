@@ -41,16 +41,16 @@ CORE INVESTIGATION PLAYBOOK BY ALERT TYPE:
    - Second call: `find_process_associations(process_entity_id=...)` on the writing process.
    - Use `pivot_on_indicator(indicator_type='sha256', indicator_value=...)` or `file_name` to check if the file was seen across other hosts.
 
-5. AUTHENTICATION & LATERAL MOVEMENT ALERTS (e.g. failed logons, SMB/NTLM lateral movement):
-   - TARGET HOST FIRST: Network logons (type 3) are logged on the TARGET host receiving the connection (e.g. SRV-FILE-01 / host-a02).
-     * Query `search_timeline(host_id=target_host, category='authentication')` (or `user_id=...`) to verify failed logons (4625) and successful logon (4624).
+5. AUTHENTICATION & LATERAL MOVEMENT ALERTS (e.g. failed logons, network/NTLM lateral movement):
+   - TARGET HOST FIRST: Network logons (such as logon type 3) are logged on the TARGET host receiving the connection.
+     * Query `search_timeline(host_id=target_host, category='authentication')` (or `user_id=...`) to verify logon activity (failed and successful logons).
      * Inspect post-logon activity across a broad window (at least ±2 hours around the logon): Query `search_timeline(host_id=target_host, category='process,registry,file')`.
-     * Search directly for persistence and service creation using keyword search: `search_timeline(host_id=target_host, keyword='sc.exe')`, `keyword='service'`, or `keyword='persistence'`. Look for registry service ImagePath changes, dropped binaries in `C:\Windows\Temp\`, or processes running as SYSTEM.
-   - SOURCE HOST LOOKBACK: Adversaries dump credentials on the source host prior to lateral movement.
-     * Query `search_timeline(host_id=source_host, category='network')` to see what process initiated the outbound connection (e.g. `powershell.exe`).
-     * Look back broadly (at least ±2 hours around the alert): Query `search_timeline(host_id=source_host, category='process,file')` or use keyword search `search_timeline(host_id=source_host, keyword='procdump')`, `keyword='lsass'`, or `keyword='dmp'` to check if PowerShell spawned `procdump.exe`, accessed `lsass.exe` (Event 10), or dumped credentials (`lsass.dmp`).
-    - For a credential-dumping-to-lateral-movement hypothesis, explicitly verify the parent-child process edge, LSASS access and dump file, source-host SMB connection and process ID, matching target-host type-3 authentication sequence, and target service ImagePath, binary drop, and service execution. Use `find_process_relationships` or `trace_process_tree` for lineage and `find_process_associations` for process-linked artifacts.
-    - Do not infer SMB or remote execution from authentication events alone. A missing parent for the service-creation command is an attribution gap; it does not negate independently linked credential theft, SMB authentication, service ImagePath, and SYSTEM service execution.
+     * Search directly for persistence and service creation using keyword search: `search_timeline(host_id=target_host, keyword='service')` or `keyword='persistence'`. Look for registry service ImagePath changes, dropped binaries in temp directories, or processes running as elevated/SYSTEM.
+   - SOURCE HOST LOOKBACK: Adversaries frequently dump credentials or stage tools on the source host prior to lateral movement.
+     * Query `search_timeline(host_id=source_host, category='network')` to see what process initiated the outbound connection.
+     * Look back broadly (at least ±2 hours around the alert): Query `search_timeline(host_id=source_host, category='process,file')` or use keyword search `search_timeline(host_id=source_host, keyword='dump')` or `keyword='credential'` to check if processes accessed credential stores or memory dumps.
+    - For a credential-theft-to-lateral-movement hypothesis, explicitly verify the parent-child process edge, credential access evidence, source-host network connection and process ID, matching target-host authentication sequence, and target service installation/execution. Use `find_process_relationships` or `trace_process_tree` for lineage and `find_process_associations` for process-linked artifacts.
+    - Do not infer network connections or remote execution from authentication events alone. A missing parent for a service-creation command is an attribution gap; it does not negate independently linked credential theft, network authentication, service ImagePath, and elevated service execution.
 
 6. FILELESS & LIVING-OFF-THE-LAND (LOTL) ALERTS (e.g. mshta.exe, powershell.exe, wmic.exe, certutil.exe, schtasks.exe, reg.exe):
    - Attackers abuse built-in Windows utilities rather than dropping custom malware binaries.

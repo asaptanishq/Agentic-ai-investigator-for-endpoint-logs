@@ -57,7 +57,7 @@ class ExperimentRunner:
         }
 
     @staticmethod
-    def _run_live_case_state(cid: str, case_info: Dict[str, Any]) -> Dict[str, Any]:
+    def _run_live_case_state(cid: str, case_info: Dict[str, Any], config: Optional[ExperimentConfig] = None) -> Dict[str, Any]:
         """Execute the live LangGraph investigation pipeline on real case telemetry."""
         from a1.benchmark import BENCHMARK_CASES, activate_case_database
         from a1.graph import create_investigation_graph
@@ -66,7 +66,10 @@ class ExperimentRunner:
         if db_name:
             activate_case_database(db_name)
 
-        app = create_investigation_graph()
+        try:
+            app = create_investigation_graph(config=config)
+        except TypeError:
+            app = create_investigation_graph()
         initial_state = {
             "messages": [],
             "hypotheses": [],
@@ -107,7 +110,7 @@ class ExperimentRunner:
             if mock_mode:
                 state = self._simulate_mock_case_state(case_info, config)
             else:
-                state = self._run_live_case_state(cid, case_info)
+                state = self._run_live_case_state(cid, case_info, config)
 
             rubric = evaluate_case_rubric(case_info, state)
             results.append({
@@ -193,3 +196,38 @@ class ExperimentRunner:
             json.dump(ablation_summary, f, indent=2)
         logger.info("Saved ablation study to %s", out_file)
         return ablation_summary
+
+
+def main():
+    import argparse
+    from a1.benchmark import BENCHMARK_CASES
+
+    parser = argparse.ArgumentParser(description="Run A1 benchmark experiments and ablation studies")
+    parser.add_argument("--live", action="store_true", help="Run live investigation pipeline instead of mock mode")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of benchmark cases")
+    parser.add_argument("--ablation", action="store_true", help="Run full 5-stage ablation study")
+    parser.add_argument("--cases", nargs="*", default=None, help="Specific case IDs to evaluate (e.g. ATK-A ATK-B)")
+    args = parser.parse_args()
+
+    runner = ExperimentRunner()
+    case_ids = args.cases or list(BENCHMARK_CASES.keys())
+    if args.limit:
+        case_ids = case_ids[:args.limit]
+
+    print(f"[*] Running ExperimentRunner (live={args.live}, ablation={args.ablation}, cases={case_ids})")
+    if args.ablation:
+        results = runner.run_ablation(cases=case_ids, mock_mode=not args.live)
+        print("\n=== Ablation Study Results ===")
+        for stage in results["stages"]:
+            print(f"  {stage['stage']}: Score {stage['avg_score']}/100, FPs: {stage['false_positives']}, FNs: {stage['false_negatives']}")
+    else:
+        full_cfg = ExperimentConfig("Full_System", True, True, True, True)
+        results = runner.evaluate_configuration(full_cfg, cases=case_ids, mock_mode=not args.live)
+        print(f"\n=== Evaluation Summary ({results['config_name']}) ===")
+        print(f"  Average Score: {results['average_composite_score']}/100")
+        print(f"  False Positives: {results['false_positives']}, False Negatives: {results['false_negatives']}")
+        print(f"  Cases Evaluated: {results['cases_evaluated']}")
+
+
+if __name__ == "__main__":
+    main()

@@ -125,8 +125,10 @@ def _extract_rows_from_tool_messages(messages: List[Any]) -> Tuple[List[Dict[str
 
         summary = " ".join(summary_parts) if summary_parts else (str(r)[:100])
 
+        is_synthetic = eid is None
         kept_events.append({
-            "event_id": eid or f"gen-{len(kept_events)+1}",
+            "event_id": eid if eid else None,
+            "synthetic": is_synthetic,
             "timestamp": ts,
             "host_id": hid,
             "process_entity_id": pid,
@@ -150,7 +152,7 @@ def _build_chronological_timeline(kept_events: List[Dict[str, Any]]) -> List[Dic
     timeline = []
     for item in ordered:
         event = {
-            "event_id": item["event_id"],
+            "event_id": item.get("event_id") or "N/A",
             "timestamp": item.get("timestamp") or "N/A",
             "host_id": item.get("host_id") or "N/A",
             "summary": item["summary"],
@@ -383,6 +385,7 @@ def evidence_packing_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "excluded_out_of_scope_event_ids": out_of_scope_event_ids,
         "missing_timestamp_event_ids": missing_time_event_ids,
         "total_kept_events": len(kept_events),
+        "scoped_evidence": kept_events,
         "time_window": {
             "start_time": start_time,
             "end_time": end_time,
@@ -396,6 +399,7 @@ def evidence_packing_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     return {
+        "evidence": kept_events,
         "evidence_pack": evidence_pack,
         "input_reflection_status": evidence_pack["input_reflection_checks"],
     }

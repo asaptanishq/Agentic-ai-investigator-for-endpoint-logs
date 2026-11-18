@@ -1,7 +1,7 @@
 [project]
 name = "a1"
 version = "0.1.0"
-description = "Add your description here"
+description = "A1: Autonomous DFIR Investigation Agent built with LangGraph and LangChain"
 readme = "README.md"
 authors = [
     { name = "asaptanishq", email = "asaptanishq@gmail.com" }

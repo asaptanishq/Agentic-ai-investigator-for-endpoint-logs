@@ -28,84 +28,30 @@ All hosts, users, event IDs, process IDs, hashes, IPs, and domains are synthetic
 
 ## Agent surface vs evaluator surface
 
-Hand the investigating agent **only** the allow-listed artifacts below.
+Hand the investigating agent **only** the allow-listed telemetry database files.
 
 | Artifact | Surface | Notes |
 |---|---|---|
-| `events.jsonl` | agent | 1,050 telemetry records, UTF-8 JSONL without a BOM |
-| `agent_bundle/agent_endpoint_security.db` | agent | Reduced database: `hosts`, `users`, `events`, `files`, `network_connections`, `registry_events`, `processes` + the `agent_events` view |
-| `hosts.json`, `users.json` | agent | Entity reference data |
-| `ground_truth.jsonl` | evaluator only | Scenario IDs, event roles, expected correlations |
-| `case_labels.json` | evaluator only | Per-case conclusion labels and evidence basis |
-| `dataset_summary.json` | evaluator only | Contains `case_label_distribution` and `event_count_per_scenario` |
-| `endpoint_security.db` | evaluator only | Full database; also contains the `ground_truth_events` and `scenario_metadata` tables |
-
-`dataset_summary.json` is **not** agent-accessible: although it holds no per-event
-labels, its `case_label_distribution` and `event_count_per_scenario` fields would
-reveal label prevalence and scenario sizes to the agent. Keep it on the evaluator
-side.
-
-The full `endpoint_security.db` is also evaluator-only. A SQLite view is not an
-access-control boundary, so an agent holding that file could read
-`ground_truth_events` and `scenario_metadata` directly. Use
-`agent_bundle/agent_endpoint_security.db`, which omits those tables entirely.
-
+| `*.db` (8 shipped databases) | agent | Shipped databases: `attack_lateral_movement.db`, `attack_data_exfiltration.db`, `ransomware_attack_complete_ecs.db`, `attack_lotl_fileless.db`, `wazuh_lotl_attack_dataset.db`, `suricata_c2_intrusion.db`, `attack_supply_chain.db`, `benign_admin_activity.db`. Queried read-only via virtual views. |
+| `groundtruth/groundtruth_*.json` | evaluator only | Ground truth evaluation files with expected verdicts, boundaries, IOCs, and evidence criteria. Must remain isolated from the agent. |
 
 ## Query example
 ```sql
-SELECT * FROM agent_events
-WHERE host_id = 'host-001'
+SELECT * FROM events
+WHERE host_id = 'WS-OPS-01'
 ORDER BY timestamp;
 ```
 
+## Distribution and Validation
 
-## Distribution and Validation Clarifications
+The dataset contains diverse forensic scenarios across 8 standalone SQLite databases. Background and noise telemetry are integrated into each scenario to ensure realistic signal-to-noise ratios.
 
-The dataset contains 1,050 total telemetry events. Scenario-related coverage is
-reported separately from background/noise telemetry using unique event IDs present
-in `ground_truth.jsonl`. Background/noise events are checked to ensure they do not
-contain hidden scenario IDs, event roles, explanations, or expected correlations.
-
-The `agent_events` view exposes observed telemetry only. It does not join to or
-expose `ground_truth_events`, scenario IDs, event roles, explanations, or expected
-correlations.
-
-`case_labels.json` is evaluator-only metadata. It provides one conclusion label
-per scenario: `benign`, `suspicious`, `malicious`, or `inconclusive`. Each case
-also records confidence, evidence basis, expected conclusion, and a
-`verdict_boundary` so that `suspicious` is not treated as confirmed maliciousness.
-
-## Evaluation hygiene
-
-Telemetry records in `events.jsonl` are deterministically shuffled with the
-dataset seed. Event order must not be used as a signal for scenario membership;
-evaluation code should join only on documented event fields and keep
-`ground_truth.jsonl` inaccessible to the investigating agent.
-
-For a stronger benchmark, split by scenario, host, or time window rather than
-randomly splitting individual events. This prevents events from the same
-investigation chain appearing in both training and test data.
-
-Background telemetry includes deterministic variation in process command lines,
-file paths, and destination domains. These values are synthetic and should be
-treated as contextual diversity, not reputation or threat-intelligence data.
-
-The custom schema version is represented by `dataset.schema_version: 1.0.0`.
-`ecs.version` is omitted because the dataset uses ECS-inspired naming without
-asserting complete ECS 8.11.0 compliance.
+The `groundtruth/` directory provides one conclusion label per scenario: `benign`, `suspicious`, `malicious`, or `inconclusive`. Each case also records confidence, evidence basis, expected conclusion, and a `verdict_boundary` so that `suspicious` is not treated as confirmed maliciousness.
 
 ## Consistency guarantees
 
-- `events.jsonl` is UTF-8 JSONL with no byte order mark, so it parses under strict
-  UTF-8 decoding.
-- Every `raw_json` payload in `endpoint_security.db` is identical to the
-  corresponding `events.jsonl` record: `events.raw_json` carries the event, and the
-  normalized tables (`files`, `network_connections`, `registry_events`,
-  `processes`) carry the unchanged parent event record.
-- `dataset.schema_version` is the only schema-version key present anywhere; no
-  record embeds `ecs.version`.
-- `ground_truth.jsonl` and the `ground_truth_events` table are row-for-row
-  identical, as are `case_labels.json`, `dataset_summary.json`, `hosts.json` and
-  `users.json` against their SQLite counterparts.
+- All SQLite telemetry databases are opened in URI read-only mode (`?mode=ro`) to prevent writes.
+- Views (`processes`, `files`, `network_connections`, `registry_events`, `hosts`, `users`, `agent_events`) are synthesized dynamically in session RAM via `json_extract()` when not physically present.
+- Ground truth is strictly isolated in `groundtruth/` and never queried during live investigations.
 
 

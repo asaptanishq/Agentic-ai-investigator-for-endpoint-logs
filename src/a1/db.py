@@ -1,4 +1,6 @@
+import re
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 from a1.config import get_db_path
@@ -494,6 +496,7 @@ class EndpointDatabase:
         if not self.db_path.exists():
             raise FileNotFoundError(f"Database not found at: {self.db_path}")
         self._conn: Optional[sqlite3.Connection] = None
+        self._lock = threading.Lock()
 
     def _find_source_events_table(self, cur: sqlite3.Cursor, main_objects: set) -> Optional[str]:
         for candidate in (
@@ -596,12 +599,13 @@ class EndpointDatabase:
 
     def close(self) -> None:
         """Close active cached connection if open."""
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
 
     def execute_query(self, sql: str, params: tuple = (), max_rows: int = 50) -> List[Dict[str, Any]]:
         """Execute a read-only SQL query safely."""
@@ -612,55 +616,62 @@ class EndpointDatabase:
         # Disallow mutation statements
         disallowed = ["insert", "update", "delete", "drop", "alter", "create", "attach", "detach", "vacuum", "reindex"]
         first_word = clean_sql.split()[0].lower()
-        if first_word in disallowed or ";" in clean_sql.rstrip(";"):
+        # Strip string literals to check for statements separated by semicolons outside quotes
+        sql_without_strings = re.sub(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"", "", clean_sql.rstrip(";"))
+        if first_word in disallowed or ";" in sql_without_strings:
             raise DatabaseAccessError("Security violation: Only single read-only SELECT queries are permitted.")
         
         if not first_word.startswith(("select", "pragma", "with")):
             raise DatabaseAccessError(f"Disallowed query type: '{first_word}'. Only SELECT queries are permitted.")
 
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(clean_sql, params)
-        rows = cursor.fetchmany(max_rows)
-        return [dict(row) for row in rows]
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(clean_sql, params)
+            rows = cursor.fetchmany(max_rows)
+            return [dict(row) for row in rows]
 
     def get_schema(self) -> Dict[str, List[str]]:
         """Return table and view names along with their column names."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
-            UNION
-            SELECT name FROM sqlite_temp_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%';
-        """)
-        items = cursor.fetchall()
-        schema_info = {}
-        for item in items:
-            name = item["name"]
-            c_cursor = conn.cursor()
-            c_cursor.execute(f"PRAGMA table_info('{name}');")
-            cols = [col["name"] for col in c_cursor.fetchall()]
-            schema_info[name] = cols
-        return schema_info
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
+                UNION
+                SELECT name FROM sqlite_temp_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%';
+            """)
+            items = cursor.fetchall()
+            schema_info = {}
+            for item in items:
+                name = item["name"]
+                c_cursor = conn.cursor()
+                c_cursor.execute(f"PRAGMA table_info('{name}');")
+                cols = [col["name"] for col in c_cursor.fetchall()]
+                schema_info[name] = cols
+            return schema_info
 
 
+_db_lock = threading.Lock()
 _active_db: Optional[EndpointDatabase] = None
 
 
 def get_active_db(db_path: Optional[Any] = None) -> EndpointDatabase:
     """Return the cached EndpointDatabase for the currently active DB path (or specified path)."""
     global _active_db
-    current_path = Path(db_path) if db_path else get_db_path()
-    if _active_db is None or _active_db.db_path != current_path:
-        if _active_db is not None:
-            _active_db.close()
-        _active_db = EndpointDatabase(current_path)
-    return _active_db
+    with _db_lock:
+        current_path = Path(db_path) if db_path else get_db_path()
+        if _active_db is None or _active_db.db_path != current_path:
+            if _active_db is not None:
+                _active_db.close()
+            _active_db = EndpointDatabase(current_path)
+        return _active_db
 
 
 def reset_active_db() -> None:
     """Reset and close the cached active database instance."""
     global _active_db
-    if _active_db is not None:
-        _active_db.close()
-        _active_db = None
+    with _db_lock:
+        if _active_db is not None:
+            _active_db.close()
+            _active_db = None

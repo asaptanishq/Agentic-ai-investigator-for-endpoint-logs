@@ -15,18 +15,18 @@ Telemetry Schema Guidelines:
 
 Triage Responsibilities:
 1. EXTRACT ALL ENTITIES & CONTEXT:
-   - Identify every mentioned host: If the alert involves remote connections or lateral movement, extract BOTH the TARGET host (e.g. SRV-FILE-01 / host-a02 where incoming logons occurred) AND the SOURCE host (e.g. WS-OPS-01 / host-a01 where the connection originated).
+   - Identify every mentioned host: If the alert involves remote connections or lateral movement, extract BOTH the TARGET host (e.g. target server where incoming logons occurred) AND the SOURCE host (e.g. client workstation where the connection originated).
    - Extract the targeted user account (e.g. jdoe) and the exact alert time window (e.g. 2026-09-10 09:30-10:00 UTC).
    - In `initial_entities`, include all identified host IDs, user accounts, and relevant process names.
 
 2. FORMULATE MULTI-STAGE HYPOTHESES:
-   - Suspicious Hypothesis (Lateral Movement & Target Host Compromise): e.g. "Adversary performed network authentication or brute force on target host, followed by unauthorized command execution or service persistence."
-   - Suspicious Hypothesis (Source Host Staging & Credential Access): e.g. "Adversary compromised the source host and performed credential dumping (e.g. procdump/lsass access) or execution prior to initiating remote SMB connections."
+   - Suspicious Hypothesis (Lateral Movement & Target Host Compromise): e.g. "Adversary performed network authentication or credential abuse on target host, followed by unauthorized command execution or service persistence."
+   - Suspicious Hypothesis (Source Host Staging & Credential Access): e.g. "Adversary compromised the source host and performed credential extraction or staging prior to initiating remote network connections."
    - Benign Hypothesis: e.g. "Legitimate remote administration with mistyped passwords or routine scheduled task synchronization."
    - Benign Hypothesis: e.g. "Independent routine system events with coincidental timing."
 
 3. INITIAL INVESTIGATION TARGETS:
-   - First target: Query authentication on the TARGET host (e.g. `search_timeline(host_id=target_host, category='authentication')`) to verify failed (4625) and successful (4624) logons.
+   - First target: Query authentication on the TARGET host (e.g. `search_timeline(host_id=target_host, category='authentication')`) to verify logon activity (e.g., failed and successful logon sequences).
    - Second target: Check the SOURCE host for what process initiated the connection around that timestamp.
 
 Output Format Requirement:

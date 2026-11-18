@@ -152,8 +152,8 @@ def _missing_smb_auth_correlation(messages):
 
 def _missing_requested_auth_hosts(state):
     alert_text = str(state.get("alert_context", "")).casefold()
-    if "afternoon" not in alert_text or not any(
-        term in alert_text for term in ("logon", "login", "authentication")
+    if not any(
+        term in alert_text for term in ("logon", "login", "authentication", "auth", "credential", "session")
     ):
         return []
 
@@ -663,13 +663,16 @@ def investigator_node(state):
             "If a hostname is unresolved or the scoped queries return no events, report that limitation instead of silently searching unrelated telemetry."
         )
 
-    # Optimize message history to prevent context explosion on local LLMs
+    # Optimize message history to prevent context explosion while preserving structured entity details
     pruned_history = []
     total_msgs = len(state["messages"])
     for idx, m in enumerate(state["messages"]):
         if idx < total_msgs - 3 and getattr(m, "type", "") == "tool" and len(str(getattr(m, "content", ""))) > 1000:
             from langchain_core.messages import ToolMessage
-            trimmed = str(m.content)[:1000] + "\n... [older telemetry output truncated to optimize context]"
+            from a1.tools import summarize_tool_output
+            raw_str = str(m.content)
+            summary_info = summarize_tool_output(raw_str)
+            trimmed = f"[Summary: {summary_info}]\n[Telemetry sample]:\n" + raw_str[:700] + "\n... [older telemetry output condensed to preserve context]"
             pruned_history.append(ToolMessage(content=trimmed, tool_call_id=getattr(m, "tool_call_id", ""), name=getattr(m, "name", "tool")))
         else:
             pruned_history.append(m)
@@ -752,7 +755,7 @@ def investigator_node(state):
         ]
         nudge = HumanMessage(
             content=(
-                _NUDGE_PREFIX + " The alert explicitly asks for afternoon logon/authentication review, but no "
+                _NUDGE_PREFIX + " The alert indicates logon/authentication review is needed, but no "
                 "full-scope authentication query has been run for: " + ", ".join(missing_auth_hosts) + ". "
                 "Run " + "; ".join(query_lines) + ". Evaluate any interactive failure-success pair separately from "
                 "the primary attack chain; do not attribute it without causal links."

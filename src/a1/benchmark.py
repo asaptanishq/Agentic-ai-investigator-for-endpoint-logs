@@ -23,11 +23,9 @@ DATASET_DIR = cfg.DATASET_DIR
 # One entry per scenario. ``database`` names the telemetry file the scenario lives
 # in, so the benchmark switches databases between cases.
 #
-# NOTE on scoring honesty: both shipped scenarios expect "malicious", so a model
-# that answers "malicious" every time scores 100% on verdicts. The dataset ships
-# no benign-scenario database, so this benchmark measures whether an
-# investigation can *find* a real attack chain (and whether it fell back), not
-# whether it can rule one out. Report it that way.
+# Covers 10 benchmark scenarios across 4 operational classes: malicious intrusions,
+# benign administrative activity (BEN-A), ambiguous developer tool execution (AMB-A),
+# and incomplete telemetry gaps (INC-A).
 BENCHMARK_CASES = {
     "ATK-A": {
         "prompt": (

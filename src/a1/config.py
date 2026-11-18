@@ -8,20 +8,20 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATASET_DIR = BASE_DIR / "endpoint_security_dataset_expanded_corrected"
 
-# Telemetry databases searched in order: the original reduced agent bundle first
-# (if it is ever restored), then the attack databases that ship today.
+# Telemetry databases searched in order: the attack and benign databases that ship today.
 _DB_PREFERENCE = (
-    "agent_bundle/agent_endpoint_security.db",
     "attack_lateral_movement.db",
     "attack_data_exfiltration.db",
+    "ransomware_attack_complete_ecs.db",
+    "benign_admin_activity.db",
 )
 
 
 def discover_default_db() -> Path:
     """Return the first preferred telemetry database that exists on disk.
 
-    Falls back to any other ``*.db`` in the dataset directory and finally to the
-    agent-bundle path, so a missing dataset still reports a meaningful path.
+    Falls back to any other ``*.db`` in the dataset directory, so a missing
+    dataset still reports a meaningful path.
     """
     for relative in _DB_PREFERENCE:
         candidate = DATASET_DIR / relative
@@ -33,7 +33,12 @@ def discover_default_db() -> Path:
 
 DEFAULT_DB_PATH = discover_default_db()
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()  # "ollama" (default) or "openai"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "opencode").lower()  # "opencode" (default), "ollama", or "openai"
+
+# OpenCode Settings
+OPENCODE_MODEL_NAME = os.getenv("OPENCODE_MODEL_NAME", "deepseek-v4.1-flash")
+OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/inference/go/openai/v1")
+OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY", "")
 
 # Ollama Settings
 OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "llama3.1")

@@ -8,7 +8,7 @@ A1 is an autonomous Digital Forensics and Incident Response (DFIR) investigation
 | **Interfaces** | Terminal CLI, Web UI (FastAPI + SSE + Interactive Forensic DAG), Scenario Benchmark, Experiment Runner |
 | **Agent Stack** | LangGraph cyclical state machine, LangChain |
 | **Telemetry Engine** | Safe, read-only SQLite endpoint security databases (8 shipped datasets) |
-| **Model Providers** | Ollama (local or Cloud) and OpenAI, selectable at runtime |
+| **Model Providers** | OpenCode (default), Ollama (local or Cloud), and OpenAI, selectable at runtime |
 
 ## Quick Reference & Documentation
 
@@ -63,7 +63,7 @@ ai-musefix/
 │   ├── cli.py                     # CLI investigations, --web launch, --benchmark, LLM & DB selection
 │   ├── config.py                  # Env parsing, path resolution, step limits
 │   ├── db.py                      # Read-only SQLite wrapper + convenience virtual views
-│   ├── llm.py                     # Ollama / OpenAI chat-model factory + runtime overrides
+│   ├── llm.py                     # OpenCode / Ollama / OpenAI chat-model factory + runtime overrides
 │   ├── state.py                   # LangGraph InvestigationState TypedDict
 │   ├── graph.py                   # 7-node StateGraph assembly, routing, and compilation
 │   ├── benchmark.py               # 10-scenario labeled benchmark runner
@@ -80,7 +80,7 @@ ai-musefix/
 │       └── static/                # HTML/CSS/JS with SVG forensic DAG & process tree engine
 ├── scripts/
 │   └── smoke_test.py              # Standalone 17-point end-to-end verification script
-├── tests/                         # Pytest test suite (92 tests passed)
+├── tests/                         # Pytest test suite (100 tests passed)
 └── endpoint_security_dataset_expanded_corrected/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
     └── *.db                       # 8 SQLite forensic telemetry databases
@@ -113,7 +113,7 @@ Copy the `.env.example` template:
 cp .env.example .env              # Windows: copy .env.example .env
 ```
 
-The default configuration uses Ollama Cloud with `gemma4:31b` (no local Ollama daemon required). Simply set your `OLLAMA_API_KEY` in `.env`, or configure local Ollama / OpenAI credentials.
+The default configuration supports OpenCode (`deepseek-v4.1-flash`), Ollama Cloud / local (`gemma4:31b`), and OpenAI (`gpt-4o-mini`). Configure your API key and endpoint in `.env`.
 
 ### 3. Shipped Telemetry Databases
 
@@ -187,7 +187,7 @@ python -m a1.cli "Investigate an alert claiming unauthorized execution on SRV-FI
 | :--- | :--- |
 | `alert` / `-q, --query` | Alert text / prompt to investigate |
 | `--db` | Path to a specific SQLite telemetry database |
-| `-p, --provider` | Model provider (`ollama` or `openai`) |
+| `-p, --provider` | Model provider (`opencode`, `ollama`, or `openai`) |
 | `-m, --model` | Specific model name / tag (e.g. `gemma4:31b`, `gpt-4o-mini`) |
 | `--select-llm` | Interactively select provider and available models |
 | `-v, --verbose` | Stream detailed reasoning, SQL queries, and tool I/O to console |
@@ -237,7 +237,7 @@ When run with `--live`, each scenario executes through the compiled LangGraph st
 
 ### 5. Running Tests
 
-Run the full pytest suite (78 tests passed) and standalone smoke tests:
+Run the full pytest suite (100 tests passed) and standalone smoke tests:
 
 ```bash
 # Run pytest suite

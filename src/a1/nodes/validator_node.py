@@ -166,8 +166,10 @@ def validator_node(state: InvestigationState) -> Dict[str, Any]:
     pack = state.get("evidence_pack") or {}
     for item in pack.get("scoped_evidence", []):
         if isinstance(item, dict):
+            if item.get("synthetic"):
+                continue
             eid = item.get("event_id")
-            if eid:
+            if eid and not str(eid).startswith("gen-") and str(eid) != "N/A":
                 cited_event_ids.add(str(eid))
             pid = item.get("process_entity_id") or item.get("process_id")
             if pid:
@@ -179,8 +181,10 @@ def validator_node(state: InvestigationState) -> Dict[str, Any]:
     # From raw evidence list
     for ev in state.get("evidence") or []:
         if isinstance(ev, dict):
+            if ev.get("synthetic"):
+                continue
             eid = ev.get("event_id")
-            if eid:
+            if eid and not str(eid).startswith("gen-") and str(eid) != "N/A":
                 cited_event_ids.add(str(eid))
             pid = ev.get("process_entity_id") or ev.get("process_id")
             if pid:

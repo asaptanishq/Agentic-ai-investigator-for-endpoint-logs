@@ -16,8 +16,15 @@ from pydantic import BaseModel
 
 import a1.config as cfg
 from a1.graph import create_investigation_graph
-from a1.llm import get_active_llm_info, set_active_llm
+from a1.llm import (
+    get_active_llm_info,
+    set_active_llm,
+    get_llm,
+    opencode_session,
+    invoke_with_network_retry,
+)
 from a1.tools import summarize_tool_output
+from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger("a1.web")
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +34,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Active cancellation event tracking
 _active_investigations: Dict[str, asyncio.Event] = {}
+# Session storage for interactive analyst conversation & copilot Q&A
+_investigation_sessions: Dict[str, Dict[str, Any]] = {}
 
 def get_available_databases() -> List[Dict[str, Any]]:
     """Scan the repository for SQLite database files."""
@@ -39,6 +48,17 @@ def get_available_databases() -> List[Dict[str, Any]]:
         if not sdir.exists():
             continue
         for p in sdir.glob("**/*.db"):
+            # Skip dev/browser-profile artifacts; Chrome keeps its own SQLite files in scratch/.
+            try:
+                rel_parts = p.relative_to(sdir).parts[:-1]
+            except ValueError:
+                rel_parts = p.parts[:-1]
+            if any(
+                part in {"scratch", ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache"}
+                or part.startswith(".")
+                for part in rel_parts
+            ):
+                continue
             resolved = p.resolve()
             if resolved in found_paths:
                 continue
@@ -141,10 +161,29 @@ def get_model_catalog() -> Dict[str, Any]:
         "gpt-4-turbo"
     ]
 
+    default_opencode = [
+        "deepseek-v4.1-flash",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "deepseek-r1",
+        "gpt-4o",
+    ]
+    seen_oc = set()
+    opencode_models = []
+    if active_info["provider"] == "opencode":
+        opencode_models.append(active_info["model"])
+        seen_oc.add(active_info["model"])
+    for m in default_opencode:
+        if m not in seen_oc:
+            opencode_models.append(m)
+            seen_oc.add(m)
+
     return {
         "active": active_info,
+        "opencode": opencode_models,
         "ollama": ollama_models,
         "openai": openai_models,
+        "has_opencode_key": bool(cfg.OPENCODE_API_KEY),
         "has_openai_key": bool(cfg.OPENAI_API_KEY),
         "ollama_base_url": cfg.OLLAMA_BASE_URL,
     }
@@ -158,6 +197,13 @@ class DatabaseConfigRequest(BaseModel):
 
 class InvestigateRequest(BaseModel):
     query: str
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    db_path: Optional[str] = None
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
     db_path: Optional[str] = None
@@ -429,62 +475,157 @@ def _run_sync_investigation(
     cancel_event: asyncio.Event,
 ) -> None:
     try:
-        active_info = get_active_llm_info()
-        _safe_queue_put(
-            loop,
-            queue,
-            {
-                "type": "start",
-                "query": query,
-                "session_id": session_id,
-                "llm": active_info,
-                "db": Path(cfg.DB_PATH).name,
-            },
-        )
-
-        graph = create_investigation_graph()
-        initial_state = {
-            "messages": [],
-            "hypotheses": [],
-            "iteration_count": 0,
-            "alert_context": query,
-        }
-
-        alert_prep_sent = False
-        triage_sent = False
-        evidence_pack_sent = False
-        correlation_sent = False
-        processed_msg_count = 0
-        last_iteration = 0
-        step_num = 0
-        for event in graph.stream(initial_state, stream_mode="values"):
-            if cancel_event.is_set():
-                _safe_queue_put(loop, queue, {"type": "cancelled", "message": "Investigation cancelled by user."})
-                break
-
-            final_state = event
-            alert_prep_sent = _emit_alert_prep_if_needed(loop, queue, event, alert_prep_sent)
-            triage_sent = _emit_triage_if_needed(loop, queue, event, triage_sent)
-            last_iteration = _emit_iteration_if_advanced(loop, queue, event, last_iteration)
-            evidence_pack_sent = _emit_evidence_pack_if_needed(loop, queue, event, evidence_pack_sent)
-
-            if (event.get("confirmed_correlations") is not None or event.get("evidence_gaps") is not None) and not correlation_sent:
-                correlation_sent = True
-                _safe_queue_put(
-                    loop,
-                    queue,
-                    {"type": "reasoning", "text": "Correlation analysis complete. Synthesizing DFIR incident investigation report and assigning final verdict..."},
-                )
-
-            processed_msg_count, step_num = _emit_messages_incremental(
-                loop, queue, event.get("messages", []), processed_msg_count, step_num
+        with opencode_session(session_id):
+            active_info = get_active_llm_info()
+            _safe_queue_put(
+                loop,
+                queue,
+                {
+                    "type": "start",
+                    "query": query,
+                    "session_id": session_id,
+                    "llm": active_info,
+                    "db": Path(cfg.DB_PATH).name,
+                },
             )
 
-        if final_state and not cancel_event.is_set():
-            _emit_final_report_complete(loop, queue, final_state)
+            graph = create_investigation_graph()
+            initial_state = {
+                "messages": [],
+                "hypotheses": [],
+                "iteration_count": 0,
+                "alert_context": query,
+            }
+
+            alert_prep_sent = False
+            triage_sent = False
+            evidence_pack_sent = False
+            correlation_sent = False
+            processed_msg_count = 0
+            last_iteration = 0
+            step_num = 0
+            final_state = None
+            for event in graph.stream(initial_state, stream_mode="values"):
+                if cancel_event.is_set():
+                    _safe_queue_put(loop, queue, {"type": "cancelled", "message": "Investigation cancelled by user."})
+                    break
+
+                final_state = event
+                alert_prep_sent = _emit_alert_prep_if_needed(loop, queue, event, alert_prep_sent)
+                triage_sent = _emit_triage_if_needed(loop, queue, event, triage_sent)
+                last_iteration = _emit_iteration_if_advanced(loop, queue, event, last_iteration)
+                evidence_pack_sent = _emit_evidence_pack_if_needed(loop, queue, event, evidence_pack_sent)
+
+                if (event.get("confirmed_correlations") is not None or event.get("evidence_gaps") is not None) and not correlation_sent:
+                    correlation_sent = True
+                    _safe_queue_put(
+                        loop,
+                        queue,
+                        {"type": "reasoning", "text": "Correlation analysis complete. Synthesizing DFIR incident investigation report and assigning final verdict..."},
+                    )
+
+                processed_msg_count, step_num = _emit_messages_incremental(
+                    loop, queue, event.get("messages", []), processed_msg_count, step_num
+                )
+
+            if final_state and not cancel_event.is_set():
+                _emit_final_report_complete(loop, queue, final_state)
+                # Persist completed investigation for interactive chat & inquiry
+                _investigation_sessions[session_id] = {
+                    "session_id": session_id,
+                    "query": query,
+                    "state": final_state,
+                    "report": _extract_report_content(final_state),
+                    "db": Path(cfg.DB_PATH).name,
+                    "db_path": str(cfg.DB_PATH),
+                    "messages": [
+                        {"role": "user", "content": query},
+                        {"role": "assistant", "content": _extract_report_content(final_state)},
+                    ],
+                }
 
     except Exception as e:
         logger.exception("Investigation graph execution error")
+        _safe_queue_put(loop, queue, {"type": "error", "message": str(e)})
+    finally:
+        _safe_queue_put(loop, queue, None)
+
+
+def _run_sync_chat(
+    loop: asyncio.AbstractEventLoop,
+    queue: asyncio.Queue,
+    message: str,
+    session_id: str,
+    cancel_event: asyncio.Event,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+) -> None:
+    """Run interactive analyst chat copilot turn over completed investigation context."""
+    try:
+        with opencode_session(session_id):
+            session_data = _investigation_sessions.get(session_id)
+            context_blocks = []
+            if session_data:
+                state = session_data.get("state", {})
+                verdict = state.get("verdict", "UNKNOWN")
+                boundary = state.get("verdict_boundary", "")
+                conf = state.get("confidence", "")
+                initial_query = session_data.get("query", "")
+                report_text = session_data.get("report") or _extract_report_content(state)
+                hypos = state.get("hypotheses", [])
+
+                pack = state.get("evidence_pack") or {}
+                timeline = pack.get("timeline", [])
+                timeline_summary = "\n".join(
+                    f"- [{e.get('timestamp')}] {e.get('host_id')}: {e.get('summary')} (event_id: {e.get('event_id')})"
+                    for e in timeline[:20]
+                )
+
+                context_blocks.append(
+                    f"ACTIVE INVESTIGATION SUMMARY:\n"
+                    f"- Initial Alert: {initial_query}\n"
+                    f"- Final Verdict: {verdict.upper()} ({boundary})\n"
+                    f"- Confidence Score: {conf}\n"
+                    f"- Active Hypotheses: {json.dumps(hypos)}\n"
+                    f"- Key Timeline Evidence:\n{timeline_summary}\n\n"
+                    f"- Incident Report Summary:\n{report_text[:2500]}"
+                )
+
+            system_prompt = (
+                "You are an elite DFIR Copilot and forensic response assistant. "
+                "You are conversing with a human SOC/DFIR analyst about an investigation that has already completed.\n\n"
+                "GUIDELINES:\n"
+                "1. Answer the analyst's questions directly, conversationally, and objectively.\n"
+                "2. When explaining why an entity, process, or connection is suspicious, cite the specific event_id, process_entity_id, host_id, or hash.\n"
+                "3. If asked about facts not observed in the telemetry or report, clearly state that it was not observed or remains an evidence gap.\n"
+                "4. Help the analyst think through remediation, pivot queries, or benign alternate hypotheses."
+            )
+            if context_blocks:
+                system_prompt += "\n\n" + "\n\n".join(context_blocks)
+
+            llm = get_llm(temperature=0.1, provider=provider, model=model)
+            prompt_msgs = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=message),
+            ]
+
+            _safe_queue_put(loop, queue, {"type": "start", "session_id": session_id, "query": message})
+            response = invoke_with_network_retry(llm, prompt_msgs)
+
+            raw_text = str(getattr(response, "content", "") or "").strip()
+            thought, cleaned = extract_and_clean_thoughts(raw_text)
+            if thought:
+                _safe_queue_put(loop, queue, {"type": "thought", "text": thought})
+            _safe_queue_put(loop, queue, {"type": "reasoning", "text": cleaned or raw_text})
+
+            if session_data:
+                session_data.setdefault("messages", []).append({"role": "user", "content": message})
+                session_data["messages"].append({"role": "assistant", "content": cleaned or raw_text})
+
+            _safe_queue_put(loop, queue, {"type": "complete", "data": {"reply": cleaned or raw_text}})
+
+    except Exception as e:
+        logger.exception("Chat copilot execution error")
         _safe_queue_put(loop, queue, {"type": "error", "message": str(e)})
     finally:
         _safe_queue_put(loop, queue, None)
@@ -620,6 +761,42 @@ async def investigate_stream(req: InvestigateRequest, request: Request):
     worker = threading.Thread(
         target=_run_sync_investigation,
         args=(loop, queue, req.query, session_id, cancel_event),
+        daemon=True,
+    )
+    worker.start()
+
+    return StreamingResponse(_sse_generator(queue, request, session_id, cancel_event), media_type="text/event-stream")
+
+
+@router.post(
+    "/api/chat",
+    responses={
+        400: {"description": "Message cannot be empty"},
+    },
+)
+async def chat_stream(req: ChatRequest, request: Request):
+    """Run interactive analyst chat copilot and stream progressive events via Server-Sent Events (SSE)."""
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    if req.provider or req.model:
+        set_active_llm(provider=req.provider, model=req.model)
+    if req.db_path:
+        try:
+            set_active_database(req.db_path)
+        except Exception as e:
+            logger.warning(f"Could not switch database: {e}")
+
+    session_id = req.session_id or f"chat-{asyncio.get_event_loop().time()}"
+    cancel_event = asyncio.Event()
+    _active_investigations[session_id] = cancel_event
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    worker = threading.Thread(
+        target=_run_sync_chat,
+        args=(loop, queue, req.message, session_id, cancel_event, req.provider, req.model),
         daemon=True,
     )
     worker.start()

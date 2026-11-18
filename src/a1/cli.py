@@ -176,7 +176,7 @@ def _configure_cli_llm(args) -> None:
         print("\n--- LLM Configuration ---")
         curr_info = get_active_llm_info()
         print(f"Current default: Provider={curr_info['provider']}, Model={curr_info['model']}")
-        chosen_p = input(f"Enter provider [ollama/openai] (default: {curr_info['provider']}): ").strip().lower() or curr_info["provider"]
+        chosen_p = input(f"Enter provider [opencode/ollama/openai] (default: {curr_info['provider']}): ").strip().lower() or curr_info["provider"]
         chosen_m = input(f"Enter model name (default: {curr_info['model']}): ").strip() or curr_info["model"]
         set_active_llm(provider=chosen_p, model=chosen_m)
         print(f"[+] Active LLM set to: Provider={chosen_p}, Model={chosen_m}\n")
@@ -205,7 +205,7 @@ def main():
     parser = argparse.ArgumentParser(description="Agentic AI DFIR Investigator")
     parser.add_argument("alert", nargs="*", help="Alert or investigation prompt (e.g. 'Investigate host-001...')")
     parser.add_argument("--query", "-q", type=str, default=None, help="Alternative flag to supply the investigation prompt")
-    parser.add_argument("--provider", "-p", type=str, choices=["ollama", "openai"], default=None, help="Select LLM provider ('ollama' or 'openai')")
+    parser.add_argument("--provider", "-p", type=str, choices=["opencode", "ollama", "openai"], default=None, help="Select LLM provider ('opencode', 'ollama', or 'openai')")
     parser.add_argument("--model", "-m", type=str, default=None, help="Select LLM model name (e.g. 'llama3.1', 'gemma4:31b', 'gpt-4o')")
     parser.add_argument("--select-llm", action="store_true", help="Interactively select LLM provider and model")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show agent reasoning")

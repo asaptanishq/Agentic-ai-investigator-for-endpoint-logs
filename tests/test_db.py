@@ -32,6 +32,14 @@ def test_db_blocks_mutations():
         db.execute_query("SELECT 1; DROP TABLE events;")
 
 
+def test_db_allows_semicolon_in_string_literals():
+    db = EndpointDatabase()
+    # Query with a semicolon inside single quotes should succeed and not be blocked
+    results = db.execute_query("SELECT 1 AS col WHERE 'cmd;test' LIKE '%;%'")
+    assert len(results) == 1
+    assert results[0]["col"] == 1
+
+
 def test_db_virtual_adapter_synthesizes_subtables_from_raw_events(tmp_path):
     """Verify that a single-table database containing only events and raw_json
     automatically synthesizes processes, files, network_connections, hosts, and users in-memory.

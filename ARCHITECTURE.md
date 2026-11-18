@@ -53,7 +53,7 @@ flowchart TD
     subgraph Data_Layer["Storage & Infrastructure"]
         DB[("Safe Read-Only SQLite\n(a1/db.py)\n8 Shipped DBs")]
         CFG["Config & Env\n(a1/config.py)"]
-        LLM["Model Factory: Ollama / OpenAI\n(a1/llm.py)"]
+        LLM["Model Factory: OpenCode / Ollama / OpenAI\n(a1/llm.py)"]
     end
 
     CLI --> STATE
@@ -104,7 +104,7 @@ ai-musefix/
 |   |-- db.py                          [Database Layer]       Read-only SQLite wrapper (URI mode=ro) + temp views + get_active_db
 |   |-- state.py                       [Agent State]          InvestigationState TypedDict shared across the graph
 |   |-- graph.py                       [Graph Assembly]       StateGraph 7-node pipeline, edges, and conditional routing
-|   |-- llm.py                         [Model Factory]        Ollama / OpenAI chat-model factory + invoke_with_network_retry
+|   |-- llm.py                         [Model Factory]        OpenCode / Ollama / OpenAI chat-model factory + invoke_with_network_retry
 |   |-- cli.py                         [CLI Interface]        Single investigations, --web, --benchmark, --db
 |   |-- benchmark.py                   [Benchmark Harness]    10-case evaluation (ATK-A..G, BEN-A, AMB-A, INC-A)
 |   |-- evidence_graph.py              [Evidence Graph]       Explicit entity-relationship DAG and Cytoscape/D3 serializer
@@ -190,11 +190,11 @@ ai-musefix/
 | ----------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/a1/__init__.py`          | `[Package Root]`      | Package initialization.                                                                                                                                                                                                                                                                               |
 | `src/a1/__main__.py`          | `[Entrypoint]`        | `python -m a1` module execution handler.                                                                                                                                                                                                                                                              |
-| `src/a1/config.py`            | `[Configuration]`     | `discover_default_db()`, `set_active_database()` shared across CLI, web, and benchmark; env parsing (`LLM_PROVIDER`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12).                                                                                                   |
-| `src/a1/db.py`                | `[Database Layer]`    | `EndpointDatabase`: read-only SQLite access (URI `mode=ro`), single-statement `SELECT`/`PRAGMA`/`WITH` guard, `get_schema()`, in-memory virtual adapter temp views over `events`, centralized `get_active_db()`.                                                                                       |
+| `src/a1/config.py`            | `[Configuration]`     | `discover_default_db()`, `set_active_database()` shared across CLI, web, and benchmark; env parsing (`LLM_PROVIDER`, `OPENCODE_*`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12).                                                                                                   |
+| `src/a1/db.py`                | `[Database Layer]`    | `EndpointDatabase`: read-only SQLite access (URI `mode=ro`), thread-safe mutex locking, quote-aware single-statement `SELECT`/`PRAGMA`/`WITH` guard, `get_schema()`, in-memory virtual adapter temp views over `events`, centralized `get_active_db()`.                                             |
 | `src/a1/state.py`             | `[Agent State]`       | `InvestigationState` TypedDict: messages, hypotheses, `iteration_count`, `repeat_nudges`, `enriched_alert`, `evidence_pack`, `evidence_graph`, `hypothesis_tracker`, `investigation_trace`, `validation_results`, verdict fields, `report_fallback_used`.                                         |
 | `src/a1/graph.py`             | `[Graph Assembly]`    | Eight nodes (`alert_prep`, `triage`, `investigator`, `tools`, `evidence_packing`, `correlate`, `validate`, `report`); entry at `alert_prep`; conditional edges from `investigator` (`tools` / `investigator` self-loop / `evidence_packing`).                                                    |
-| `src/a1/llm.py`               | `[Model Factory]`     | `get_llm()` (`ChatOllama` / `ChatOpenAI`), `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`, centralized `invoke_with_network_retry()`.                                                                                                                           |
+| `src/a1/llm.py`               | `[Model Factory]`     | `get_llm()` (`ChatOpenAI` / `ChatOllama`), `opencode_session()`, `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`, centralized `invoke_with_network_retry()`.                                                                                             |
 | `src/a1/cli.py`               | `[CLI Interface]`     | `run_investigation()` streaming display; `main()` flags: positional alert, `--web`, `--benchmark`, `--limit`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--db`, `--port`, `--no-browser`.                                                                                        |
 | `src/a1/benchmark.py`         | `[Benchmark Harness]` | 10 evaluation cases (`ATK-A`..`G`, `BEN-A`, `AMB-A`, `INC-A`), per-case DB switching, ground truth loading, fallback tracking, normalized boundary scoring, and multi-dimensional rubric scoring including relationship correctness, completeness, dynamic hypotheses, and unverified evidence counts. |
 | `src/a1/evidence_graph.py`    | `[Evidence Graph]`    | Directed graph modeling entities (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) and evidentiary relations (`SPAWNED`, `CONNECTED_TO`, `TOUCHED_FILE`, etc.) with `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`); JSON serialization for DAG UI.                                  |
@@ -296,7 +296,10 @@ ai-musefix/
 
 | Variable                             | Default                                                                                         | Purpose                                          |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `LLM_PROVIDER`                       | `ollama`                                                                                        | `ollama` or `openai`.                            |
+| `LLM_PROVIDER`                       | `opencode`                                                                                      | `opencode`, `ollama`, or `openai`.               |
+| `OPENCODE_MODEL_NAME`                | `deepseek-v4.1-flash`                                                                           | OpenCode model tag.                              |
+| `OPENCODE_BASE_URL`                  | `https://opencode.ai/inference/go/openai/v1`                                                     | OpenCode Go API base URL.                        |
+| `OPENCODE_API_KEY`                   | *(empty)*                                                                                       | API key for OpenCode inference.                  |
 | `OLLAMA_MODEL_NAME`                  | `gemma4:31b`                                                                                    | Ollama model tag.                                |
 | `OLLAMA_BASE_URL`                    | `https://ollama.com/api`                                                                        | Ollama API base URL.                             |
 | `OLLAMA_NUM_CTX`                     | `32768`                                                                                         | Ollama context window size.                      |
@@ -385,7 +388,7 @@ python -m a1.experiment --live --limit 3
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (92 unit and integration tests passing):
+The repository maintains full automated test coverage (100 unit and integration tests passing):
 
 ```powershell
 # Run the full test suite:

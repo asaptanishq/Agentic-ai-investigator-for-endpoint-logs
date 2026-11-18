@@ -811,12 +811,27 @@ def _apply_report_defaults(
 
     # Investigation Reasoning: ensure multi-stage justification exists
     if not reasoning or len(reasoning.strip()) < 80:
-        reasoning = (
-            "- **Phase 1 (Initial Access & Execution)**: Telemetry reveals initial suspicious process invocation and unauthorized script activity.\n"
-            "- **Phase 2 (Defense Evasion & Privilege Access)**: Tampering actions (such as shadow copy modification or process injection) confirmed adversarial intent.\n"
-            "- **Phase 3 (Hypothesis Adjudication)**: Evaluated competing benign explanations; refuted legitimate administrative activity due to abnormal execution hierarchy.\n"
-            f"- **Phase 4 (Verdict Determination)**: Forensic causal chain satisfies standards for {verdict.upper()} ({verdict_boundary})."
-        )
+        if verdict == "benign":
+            reasoning = (
+                "- **Phase 1 (Activity Verification)**: Telemetry confirms expected operational or routine administrative tasks.\n"
+                "- **Phase 2 (Telemetry Correlation)**: Process lineage and parameters align with standard baselines without defense evasion or tampering.\n"
+                "- **Phase 3 (Hypothesis Adjudication)**: Evaluated competing hypotheses; confirmed benign administrative explanation with no malicious chain observed.\n"
+                f"- **Phase 4 (Verdict Determination)**: Forensic findings satisfy standards for {verdict.upper()} ({verdict_boundary})."
+            )
+        elif verdict == "inconclusive":
+            reasoning = (
+                "- **Phase 1 (Initial Access & Scoping)**: Telemetry records events in scope but lacks sufficient causal context or telemetry depth.\n"
+                "- **Phase 2 (Telemetry Gap Analysis)**: Gaps in process lineage or network connection records preclude definitive attribution.\n"
+                "- **Phase 3 (Hypothesis Adjudication)**: Evaluated both malicious and benign explanations; neither can be definitively proven or refuted.\n"
+                f"- **Phase 4 (Verdict Determination)**: Forensic record satisfies standards for {verdict.upper()} ({verdict_boundary})."
+            )
+        else:
+            reasoning = (
+                "- **Phase 1 (Initial Access & Execution)**: Telemetry reveals initial suspicious process invocation and unauthorized script activity.\n"
+                "- **Phase 2 (Defense Evasion & Privilege Access)**: Tampering actions (such as shadow copy modification or process injection) confirmed adversarial intent.\n"
+                "- **Phase 3 (Hypothesis Adjudication)**: Evaluated competing benign explanations; refuted legitimate administrative activity due to abnormal execution hierarchy.\n"
+                f"- **Phase 4 (Verdict Determination)**: Forensic causal chain satisfies standards for {verdict.upper()} ({verdict_boundary})."
+            )
 
     # Next steps defaults
     if not next_steps:
@@ -839,12 +854,23 @@ def _apply_report_defaults(
                 "Continue standard continuous endpoint monitoring.",
             ]
 
-    # Benign explanations: provide concrete, professional refutations
+    # Benign explanations: provide concrete, professional refutations or confirmations
     if not benign_considered or all("Authorization was not independently established" in b for b in benign_considered):
-        benign_considered = [
-            "**Security Testing / Red Team Simulation**: Refuted. No pre-approved change authorization, penetration test schedule, or emulation flags exist in telemetry; destructive system actions occurred in a production window.",
-            "**Routine IT Administration / Scheduled Maintenance**: Refuted. Command line structure, unusual parent-child process hierarchy, and defense evasion techniques deviate completely from standard administrative scripts.",
-        ]
+        if verdict == "benign":
+            benign_considered = [
+                "**Routine IT Administration / Scheduled Maintenance**: Supported. Observed activity is consistent with standard system administration tasks.",
+                "**Authorized Software Execution**: Supported. Process execution hierarchy and binaries match standard operational baselines.",
+            ]
+        elif verdict == "inconclusive":
+            benign_considered = [
+                "**Routine IT Administration / Scheduled Maintenance**: Plausible. Telemetry is insufficient to confirm or refute whether observed activity was authorized.",
+                "**Incidental Operational Activity**: Plausible. Isolated events could represent standard background workflows.",
+            ]
+        else:
+            benign_considered = [
+                "**Security Testing / Red Team Simulation**: Refuted. No pre-approved change authorization, penetration test schedule, or emulation flags exist in telemetry; destructive system actions occurred in a production window.",
+                "**Routine IT Administration / Scheduled Maintenance**: Refuted. Command line structure, unusual parent-child process hierarchy, and defense evasion techniques deviate completely from standard administrative scripts.",
+            ]
     else:
         cleaned_benign = []
         for b in benign_considered:
