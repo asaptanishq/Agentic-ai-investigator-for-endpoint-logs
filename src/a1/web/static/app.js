@@ -88,6 +88,7 @@
     selectedId: null,
     scopeEventIds: null,
     models: { opencode: [], ollama: [], openai: [] },
+    apiKeys: { opencode: false, ollama: false, openai: false },
     modelTab: "opencode",
     generating: false,
     abort: null,
@@ -98,7 +99,9 @@
     history: [],
     drawerOpen: false,
     activeView: "graph",
-    mapView: "tree",
+    mapView: "graph",
+    investigationRan: false,
+    graphView: null,
     report: { md: "", verdict: "", at: "" },
     tableRows: [],
   };
@@ -284,7 +287,47 @@
     Array.prototype.forEach.call(els.providerTabs.querySelectorAll(".seg-btn"), function (b) {
       b.classList.toggle("is-active", b.dataset.provider === p);
     });
+    updateApiKeyUI();
     renderModelList();
+  }
+
+  function updateApiKeyUI() {
+    if (!els.apiKeyStatus) return;
+    var p = state.modelTab;
+    var name = providerLabel(p);
+    if (p === "ollama") {
+      els.apiKeyStatus.textContent = "Ollama runs locally; a key is optional.";
+    } else if (state.apiKeys[p]) {
+      els.apiKeyStatus.textContent = name + " API key is configured. Paste a new key to replace it.";
+    } else {
+      els.apiKeyStatus.textContent = name + " API key is not set.";
+    }
+    els.apiKeyInput.placeholder = "API key for " + name;
+  }
+
+  async function saveApiKey() {
+    var key = els.apiKeyInput.value.trim();
+    if (!key) {
+      toast("Enter an API key first", "error");
+      return;
+    }
+    try {
+      var res = await api("/api/models/api-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: state.modelTab, api_key: key }),
+      });
+      state.apiKeys[state.modelTab] = true;
+      els.apiKeyInput.value = "";
+      if (res && res.models && res.models.has_opencode_key !== undefined) {
+        state.apiKeys.opencode = !!res.models.has_opencode_key;
+        state.apiKeys.openai = !!res.models.has_openai_key;
+      }
+      updateApiKeyUI();
+      toast(providerLabel(state.modelTab) + " API key saved");
+    } catch (e) {
+      toast("Could not save API key: " + e.message, "error");
+    }
   }
 
   function updateModelUI() {
@@ -333,14 +376,33 @@
         var name = db.name || dbLabel(path);
         var active = path === state.dbPath;
         return (
-          '<button class="db-row' + (active ? " is-active" : "") + '" data-db="' + escapeHtml(path) + '" title="' + escapeHtml(path) + '">' +
+          '<div class="db-row' + (active ? " is-active" : "") + '">' +
+          '<button class="db-pick" data-db="' + escapeHtml(path) + '" title="' + escapeHtml(path) + '">' +
           '<span class="db-name">' + escapeHtml(name) + "</span>" +
           '<span class="db-size">' + escapeHtml(fmtBytes(db.size_bytes)) + "</span>" +
           (active ? '<span class="db-current">current</span>' : "") +
-          "</button>"
+          "</button>" +
+          (active ? "" : '<button class="db-del" data-del-db="' + escapeHtml(path) + '" data-del-name="' + escapeHtml(name) + '" title="Delete dataset" aria-label="Delete ' + escapeHtml(name) + '">×</button>') +
+          "</div>"
         );
       })
       .join("") || '<p class="menu-note">No datasets found.</p>';
+  }
+
+  async function deleteDatabase(path, name) {
+    if (state.generating) {
+      toast("Stop the current investigation before deleting a dataset", "error");
+      return;
+    }
+    if (!window.confirm('Delete dataset "' + (name || dbLabel(path)) + '"? This cannot be undone.')) return;
+    try {
+      await api("/api/databases?path=" + encodeURIComponent(path), { method: "DELETE" });
+      state.databases = state.databases.filter(function (db) { return (db.path || db) !== path; });
+      renderDatabases();
+      toast("Deleted " + (name || dbLabel(path)));
+    } catch (e) {
+      toast("Could not delete dataset: " + e.message, "error");
+    }
   }
 
   function hostList() {
@@ -472,18 +534,31 @@
     }
   }
 
+  function scenarioStem(name) {
+    return name.replace(/\.[^.]+$/, "").replace(/[-_](?:wazuh|aminer|suricata|eve)$/i, "") || name.replace(/\.[^.]+$/, "");
+  }
+
+  function fileToBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result).split(",")[1] || ""); };
+      reader.onerror = function () { reject(new Error("Could not read " + file.name)); };
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function uploadDatabase(file) {
     if (!file) return;
     if (state.generating) {
       toast("Stop the current investigation before uploading a dataset", "error");
       return;
     }
-    if (!/\.db$/i.test(file.name)) {
-      toast("Choose a .db SQLite file", "error");
+    if (!/(\.db|\.json|\.jsonl|\.ndjson|\.log|\.txt)$/i.test(file.name)) {
+      toast("Choose a .db database or a .json/.jsonl/.ndjson/.log/.txt log file", "error");
       return;
     }
     if (file.size > 256 * 1024 * 1024) {
-      toast("Database exceeds the 256 MB upload limit", "error");
+      toast("File exceeds the 256 MB upload limit", "error");
       return;
     }
     els.dbHint.textContent = "uploading…";
@@ -495,8 +570,69 @@
       });
       await loadStatus();
       renderDatabases();
-      toast("Uploaded " + res.name);
+      toast(res.status === "ingested"
+        ? "Ingested " + res.rows + " " + res.source + " events into " + res.name
+        : "Uploaded " + res.name);
       await switchDatabase(res.path);
+    } catch (e) {
+      setDbChrome();
+      toast("Upload failed: " + e.message, "error");
+    }
+  }
+
+  async function uploadFileGroup(files) {
+    if (!files.length) return;
+    if (state.generating) {
+      toast("Stop the current investigation before uploading a dataset", "error");
+      return;
+    }
+    for (var i = 0; i < files.length; i++) {
+      if (!/\.(db|json|jsonl|ndjson|log|txt)$/i.test(files[i].name)) {
+        toast("Choose a .db database or a .json/.jsonl/.ndjson/.log/.txt log file", "error");
+        return;
+      }
+    }
+    var dbs = files.filter(function (f) { return /\.db$/i.test(f.name); });
+    var logs = files.filter(function (f) { return !/\.db$/i.test(f.name); });
+    var totalBytes = files.reduce(function (s, f) { return s + f.size; }, 0);
+    if (totalBytes > 256 * 1024 * 1024) {
+      toast("Files exceed the 256 MB upload limit", "error");
+      return;
+    }
+    if (logs.length <= 1 && dbs.length <= 1 && files.length === 1) {
+      uploadDatabase(files[0]);
+      return;
+    }
+    // Same scenario (e.g. santos_wazuh.json + santos_aminer.json): merge into one database.
+    var groups = {};
+    dbs.forEach(function (f) { groups[f.name] = [f]; });
+    logs.forEach(function (f) {
+      var stem = scenarioStem(f.name);
+      (groups[stem] = groups[stem] || []).push(f);
+    });
+    els.dbHint.textContent = "uploading…";
+    try {
+      for (var key in groups) {
+        var group = groups[key];
+        if (group.length === 1) {
+          await uploadDatabase(group[0]);
+          continue;
+        }
+        var payload = [];
+        for (var j = 0; j < group.length; j++) {
+          payload.push({ filename: group[j].name, data_base64: await fileToBase64(group[j]) });
+        }
+        var res = await api("/api/databases/ingest-multi", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: payload }),
+        });
+        await loadStatus();
+        renderDatabases();
+        var parts = res.files.map(function (f) { return f.filename + " (" + f.source + ")"; }).join(" + ");
+        toast("Ingested " + res.rows + " events from " + parts + " into " + res.name);
+        await switchDatabase(res.path);
+      }
     } catch (e) {
       setDbChrome();
       toast("Upload failed: " + e.message, "error");
@@ -505,6 +641,12 @@
 
   // ---------------------------------------------------------------- map / tree
 
+  function markInvestigated() {
+    if (state.investigationRan) return;
+    state.investigationRan = true;
+    rebuildGraph();
+  }
+
   function rebuildGraph() {
     var source = state.events;
     if (state.scopeEventIds && state.scopeEventIds.size) {
@@ -512,7 +654,7 @@
         return state.scopeEventIds.has(e.event_id);
       });
     }
-    state.graphData = window.TelemetryGraph.build(source);
+    state.graphData = window.TelemetryGraph.build(source, { assessRisk: state.investigationRan });
     state.nodeById = new Map();
     state.graphData.nodes.forEach(function (n) {
       state.nodeById.set(n.id, n);
@@ -536,17 +678,55 @@
     });
   }
 
+
+  function ensureGraph() {
+    if (!state.graphView && window.ForensicGraph && els.graphViewContainer) {
+      state.graphView = new window.ForensicGraph(els.graphViewContainer, {
+        onSelect: function (node) {
+          if (node) selectNode(node.id, true);
+        },
+        onViewChange: updateMapStats,
+      });
+      state.graphView.setEmpty("No telemetry loaded.");
+    }
+    return state.graphView;
+  }
+
+  function renderGraph() {
+    var g = ensureGraph();
+    if (!g) return;
+    if (g._a1Data !== state.graphData) {
+      g.setData(state.graphData);
+      g._a1Data = state.graphData;
+      g.resize();
+    }
+    var types = new Set(
+      window.TelemetryGraph.TYPE_ORDER.filter(function (t) {
+        return !state.hiddenTypes.has(t);
+      })
+    );
+    g.setTypes(types);
+    g.setSearch(els.graphSearchInput ? els.graphSearchInput.value : "");
+  }
+
   function renderMap() {
-    var links = state.mapView === "links";
-    els.mapViewTree.classList.toggle("is-active", !links);
+    var view = state.mapView;
+    var graph = view === "graph";
+    var links = view === "links";
+    els.mapViewGraph.classList.toggle("is-active", graph);
+    els.mapViewTree.classList.toggle("is-active", view === "tree");
     els.mapViewLinks.classList.toggle("is-active", links);
-    els.mapViewTree.setAttribute("aria-pressed", String(!links));
+    els.mapViewGraph.setAttribute("aria-pressed", String(graph));
+    els.mapViewTree.setAttribute("aria-pressed", String(view === "tree"));
     els.mapViewLinks.setAttribute("aria-pressed", String(links));
-    els.graphCanvasContainer.hidden = links;
+    els.graphViewContainer.hidden = !graph;
+    els.graphCanvasContainer.hidden = view !== "tree";
     els.processLinksContainer.hidden = !links;
-    els.treeCollapseBtn.hidden = links;
+    els.treeCollapseBtn.hidden = view !== "tree";
     els.graphLegend.hidden = links;
-    if (links) {
+    if (graph) {
+      renderGraph();
+    } else if (links) {
       if (window.A1Links) {
         A1Links.render(els.processLinksContainer, state.graphData, {
           query: els.graphSearchInput ? els.graphSearchInput.value : "",
@@ -559,7 +739,6 @@
     }
     updateMapStats();
   }
-
   function setMapView(view) {
     if (state.mapView === view) return;
     state.mapView = view;
@@ -574,7 +753,7 @@
     var order = window.TelemetryGraph.TYPE_ORDER.filter(function (t) {
       return counts[t];
     });
-    els.graphLegend.innerHTML = order
+    var html = order
       .map(function (t) {
         var meta = window.TelemetryGraph.TYPES[t];
         var off = state.hiddenTypes.has(t);
@@ -587,11 +766,22 @@
         );
       })
       .join("");
+    var risk = { malicious: 0, suspicious: 0 };
+    state.graphData.nodes.forEach(function (n) {
+      if (n.risk && n.risk.level && risk[n.risk.level] != null) risk[n.risk.level]++;
+    });
+    if (risk.malicious) {
+      html += '<span class="type-chip is-static risk-chip malicious"><i></i>malicious traces<b>' + risk.malicious + "</b></span>";
+    }
+    if (risk.suspicious) {
+      html += '<span class="type-chip is-static risk-chip suspicious"><i></i>suspicious traces<b>' + risk.suspicious + "</b></span>";
+    }
+    els.graphLegend.innerHTML = html;
   }
-
   function updateMapStats() {
     var meta = state.graphData.meta || {};
-    var links = state.mapView === "links";
+    var view = state.mapView;
+    var links = view === "links";
     var active = links ? els.processLinksContainer : els.graphCanvasContainer;
     var bits;
     if (links) {
@@ -606,12 +796,14 @@
     }
     if (state.scopeEventIds) bits.push("scoped to " + state.scopeEventIds.size + " evidence events");
     var q = els.graphSearchInput.value.trim();
-    if (q) bits.push((active.dataset.count || "0") + " matching");
+    if (q) {
+      if (view === "graph" && state.graphView) bits.push(state.graphView.stats().visible + " matching");
+      else bits.push((active.dataset.count || "0") + " matching");
+    }
     els.graphStats.textContent = bits.join(" · ");
     els.scopeClearBtn.hidden = !state.scopeEventIds;
     els.graphNodeCountBadge.textContent = String(state.graphData.nodes.length);
   }
-
   function toggleType(type) {
     if (type === "host") return;
     if (state.hiddenTypes.has(type)) state.hiddenTypes.delete(type);
@@ -620,12 +812,13 @@
     renderLegend();
   }
 
-  function selectNode(id) {
+  function selectNode(id, fromGraph) {
     var node = state.nodeById.get(id);
     if (!node) return;
     state.selectedId = id;
-    A1Tree.selectOnly(els.graphCanvasContainer, id);
+    if (window.A1Tree) A1Tree.selectOnly(els.graphCanvasContainer, id);
     if (window.A1Links) A1Links.select(id);
+    if (!fromGraph && state.graphView && state.graphView.selectedId !== id) state.graphView.select(id);
     openInspector(node);
   }
 
@@ -695,8 +888,28 @@
     if (window.A1Links) A1Links.select("");
   }
 
-  function scopeEvidence(ids) {
+  async function scopeEvidence(ids) {
     var present = new Set(state.events.map(function (e) { return e.event_id; }));
+    var missing = Array.from(ids).filter(function (id) { return !present.has(id); });
+    if (missing.length) {
+      try {
+        var data = await api("/api/events/lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: missing })
+        });
+        if (data && data.error) throw new Error(data.error);
+        (data && data.events || []).forEach(function (e) {
+          if (!present.has(e.event_id)) {
+            present.add(e.event_id);
+            state.events.push(e);
+          }
+        });
+      } catch (e) {
+        toast("Could not load evidence telemetry: " + e.message, "error");
+        return;
+      }
+    }
     var real = new Set();
     ids.forEach(function (id) {
       if (present.has(id)) real.add(id);
@@ -706,6 +919,7 @@
       return;
     }
     state.scopeEventIds = real;
+    state.investigationRan = true;
     rebuildGraph();
     openDrawer("graph");
   }
@@ -1107,6 +1321,7 @@
         turn.setStep("verdict", "run");
         turn.hypotheses(Object.keys(data.hypotheses_evidence || {}), data.hypotheses_evidence);
         turn.evidence(data);
+        markInvestigated();
         break;
       case "tool_call":
         turn.toolCall(data.tool || data.name || "tool", data.args || data.arguments || "");
@@ -1125,6 +1340,7 @@
           break;
         }
         turn.setStep("verdict", "done");
+        markInvestigated();
         turn.verdict(data);
         if (data.report) {
           turn.report(data.report, data.verdict);
@@ -1360,10 +1576,14 @@
     if (h.report) {
       turn.report(h.report, h.verdict);
       setReport(h.report, h.verdict);
-      openDrawer("report");
     } else if (h.verdict) {
       setVerdictStamp(h.verdict, h.confidence);
     }
+    if (h.report || h.verdict) {
+      state.investigationRan = true;
+      rebuildGraph();
+    }
+    if (h.report) openDrawer("report");
     scrollStream(true);
   }
 
@@ -1383,7 +1603,9 @@
   function openDrawer(view) {
     if (!state.drawerOpen) {
       state.drawerOpen = true;
-      els.drawer.hidden = false;
+      els.drawer.classList.add("is-open");
+      els.drawer.setAttribute("aria-hidden", "false");
+      els.drawerBackdrop.classList.add("is-open");
       document.body.classList.add("drawer-open");
       els.evidenceBtn.setAttribute("aria-pressed", "true");
       var saved = Number(localStorage.getItem(DRAWER_KEY));
@@ -1395,12 +1617,13 @@
   function closeDrawer() {
     if (!state.drawerOpen) return;
     state.drawerOpen = false;
-    els.drawer.hidden = true;
+    els.drawer.classList.remove("is-open");
+    els.drawer.setAttribute("aria-hidden", "true");
+    els.drawerBackdrop.classList.remove("is-open");
     document.body.classList.remove("drawer-open");
     els.evidenceBtn.setAttribute("aria-pressed", "false");
     closeInspector();
   }
-
   function toggleDrawer() {
     if (state.drawerOpen) closeDrawer();
     else openDrawer(state.activeView);
@@ -1418,6 +1641,11 @@
     });
     if (view === "telemetry" && !state.events.length) renderTelemetryTable();
     if (view === "report" && state.report.md) setReport(state.report.md, state.report.verdict);
+    if (view === "graph" && state.mapView === "graph" && state.graphView) {
+      requestAnimationFrame(function () {
+        if (state.drawerOpen) state.graphView.resize();
+      });
+    }
   }
 
   function newInvestigation(opts) {
@@ -1434,6 +1662,7 @@
     state.lastSessionId = null;
     state.selectedId = null;
     state.scopeEventIds = null;
+    state.investigationRan = false;
     state.hiddenTypes = new Set();
     els.graphSearchInput.value = "";
     els.reportStageVerdictTime.textContent = "";
@@ -1466,6 +1695,11 @@
       setCaseMenu(!caseMenuOpen());
     });
     els.dbList.addEventListener("click", function (e) {
+      var del = e.target.closest("[data-del-db]");
+      if (del) {
+        deleteDatabase(del.dataset.delDb, del.dataset.delName);
+        return;
+      }
       var b = e.target.closest("[data-db]");
       if (b) switchDatabase(b.dataset.db);
     });
@@ -1477,9 +1711,9 @@
       els.uploadDbInput.click();
     });
     els.uploadDbInput.addEventListener("change", function () {
-      var file = els.uploadDbInput.files && els.uploadDbInput.files[0];
+      var files = Array.prototype.slice.call(els.uploadDbInput.files || []);
       els.uploadDbInput.value = "";
-      uploadDatabase(file);
+      uploadFileGroup(files);
     });
     els.clearHistoryBtn.addEventListener("click", function () {
       if (!state.history.length) {
@@ -1517,6 +1751,10 @@
       if (b) setModel(state.modelTab, b.dataset.model);
     });
     els.modelSearchInput.addEventListener("input", renderModelList);
+    els.saveApiKeyBtn.addEventListener("click", saveApiKey);
+    els.apiKeyInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") saveApiKey();
+    });
     els.modelSearchInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
         var first = els.modelList.querySelector("[data-model]");
@@ -1584,12 +1822,16 @@
     els.treeCollapseBtn.addEventListener("click", function () {
       A1Tree.collapseAll();
     });
+    els.mapViewGraph.addEventListener("click", function () {
+      setMapView("graph");
+    });
     els.mapViewTree.addEventListener("click", function () {
       setMapView("tree");
     });
     els.mapViewLinks.addEventListener("click", function () {
       setMapView("links");
     });
+    els.drawerBackdrop.addEventListener("click", closeDrawer);
     window.addEventListener("resize", debounce(function () {
       if (state.drawerOpen && window.innerWidth > 900) applyDrawerWidth(els.drawer.getBoundingClientRect().width);
     }, 100));
@@ -1783,6 +2025,7 @@
       els.railStatus.innerHTML = '<i class="dot is-bad"></i><span>backend offline</span>';
     }
     renderDatabases();
+    updateApiKeyUI();
     updateModelUI();
     setDbChrome();
   }
@@ -1794,6 +2037,11 @@
         opencode: m.opencode || [],
         ollama: m.ollama || [],
         openai: m.openai || [],
+      };
+      state.apiKeys = {
+        opencode: !!m.has_opencode_key,
+        ollama: !!m.has_ollama_key,
+        openai: !!m.has_openai_key,
       };
       if (state.provider && state.models[state.provider]) setProviderTab(state.provider);
       else setProviderTab("opencode");
@@ -1809,12 +2057,12 @@
       "historyList", "railStatus", "headerDbMeta", "verdictStamp", "verdictStampLabel", "verdictStampConf",
       "evidenceBtn", "evidenceBadge", "modelDropdownContainer", "modelSelectorPill", "activeModelName",
       "activeProviderBadge", "modelMenu", "providerTabs", "modelSearchInput", "modelList", "customModelInput",
-      "applyCustomModelBtn", "shortcutsBtn", "stream", "welcomeScreen", "emptyTitle", "emptyMeta",
+      "applyCustomModelBtn", "saveApiKeyBtn", "apiKeyInput", "apiKeyStatus", "shortcutsBtn", "stream", "welcomeScreen", "emptyTitle", "emptyMeta",
       "suggestionsList", "examplesEmpty", "messagesContainer", "promptInput", "inputCapsule", "composerModel",
       "composerDb", "composerHint", "sendBtn", "drawer", "drawerGrip", "tabViewGraph", "graphNodeCountBadge",
       "tabViewTelemetry", "tabViewReport", "mapCloseBtn", "graphStage", "graphSearchInput", "treeCollapseBtn",
-      "graphLegend", "graphStats", "scopeClearBtn", "graphCanvasContainer", "processLinksContainer",
-      "mapViewTree", "mapViewLinks", "graphInspectorDrawer",
+      "graphLegend", "graphStats", "scopeClearBtn", "graphViewContainer", "graphCanvasContainer", "processLinksContainer",
+      "mapViewGraph", "mapViewTree", "mapViewLinks", "graphInspectorDrawer", "drawerBackdrop",
       "inspectorTypeBadge", "inspectorCloseBtn", "inspectorTitle", "inspectorSubtitle", "inspectorBody",
       "telemetryStage", "globalDialogSearchInput", "globalDialogCopyBtn", "globalDialogMeta",
       "globalDialogCountBadge", "globalDialogTableWrap", "reportStage", "reportStageVerdictTag",

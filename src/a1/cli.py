@@ -2,7 +2,7 @@
 import argparse
 import json
 import sys
-from typing import Optional
+from typing import List, Optional
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -186,6 +186,40 @@ def _configure_cli_llm(args) -> None:
         print(f"[*] Configured LLM: Provider={active['provider']}, Model={active['model']}")
 
 
+def _run_ingest(inputs: List[str], output_arg: Optional[str], source: str, format_hint: str, force: bool) -> None:
+    from pathlib import Path
+    from a1.ingest import ingest_file, ingest_merged, IngestError
+
+    try:
+        if len(inputs) == 1:
+            result = ingest_file(
+                Path(inputs[0]),
+                output_path=Path(output_arg) if output_arg else None,
+                source=source,
+                format_hint=format_hint,
+                overwrite=force,
+            )
+        else:
+            default_out = Path(inputs[0]).with_suffix(".db")
+            result = ingest_merged(
+                [(Path(p).read_bytes(), p) for p in inputs],
+                Path(output_arg) if output_arg else default_out,
+                overwrite=force,
+            )
+    except (IngestError, FileNotFoundError, OSError) as exc:
+        print(f"[!] Ingestion failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    print(
+        f"[+] Ingested {result['rows']} events ({result['source']}, {result['format']}) "
+        f"-> {result['path']}",
+        flush=True,
+    )
+    if result.get("files"):
+        for entry in result["files"]:
+            print(f"    - {entry['filename']}: {entry['source']}/{entry['format']} ({entry['rows']} rows)", flush=True)
+    print(f"    Inferred {len(result['schema']['fields'])} fields; metadata stored in ingest_meta.", flush=True)
+
+
 def _configure_cli_database(db_arg: Optional[str]) -> bool:
     if not db_arg:
         return True
@@ -203,7 +237,7 @@ def _configure_cli_database(db_arg: Optional[str]) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Agentic AI DFIR Investigator")
-    parser.add_argument("alert", nargs="*", help="Alert or investigation prompt (e.g. 'Investigate host-001...')")
+    parser.add_argument("alert", nargs="*", help="Alert or investigation prompt (e.g. 'Investigate host-001...'); 'ingest <logs...>' converts log files to a telemetry database")
     parser.add_argument("--query", "-q", type=str, default=None, help="Alternative flag to supply the investigation prompt")
     parser.add_argument("--provider", "-p", type=str, choices=["opencode", "ollama", "openai"], default=None, help="Select LLM provider ('opencode', 'ollama', or 'openai')")
     parser.add_argument("--model", "-m", type=str, default=None, help="Select LLM model name (e.g. 'llama3.1', 'gemma4:31b', 'gpt-4o')")
@@ -213,6 +247,10 @@ def main():
     parser.add_argument("--limit", type=int, default=5, help="Benchmark case limit")
     parser.add_argument("--db", type=str, default=None, help="Path to custom SQLite telemetry database")
     parser.add_argument("--web", action="store_true", help="Launch the ChatGPT-style Web Interface")
+    parser.add_argument("--out", "-o", type=str, default=None, help="Output .db path for 'ingest' (default: input name with .db)")
+    parser.add_argument("--source", choices=["auto", "wazuh", "suricata", "aminer", "generic"], default="auto", help="Log source for 'ingest' (default: auto-detect)")
+    parser.add_argument("--format", choices=["auto", "json", "jsonl", "text"], default="auto", help="Input format for 'ingest' (default: auto-detect)")
+    parser.add_argument("--force", action="store_true", help="Overwrite an existing output database for 'ingest'")
     parser.add_argument("--port", type=int, default=8000, help="Port for the web server (default: 8000)")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically open the browser on web launch")
     args = parser.parse_args()
@@ -221,6 +259,12 @@ def main():
     if args.web or (raw_tokens and raw_tokens[0].lower() == "web"):
         from a1.web.server import start
         start(port=args.port, open_browser=not args.no_browser)
+        return
+
+    if raw_tokens and raw_tokens[0].lower() == "ingest":
+        if len(raw_tokens) < 2:
+            parser.error("'ingest' requires input log files (e.g. a1 ingest santos_wazuh.json santos_aminer.json)")
+        _run_ingest(raw_tokens[1:], args.out, args.source, args.format, args.force)
         return
 
     _configure_cli_llm(args)

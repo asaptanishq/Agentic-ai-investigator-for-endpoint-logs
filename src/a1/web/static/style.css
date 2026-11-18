@@ -469,6 +469,46 @@ button:disabled {
   color: var(--text);
 }
 
+.db-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.db-del {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0.38;
+}
+
+.db-row:hover .db-del,
+.db-del:focus-visible {
+  opacity: 1;
+}
+
+.db-del:hover {
+  color: var(--red);
+}
+
 .db-row.is-active {
   background: var(--accent-soft);
   color: var(--text);
@@ -712,6 +752,36 @@ button:disabled {
 
 .model-custom input {
   flex: 1;
+}
+
+.api-key-row {
+  border-top: 1px solid var(--line);
+  gap: 6px;
+}
+
+.api-key-row input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  outline: none;
+}
+
+.api-key-row input:focus {
+  border-color: var(--line-strong);
+}
+
+.api-key-status {
+  margin: 0;
+  padding: 0 12px 8px;
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--text-3);
 }
 
 .ghost-btn {
@@ -1551,6 +1621,24 @@ button:disabled {
   padding: 4px 7px 7px 12px;
 }
 
+.upload-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  color: var(--text-2);
+  font-size: 9px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.upload-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  text-decoration: none;
+}
+
 .composer-meta {
   display: flex;
   align-items: center;
@@ -1627,45 +1715,56 @@ button:disabled {
 
 /* ---------------------------------------------------------------- drawer */
 
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  background: rgba(4, 6, 8, 0.62);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.drawer-backdrop.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .drawer {
-  position: relative;
-  flex: 0 0 var(--drawer-w);
-  width: var(--drawer-w);
-  max-width: calc(100vw - 420px);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 70;
+  width: min(1200px, calc(100vw - 40px));
+  height: min(860px, calc(100vh - 48px));
+  max-width: none;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--line);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
   background: var(--bg-raise);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, -47%) scale(0.965);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 220ms;
+}
+
+.drawer.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s;
 }
 
 .drawer-grip {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -6px;
-  width: 12px;
-  z-index: 20;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.drawer-grip::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 2px;
-  height: 36px;
-  margin: -18px 0 0 -1px;
-  border-radius: 2px;
-  background: var(--line-strong);
-}
-
-.drawer-grip:hover::after,
-body.is-resizing .drawer-grip::after {
-  background: var(--accent);
+  display: none;
 }
 
 .drawer-head {
@@ -1866,6 +1965,18 @@ body.is-resizing .drawer-grip::after {
   background: var(--bg-soft);
 }
 
+.risk-chip i {
+  opacity: 1;
+}
+
+.risk-chip.malicious i {
+  background: var(--red);
+}
+
+.risk-chip.suspicious i {
+  background: var(--accent);
+}
+
 .map-status {
   flex: 0 0 auto;
   display: flex;
@@ -1883,6 +1994,35 @@ body.is-resizing .drawer-grip::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.graph-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.cm-canvas {
+  display: block;
+  cursor: grab;
+}
+
+.cm-canvas:active {
+  cursor: grabbing;
+}
+
+.cm-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-align: center;
 }
 
 .tree-wrap {
@@ -2824,16 +2964,8 @@ kbd {
 
 @media (max-width: 900px) {
   .drawer {
-    position: fixed;
-    top: 48px;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    width: auto;
-    max-width: none;
-    flex-basis: auto;
-    z-index: 40;
-    border-left: 0;
+    width: calc(100vw - 16px);
+    height: calc(100vh - 24px);
   }
   .drawer-grip {
     display: none;

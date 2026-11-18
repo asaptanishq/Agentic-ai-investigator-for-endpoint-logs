@@ -4,14 +4,15 @@
 
 In modern Security Operations Centers (SOC) and Digital Forensics & Incident Response (DFIR), evaluating an autonomous investigation agent purely on binary accuracy ("did it output malicious?") is fundamentally flawed. When all evaluated attack datasets represent genuine intrusion incidents, an uncalibrated model that blindly declares "malicious" achieves 100% accuracy, despite hallucinating nonexistent indicators, overlooking root causes, or catastrophically false-positive alarming on benign operations.
 
-To establish true forensic rigor, this specification defines an objective, transparent, 100-point multi-dimensional evaluation rubric that measures five critical capabilities across a balanced dataset of **Malicious Intrusions** (`ATK-A` through `ATK-G`), **Benign Administrative Operations** (`BEN-A`), **Ambiguous Dual-Use Activities** (`AMB-A`), and **Incomplete Telemetry Gaps** (`INC-A`).
+To establish true forensic rigor, this specification defines an objective, transparent, 100-point multi-dimensional evaluation rubric that measures six critical capabilities across a balanced dataset of **Malicious Intrusions** (`ATK-A` through `ATK-G`), **Benign Administrative Operations** (`BEN-A`), **Ambiguous Dual-Use Activities** (`AMB-A`), and **Incomplete Telemetry Gaps** (`INC-A`).
 
 ### Core Evaluation Capabilities:
 1. **Verdict & Boundary Accuracy** (20 Points)
-2. **Ground Truth Evidence Retrieval & IOC Recall** (30 Points)
-3. **Evidence Grounding & Zero-Hallucination Rate** (25 Points)
-4. **Investigation Efficiency & Reasoning Quality** (15 Points)
-5. **Executive Incident Report Quality & Actionability** (10 Points)
+2. **Ground Truth Evidence Retrieval** (25 Points)
+3. **Evidence Grounding & Zero-Hallucination Rate** (20 Points)
+4. **Confidence Calibration** (10 Points)
+5. **Investigation Efficiency & Query Quality** (10 Points)
+6. **Executive Incident Report Quality & Actionability** (15 Points)
 
 ---
 
@@ -24,10 +25,11 @@ To establish true forensic rigor, this specification defines an objective, trans
 | Dimension                                              | Weight | Min-Max Points  |
 +--------------------------------------------------------+--------+-----------------+
 | 1. Incident Verdict & Boundary Precision               | 20%    | 0 to 20 pts     |
-| 2. Ground Truth Evidence Retrieval (IOC Recall)        | 30%    | 0 to 30 pts     |
-| 3. Evidence Grounding & Zero-Hallucination Integrity   | 25%    | 0 to 25 pts     |
-| 4. Investigation Efficiency & Query Quality            | 15%    | 0 to 15 pts     |
-| 5. Executive Report Completeness & Actionability       | 10%    | 0 to 10 pts     |
+| 2. Ground Truth Evidence Retrieval (Graded Recall)     | 25%    | 0 to 25 pts     |
+| 3. Evidence Grounding & Zero-Hallucination Integrity   | 20%    | 0 to 20 pts     |
+| 4. Confidence Calibration (Brier Score)                | 10%    | 0 to 10 pts     |
+| 5. Investigation Efficiency & Query Quality            | 10%    | 0 to 10 pts     |
+| 6. Executive Report Completeness & Actionability       | 15%    | 0 to 15 pts     |
 +--------------------------------------------------------+--------+-----------------+
 | TOTAL COMPOSITE BENCHMARK SCORE                        | 100%   | 0 to 100 pts    |
 +-----------------------------------------------------------------------------------+
@@ -57,74 +59,52 @@ Measures the agent's ability to accurately discriminate between genuine threats,
 
 ---
 
-### Dimension 2: Ground Truth Evidence Retrieval / IOC Recall (30 Points)
+### Dimension 2: Ground Truth Evidence Retrieval (25 Points)
 
-Measures whether the agent uncovered the actual technical building blocks of the attack chain or benign baseline as documented in `endpoint_security_dataset_expanded_corrected/groundtruth/groundtruth_*.json` (`evidence_basis`):
+Measures whether the agent uncovered the technical building blocks documented in `endpoint_security_dataset_expanded_corrected/groundtruth/groundtruth_*.json` (`evidence_basis`). Each evidence item becomes a set of distinctive indicators (paths, executables, IPs, event/process IDs, and content words after light stemming). An item earns graded coverage:
 
-$$\text{Recall Score} = 30 \times \frac{\sum_{i=1}^{N} \mathbb{I}(\text{Key Indicator } i \text{ captured in report or memory})}{N}$$
+$$\text{Coverage}_i = \frac{\text{matched indicators}_i}{\text{total indicators}_i}, \qquad \text{Recall} = \frac{1}{N}\sum_{i=1}^{N}\text{Coverage}_i$$
 
-Key indicators evaluated:
-1. **Process Execution & Ancestry**: Identified malicious/benign process entity IDs, PIDs, executables, and command lines (e.g. `procdump.exe`, `7z.exe`, `LockBit`, `mshta.exe`, `backup_verification.ps1`) (8 pts).
-2. **Causal Ancestry / Spawning Chain**: Reconstructed parent-child execution lineage (e.g. `winword.exe` -> `powershell.exe` -> `vssadmin.exe`) (6 pts).
-3. **Network Flows & C2 Egress**: Discovered critical external IPs, beaconing ports, or internal SMB pivoting flows (6 pts).
-4. **File Staging or Modification**: Discovered dropped payloads, staged archives, encrypted files, or audit log paths (5 pts).
-5. **Persistence & System Mutations**: Discovered scheduled tasks, service installations, or registry hive manipulations (5 pts).
+$$\text{Evidence Recall Score} = 25 \times \text{Recall}$$
 
----
+`benchmark.py` also reports **evidence precision** (supported citations / total citations) and **evidence F1**, so mentioning many incidental tokens does not automatically earn full recall.
 
-### Dimension 3: Evidence Grounding & Zero-Hallucination Integrity (25 Points)
+### Dimension 3: Evidence Grounding & Zero-Hallucination Integrity (20 Points)
 
-In forensic investigations, citing an event ID, hash, or IP address that does not exist in the raw telemetry is a severe breach of evidentiary integrity. This dimension is deterministically verified against the active SQLite database by the **Evidence Validator** node (`validator_node.py`):
+Citing an event ID or process ID that does not exist in the active telemetry is a severe evidentiary breach. Every cited `evt-*` and `proc-*` identifier is queried against SQLite:
 
-$$\text{Grounding Score} = 25 \times \left(1.0 - \min\left(1.0, \frac{\text{Hallucinated References}}{\text{Total Cited References}}\right)\right)$$
+$$\text{Grounding Score} = 20 \times \frac{\text{verified citations}}{\text{total citations}}$$
 
-Audit checks performed:
-- **Event ID Grounding (15 Points)**: Every `event_id` cited in the executive summary, reasoning, attack chain, and timeline matrix is queried against the active SQLite database (`SELECT count(*) FROM events WHERE event_id = ?`).
-  - **15 pts**: 100% of cited event IDs exist in the database.
-  - Linear deduction for each unobserved / hallucinated event ID (-5 pts per hallucinated ID).
-- **Entity ID & Indicator Grounding (10 Points)**: Every `process_entity_id`, file path, and IP address cited must exist in the database telemetry.
-  - **10 pts**: 100% of cited entity identifiers verified in telemetry.
-  - -3 pts per hallucinated process ID or IP address.
-- **Strict Validation Status Classification**:
-  - Validations are categorized into `VALID`, `INVALID`, and `UNVERIFIED`. Database query exceptions or table mismatches never silently pass as valid; they are explicitly marked `UNVERIFIED` and flag warnings.
-- **Causal Relationship & Link Verification**:
-  - The validator checks whether claimed causal relationships (such as process parentage `PARENT_OF` or network flows `CONNECTED_TO`) exist in the telemetry, distinguishing direct `OBSERVED` links from inferred or unverified assertions.
+- No citations at all ⇒ **0 points** (an unsupported report is not grounded).
+- A citation whose query fails because the table/view is unavailable is **UNVERIFIED** and does not count as verified.
+- `hallucinated_citations`, `total_citations`, and `unverified_citations` are reported per case.
 
----
+The validator separately checks claimed relationships (parentage, network flows, hostnames) and reports `validation_status` plus `relationship_correctness`; these are diagnostics, not double-counted points.
 
-### Additional Diagnostic Metrics (Reported Alongside Rubric)
+### Dimension 4: Confidence Calibration (10 Points)
 
-To provide deep architectural visibility, `benchmark.py` computes four diagnostic metrics for each case:
-1. **Validation Status (`validation_status`)**: Overall evidentiary outcome (`valid`, `invalid`, or `unverified`).
-2. **Relationship Correctness (`relationship_correctness`)**: The proportion of claimed relationship edges verified as directly observed in raw telemetry ($\frac{\text{observed relationships}}{\text{total relationships}}$).
-3. **Dynamic Hypotheses Spawned (`dynamic_hypotheses_created`)**: The number of runtime hypotheses created during the investigation loop in response to unexpected telemetry (e.g. registry Run keys, credential dumping tools, or staging archives).
-4. **Investigation Completeness (`investigation_completeness`)**: The fraction of all formulated hypotheses (initial + dynamic) successfully resolved to `SUPPORTED` or `CONTRADICTED` rather than remaining active/untested.
+An accurate verdict with unjustified certainty is operationally unsafe. Calibration uses the Brier score against binary correctness of verdict **and** boundary:
 
----
+$$\text{Brier} = (c - o)^2, \qquad o \in \{0,1\}$$
 
-### Dimension 4: Investigation Efficiency & Query Quality (15 Points)
+$$\text{Calibration Score} = 10 \times (1 - \text{Brier})$$
 
-Measures the economy, focus, and precision of the agent's autonomous workflow, enhanced by the **Adaptive Investigation Planner** (`planner_node.py`):
-- **Repetition Loop Freedom (5 Points)**:
-  - **5 pts**: Zero repetition nudges triggered (`repeat_nudges == 0`).
-  - **2 pts**: 1 repetition nudge triggered.
-  - **0 pts**: $\ge 2$ repetition nudges triggered.
-- **SQL & Query Conformance (5 Points)**:
-  - **5 pts**: All SQL queries and tool invocations executed with valid syntax and schema conformance.
-  - -2 pts for every unhandled syntax or column error.
-- **Step Economy (5 Points)**:
-  - **5 pts**: Concluded within optimal budget (2 to 4 reasoning steps).
-  - **3 pts**: Concluded at step 5.
-  - **1 pt**: Hit maximum iteration limit (`MAX_INVESTIGATION_STEPS = 12`) without resolving all hypotheses.
+Missing confidence defaults to 0.5. A correct verdict at 90% confidence scores 9.9; a correct verdict at 50% scores 7.5; an incorrect verdict at 90% scores 1.0.
 
----
+### Dimension 5: Investigation Efficiency & Query Quality (10 Points)
 
-### Dimension 5: Executive Report Completeness & Actionability (10 Points)
+- **Repetition loop freedom (3 pts)**: 3 minus 1.2 per repetition nudge, floored at 0.
+- **Step economy (3 pts)**: 3 for ≤4 iterations, 2 for 5–6, 1 for longer.
+- **Retry/fallback (2 pts)**: 2 when no report fallback/retry, 0.5 otherwise.
+- **Query quality (2 pts)**: 2 for zero duplicate tool calls, 1 for 1–2 duplicates, 0 for more (from `quality_metrics`).
 
-Measures whether the generated report provides SOC leadership and incident response teams with immediately actionable deliverables:
-- **Forensic Timeline Matrix (4 Points)**: A chronological Markdown table mapping timestamps, hosts, process names, action descriptions, and citing event IDs.
-- **Indicator of Compromise (IOC) Matrix (3 Points)**: Structured artifact table detailing artifact type, value, context, and detection status.
-- **Containment & Remediation Playbook (3 Points)**: Clear, bulleted, prioritized incident response actions (host isolation, credential rotation, artifact eradication, hunting queries).
+### Dimension 6: Executive Report Completeness & Actionability (15 Points)
+
+- **Forensic timeline (4 pts)**: Markdown table with at least two dated rows (1 pt if only a header/heading).
+- **Grounded citations (3 pts)**: 3 for ≥2 distinct event/process IDs, 1 for one, 0 for none.
+- **Benign explanations / evidence gaps (2 pts)**: present and substantive.
+- **Containment & remediation (3 pts)**: Next Steps, Remediation, or Playbook section.
+- **Structure (3 pts)**: ≥1,000 characters and ≥3 level-2/3 headings (1 pt for ≥2 headings).
 
 ---
 

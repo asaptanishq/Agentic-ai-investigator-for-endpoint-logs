@@ -5,6 +5,7 @@ from a1.nodes.report_node import (
     _sanitize_unverified_paths,
     _unsupported_citations,
     _validation_warnings,
+    _build_timeline_matrix_str,
 )
 from a1.nodes.triage_node import TriagePlan
 from a1.nodes.correlation_node import CorrelationAndGapAnalysis
@@ -164,10 +165,17 @@ Observed powershell.exe executing procdump.exe creating lsass.dmp.
 ## Forensic Timeline Matrix
 | Timestamp | Host | Process | Action | Event ID |
 | 2026-09-10T09:00:00Z | host-a01 | powershell.exe | start | {real_eid} |
+| 2026-09-10T09:01:00Z | host-a01 | procdump.exe | dump | {real_eid} |
 
 ## Indicator of Compromise (IOC) Matrix
 | Artifact | Type | Value | Status |
 | procdump.exe | Process | {real_pid} | Malicious |
+
+## Benign Explanations
+No benign explanation accounts for the credential dumping sequence.
+
+## Evidence Gaps
+None: endpoint telemetry covers process creation and file writes.
 
 ## Next Steps & Playbook
 1. Isolate endpoint host-a01 immediately.
@@ -177,6 +185,7 @@ Observed powershell.exe executing procdump.exe creating lsass.dmp.
         "verdict": "malicious",
         "verdict_boundary": "confirmed_malicious",
         "report_fallback_used": False,
+        "confidence": 0.9,
         "iteration_count": 3,
         "repeat_nudges": 0,
         "messages": [AIMessage(content=grounded_report)],
@@ -188,11 +197,71 @@ Observed powershell.exe executing procdump.exe creating lsass.dmp.
 
     rubric = evaluate_case_rubric(mock_case, mock_state)
     assert rubric["verdict_score"] == 20.0
-    assert rubric["recall_score"] == 30.0
-    assert rubric["grounding_score"] == 25.0
-    assert rubric["efficiency_score"] == 15.0
-    assert rubric["report_score"] == 10.0
-    assert rubric["composite_score"] == 100.0
+    assert rubric["recall_score"] == 25.0
+    assert rubric["grounding_score"] == 20.0
+    assert rubric["calibration_score"] == 9.9
+    assert rubric["brier_score"] == 0.01
+    assert rubric["efficiency_score"] == 10.0
+    assert rubric["report_score"] == 13.0
+    assert rubric["composite_score"] == 97.9
     assert "A+" in rubric["grade"]
 
 
+
+
+def test_timeline_prefers_pack_host_when_graph_timeline_lacks_it():
+    state = {
+        "investigation_timeline": [
+            {"event_id": "1687475510.10396132", "timestamp": "2022-01-17T11:22:02Z", "action": "apache"}
+        ],
+        "evidence_basis": [],
+        "attack_chain": [],
+    }
+    pack = {
+        "timeline": [
+            {
+                "event_id": "1687475510.10396132",
+                "timestamp": "2022-01-17T11:22:02Z",
+                "host_id": "wazuh-client-26",
+                "action": "Web server 400 error code.",
+            }
+        ]
+    }
+
+    table = _build_timeline_matrix_str(state, pack)
+
+    assert "wazuh-client-26" in table
+    assert "unknown: unknown" not in table
+
+
+def test_timeline_normalizes_missing_fields_and_none_strings():
+    state = {"investigation_timeline": [], "evidence_basis": [], "attack_chain": []}
+    pack = {
+        "timeline": [
+            {
+                "event_id": "evt-1",
+                "timestamp": "2026-09-10T11:24:14Z",
+                "host_id": None,
+                "process_name": None,
+                "file_name": "None",
+                "summary": "Apache webshell request",
+                "raw": {"host": {"name": "intranet-server"}},
+            }
+        ]
+    }
+    table = _build_timeline_matrix_str(state, pack)
+    assert "intranet-server" in table
+    assert "Apache webshell request" in table
+    assert "file:None" not in table
+    assert "None" not in table
+    assert "N/A" not in table
+
+
+def test_grounding_citation_regex_keeps_dotted_event_ids():
+    from a1.benchmark import _CITATION_RE
+
+    citations = _CITATION_RE.findall(
+        "Wazuh event evt-1687475510.10396132 and process proc-atkA-4024."
+    )
+    assert "evt-1687475510.10396132" in citations
+    assert "proc-atkA-4024" in citations

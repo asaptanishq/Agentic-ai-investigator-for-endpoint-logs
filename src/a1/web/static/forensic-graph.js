@@ -165,10 +165,12 @@
     normalize: normalize,
 
     /** Build {nodes, edges, meta} from /api/events rows. */
-    build: function (rawEvents) {
+    build: function (rawEvents, options) {
       var nodes = new Map();
       var edges = new Map();
       var events = (rawEvents || []).map(normalize);
+      // Risk is an investigation lead, so the idle map must not look malicious.
+      var assessRisk = !options || options.assessRisk !== false;
       events.sort(function (a, b) {
         return a.time - b.time;
       });
@@ -231,7 +233,7 @@
       }
 
       function assessProc(proc, ev) {
-        if (!proc) return;
+        if (!proc || !assessRisk) return;
         var cmd = String(ev.procCmd || "").toLowerCase();
         var parent = String(ev.parentName || "").toLowerCase();
         if (ev.hasSig && ev.sigStatus !== "trusted") proc._unsigned = true;
@@ -702,6 +704,11 @@
     this._invalidate();
   };
 
+  ForensicGraph.prototype.resize = function () {
+    this._resize();
+    if (this.nodes.length) this.fit();
+  };
+
   ForensicGraph.prototype.clear = function () {
     this.setData({ nodes: [], edges: [] });
   };
@@ -736,13 +743,73 @@
    * signal worth seeing. This also keeps the aspect near the viewport instead of the
    * 40 000px single strip a depth-ranked layout produced for 600 processes.
    */
+  function relaxBlock(points, edges, enabled) {
+    if (!enabled || points.length < 3) return;
+    var index = new Map();
+    for (var pi = 0; pi < points.length; pi++) index.set(points[pi].node.id, pi);
+    var springs = [];
+    for (var e = 0; e < edges.length; e++) {
+      var ai = index.get(edges[e].from), bi = index.get(edges[e].to);
+      if (ai !== undefined && bi !== undefined) springs.push([ai, bi]);
+    }
+    var iterations = 34;
+    for (var it = 0; it < iterations; it++) {
+      var cool = 1 - it / iterations;
+      var fx = new Float64Array(points.length);
+      var fy = new Float64Array(points.length);
+      for (var a = 0; a < points.length; a++) {
+        for (var b = a + 1; b < points.length; b++) {
+          var vx = points[b].x - points[a].x;
+          var vy = points[b].y - points[a].y;
+          var d2 = vx * vx + vy * vy;
+          var minD = 196;
+          if (d2 < minD * minD) {
+            var d = Math.sqrt(d2) || 0.01;
+            var push = ((minD - d) / d) * 0.055 * cool;
+            fx[a] -= vx * push; fy[a] -= vy * push;
+            fx[b] += vx * push; fy[b] += vy * push;
+          }
+        }
+      }
+      for (var sp = 0; sp < springs.length; sp++) {
+        var ia = springs[sp][0], ib = springs[sp][1];
+        var sx = points[ib].x - points[ia].x;
+        var sy = points[ib].y - points[ia].y;
+        var sd = Math.sqrt(sx * sx + sy * sy) || 0.01;
+        var pull = ((sd - 238) / sd) * 0.006 * cool;
+        fx[ia] += sx * pull; fy[ia] += sy * pull;
+        fx[ib] -= sx * pull; fy[ib] -= sy * pull;
+      }
+      for (var g = 0; g < points.length; g++) {
+        fx[g] += (points[g].ox - points[g].x) * 0.012;
+        fy[g] += (points[g].oy - points[g].y) * 0.012;
+        points[g].x += Math.max(-7, Math.min(7, fx[g]));
+        points[g].y += Math.max(-7, Math.min(7, fy[g]));
+      }
+      if (it % 5 === 0) {
+        for (var c = 0; c < points.length; c++) {
+          for (var d = c + 1; d < points.length; d++) {
+            var cx = points[d].x - points[c].x;
+            var cy = points[d].y - points[c].y;
+            if (Math.abs(cx) < NODE_W + 18 && Math.abs(cy) < NODE_H + 16) {
+              var sep = (NODE_H + 16 - Math.abs(cy)) / 2 + 0.5;
+              var sgn = cy >= 0 ? 1 : -1;
+              points[c].y -= sep * sgn;
+              points[d].y += sep * sgn;
+            }
+          }
+        }
+      }
+    }
+  }
+
   ForensicGraph.prototype._layout = function () {
     var nodes = this.nodes;
     if (!nodes.length) return;
 
-    var CELL_W = NODE_W + 20;
-    var CELL_H = NODE_H + 26;
-    var GAP = 34;
+    var CELL_W = NODE_W + 30;
+    var CELL_H = NODE_H + 32;
+    var GAP = 58;
 
     // Which host each entity belongs to: direct host nodes, else the host of its
     // observed_on / authenticated_to attachment edge.
@@ -756,6 +823,7 @@
       if (hostOf.has(e.to) && !hostOf.has(e.from)) hostOf.set(e.from, e.to);
     }
 
+    var graphEdges = this.edges;
     var groups = new Map();
     for (var k = 0; k < nodes.length; k++) {
       var n = nodes[k];
@@ -784,10 +852,32 @@
     var totalArea = 0;
     for (var b = 0; b < blocks.length; b++) {
       var members = blocks[b].nodes;
-      blocks[b].cols = Math.max(1, Math.min(8, Math.ceil(Math.sqrt(members.length * 1.4))));
+      blocks[b].cols = Math.max(1, Math.min(6, Math.ceil(Math.sqrt(members.length * 1.2))));
       blocks[b].rows = Math.ceil(members.length / blocks[b].cols);
-      blocks[b].w = blocks[b].cols * CELL_W;
-      blocks[b].h = blocks[b].rows * CELL_H;
+      blocks[b].local = members.map(function (node, mi) {
+        return {
+          node: node,
+          x: (mi % blocks[b].cols) * CELL_W + NODE_W / 2,
+          y: Math.floor(mi / blocks[b].cols) * CELL_H + NODE_H / 2,
+          ox: (mi % blocks[b].cols) * CELL_W + NODE_W / 2,
+          oy: Math.floor(mi / blocks[b].cols) * CELL_H + NODE_H / 2,
+        };
+      });
+      relaxBlock(blocks[b].local, graphEdges, members.length <= 220);
+      var lminX = Infinity, lminY = Infinity, lmaxX = -Infinity, lmaxY = -Infinity;
+      for (var li = 0; li < blocks[b].local.length; li++) {
+        var lp = blocks[b].local[li];
+        lminX = Math.min(lminX, lp.x);
+        lmaxX = Math.max(lmaxX, lp.x);
+        lminY = Math.min(lminY, lp.y);
+        lmaxY = Math.max(lmaxY, lp.y);
+      }
+      blocks[b].padX = 18;
+      blocks[b].padY = 18;
+      blocks[b].w = lmaxX - lminX + NODE_W + 36;
+      blocks[b].h = lmaxY - lminY + NODE_H + 36;
+      blocks[b].minX = lminX - NODE_W / 2 - 18;
+      blocks[b].minY = lminY - NODE_H / 2 - 18;
       totalArea += (blocks[b].w + GAP) * (blocks[b].h + GAP);
     }
 
@@ -802,10 +892,10 @@
         cursorY += shelfH + GAP;
         shelfH = 0;
       }
-      for (var mi = 0; mi < blk.nodes.length; mi++) {
-        var node = blk.nodes[mi];
-        node.x = cursorX + (mi % blk.cols) * CELL_W + NODE_W / 2;
-        node.y = cursorY + Math.floor(mi / blk.cols) * CELL_H + NODE_H / 2;
+      for (var mi = 0; mi < blk.local.length; mi++) {
+        var lp = blk.local[mi];
+        lp.node.x = cursorX - blk.minX + lp.x;
+        lp.node.y = cursorY - blk.minY + lp.y;
       }
       cursorX += blk.w + GAP;
       shelfH = Math.max(shelfH, blk.h);
@@ -1119,9 +1209,15 @@
       var type = this.byId.get(e.from).type;
       var color = (TYPES[type] || TYPES.host).color;
       var active = as === "sel" || bs === "sel" || as === "near" || bs === "near";
-      ctx.globalAlpha = active ? 0.85 : this.selectedId || searching ? 0.06 : 0.24;
-      ctx.strokeStyle = active ? color : "#6a7378";
-      ctx.lineWidth = active ? 1.6 : 1;
+      var riskA = a.risk && a.risk.level;
+      var riskB = b.risk && b.risk.level;
+      var risk = riskA === "malicious" || riskB === "malicious" ? "malicious" : riskA || riskB ? "suspicious" : "";
+      var riskColor = risk === "malicious" ? "#e06a5c" : risk === "suspicious" ? "#e0a33c" : "";
+      var quiet = this.selectedId || searching;
+      var stroke = active ? color : riskColor && !quiet ? riskColor : "#6a7378";
+      ctx.globalAlpha = active ? 0.85 : riskColor && !quiet ? 0.52 : quiet ? 0.05 : 0.17;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = active ? 1.6 : riskColor && !quiet ? 1.4 : 1;
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       if (Math.abs(ay - by) < 1) {
@@ -1131,7 +1227,7 @@
         ctx.bezierCurveTo(mx, ay, mx, by, bx, by);
       }
       ctx.stroke();
-      this._arrowHead(ctx, ax, ay, bx, by, active ? color : "#6a7378");
+      this._arrowHead(ctx, ax, ay, bx, by, stroke);
 
       if (active && showEdgeLabels) {
         var lx = (ax + bx) / 2;
@@ -1208,6 +1304,13 @@
     }
     ctx.fill();
     ctx.stroke();
+
+    var risk = n.risk && n.risk.level;
+    if (risk && state !== "dim") {
+      ctx.strokeStyle = risk === "malicious" ? "#e06a5c" : "#e0a33c";
+      ctx.lineWidth = state === "sel" ? 2.4 : 1.6;
+      ctx.stroke();
+    }
 
     // type stripe
     ctx.fillStyle = meta.color;

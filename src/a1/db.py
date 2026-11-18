@@ -437,7 +437,7 @@ def _build_hosts_view(source_table: str, event_cols: set, has_raw: bool, main_ob
             COALESCE(MAX({_safe_coalesce(*[c for c in ["hostname", "agent_name", "src_ip"] if c in event_cols], *_jextract(has_raw, '$."host.name"', '$.host.name', '$.host.hostname', '$.hostname'))}), {target_hid}) AS host_name,
             COALESCE(MAX({_safe_coalesce(*[c for c in ["hostname", "agent_name", "src_ip"] if c in event_cols], *_jextract(has_raw, '$."host.hostname"', '$.host.hostname', '$.hostname'))}), {target_hid}) AS hostname,
             COALESCE(
-                MAX({_safe_coalesce(*[c for c in ["ip_address"] if c in event_cols], *_jextract(has_raw, '$."host.ip"', '$.host.ip', '$.ip_address'))}),
+                MAX({_safe_coalesce(*[c for c in ["ip_address"] if c in event_cols], *_jextract(has_raw, '$."agent.ip"', '$.agent.ip', '$."host.ip"', '$.host.ip', '$.ip_address'))}),
                 MAX(CASE WHEN {_safe_coalesce(*[c for c in ["source_ip", "src_ip"] if c in event_cols], *_jextract(has_raw, '$."source.ip"', '$.source.ip', '$.src_ip'))} IS NOT NULL THEN {_safe_coalesce(*[c for c in ["source_ip", "src_ip"] if c in event_cols], *_jextract(has_raw, '$."source.ip"', '$.source.ip', '$.src_ip'))} ELSE NULL END)
             ) AS ip_address,
             {_get_field(event_cols, has_raw, ["raw_json"], default="'{}'")} AS raw_json
@@ -484,6 +484,26 @@ def _build_users_view(source_table: str, event_cols: set, has_raw: bool, main_ob
             {_get_field(event_cols, has_raw, ["raw_json"], default="'{}'")} AS raw_json
         FROM main.{source_table}
         WHERE {target_uid} IS NOT NULL AND {target_uid} <> ''
+        GROUP BY 1;
+    """
+
+
+def _build_users_view_with_name_fallback(source_table: str, event_cols: set, has_raw: bool, main_objects: set, has_rows, get_cols) -> str:
+    """Users view that also admits user_name-only rows (e.g. enriched aminer records)."""
+    base = _build_users_view(source_table, event_cols, has_raw, main_objects, has_rows, get_cols)
+    if "users" in main_objects or ("network_assets" in main_objects and has_rows("network_assets")):
+        return base
+    return base.rstrip().rstrip(";") + """
+        UNION
+        SELECT
+            json_extract(raw_json, '$."user.name"') AS user_id,
+            json_extract(raw_json, '$."user.name"') AS user_name,
+            json_extract(raw_json, '$."user.name"') AS username,
+            raw_json
+        FROM main.events
+        WHERE json_extract(raw_json, '$."user.name"') IS NOT NULL
+            AND json_extract(raw_json, '$."user.name"') <> ''
+            AND user_id IS NULL
         GROUP BY 1;
     """
 
@@ -576,7 +596,7 @@ class EndpointDatabase:
                 _build_network_connections_view(source_table, event_cols, has_raw, main_objects, has_rows, get_cols),
                 _build_registry_events_view(source_table, event_cols, has_raw, main_objects, has_rows, get_cols),
                 _build_hosts_view(source_table, event_cols, has_raw, main_objects, has_rows, get_cols),
-                _build_users_view(source_table, event_cols, has_raw, main_objects, has_rows, get_cols),
+                _build_users_view_with_name_fallback(source_table, event_cols, has_raw, main_objects, has_rows, get_cols),
             ])
 
             if "agent_events" not in main_objects or source_table != "events":

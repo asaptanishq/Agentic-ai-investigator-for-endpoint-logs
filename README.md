@@ -39,7 +39,7 @@ The investigator autonomously queries telemetry through 8 specialized DFIR tools
 
 ### Key Architectural Capabilities
 
-- **Explicit Evidence Graph (`a1/evidence_graph.py`):** Maintains a directed entity-relationship DAG (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) citing specific `event_id` anchors. Tracks `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`) to distinguish direct evidence from deduction. Feeds interactive Cytoscape/D3/SVG graph rendering in the web interface.
+- **Explicit Evidence Graph (`a1/evidence_graph.py`):** Maintains a directed entity-relationship DAG (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) citing specific `event_id` anchors. Tracks `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`) to distinguish direct evidence from deduction. Serializes into the web UI canvas entity graph, with pan/zoom, search, filters, and post-investigation risk traces.
 - **Dynamic Hypothesis Generation & Tracking (`a1/hypothesis.py`):** Formulates competing hypotheses during triage, and dynamically expands them during investigation when new persistence, credential access, lateral movement, or staging vectors emerge. Capped and deduplicated so initial hypotheses guide without constraining discovery.
 - **Adaptive Investigation Planner (`a1/nodes/planner_node.py`):** Dynamically ranks candidate forensic queries by expected information gain, avoiding redundant steps and prioritizing unresolved hypothesis gaps.
 - **Deterministic Evidence & Relationship Validation (`a1/nodes/validator_node.py`):** Queries SQLite directly to verify 100% of cited event IDs, process entities, hashes, and parent-child/network relationships before reports are finalized. Classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (exceptions produce `UNVERIFIED`, preventing false certainty).
@@ -62,16 +62,16 @@ ai-musefix/
 ├── docs/
 │   └── EVALUATION_SCORING_RUBRICS.md # 100-point multi-dimensional benchmark rubrics
 ├── src/a1/
-│   ├── cli.py                     # CLI investigations, --web launch, --benchmark, LLM & DB selection
+│   ├── cli.py                     # CLI investigations, --web launch, --benchmark, ingest, LLM & DB selection
 │   ├── config.py                  # Env parsing, path resolution, step limits
 │   ├── db.py                      # Read-only SQLite wrapper + convenience virtual views
+│   ├── ingest.py                  # Wazuh/Suricata/AMiner log -> canonical telemetry .db
 │   ├── llm.py                     # OpenCode / Ollama / OpenAI chat-model factory + runtime overrides
 │   ├── state.py                   # LangGraph InvestigationState TypedDict
 │   ├── graph.py                   # 8-node StateGraph assembly, routing, and compilation
 │   ├── benchmark.py               # 10-scenario labeled benchmark runner
 │   ├── evidence_graph.py          # Entity-relationship DAG and UI serialization
 │   ├── hypothesis.py              # Competing hypothesis lifecycle tracker
-│   ├── investigation_trace.py     # Structured investigation audit ledger
 │   ├── experiment.py              # Baseline comparison & ablation study runner
 │   ├── baseline_context.py        # Enterprise administrative baseline profiles
 │   ├── nodes/                     # alert_prep, triage, investigator, planner, evidence_packing, correlate, validator, report
@@ -82,7 +82,7 @@ ai-musefix/
 │       └── static/                # HTML/CSS/JS with SVG forensic DAG & process tree engine
 ├── scripts/
 │   └── smoke_test.py              # Standalone 17-point end-to-end verification script
-├── tests/                         # Pytest test suite (102 tests passed)
+├── tests/                         # Pytest test suite (124 tests passed)
 └── endpoint_security_dataset_expanded_corrected/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
     └── *.db                       # 8 SQLite forensic telemetry databases
@@ -154,11 +154,11 @@ Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) in your browser. The web w
 - **ChatGPT-Style Agent Interface:** Natural conversation flow where user alerts appear on the right and assistant answers stream directly on the left with clean, upright typography.
 - **Collapsible Thought Process:** Deep reasoning and internal planning stream into a top disclosure block (`Thinking...` during generation $\rightarrow$ `Thought process (X tool operations)` upon completion), toggleable at any time.
 - **Interactive Tool Activity Chips:** Compact inline chips (`⚡ search_timeline: 47 events`, `⚡ query_telemetry: 1 row`) showing real-time tool executions with 1-click modal telemetry inspection.
-- **Interactive Forensic DAG:** Dynamic SVG visualization of observed processes, network connections, files, and users.
+- **Interactive Forensic Graph:** Force-laid-out canvas of observed processes, network connections, files, users, and hosts, with pan/zoom, search, filters, and attack traces after an investigation.
 - **Process Tree Engine:** Hierarchical process ancestry tree traversal.
-- **Model & Database Switchers:** Hot-swap models (OpenCode/Ollama/OpenAI) and telemetry datasets directly in the UI.
-- **Custom Database Upload:** Add a new `.db` telemetry dataset from the UI; the server validates the SQLite file and adds it to the dataset menu.
-- **Verified Incident Reports:** Structured incident reports with verdict banners, confidence scores, and 1-click markdown copying.
+- **Model & Database Switchers:** Hot-swap models (OpenCode/Ollama/OpenAI) and telemetry datasets directly in the UI; save provider API keys from the model menu and delete unused datasets from the case menu.
+- **Custom Database Upload & Log Ingestion:** Add an existing `.db`, or drop in Wazuh/Suricata/AMiner `.json`, `.jsonl`, `.ndjson`, `.log` or `.txt` exports; the server detects the source, infers a schema, builds a canonical telemetry database and switches to it.
+- **Verified Incident Reports:** Structured incident reports with verdict banners, confidence scores, highlighted attack details, normalized timeline fields, and 1-click markdown copying.
 
 ---
 
@@ -197,9 +197,27 @@ python -m a1.cli "Investigate an alert claiming unauthorized execution on SRV-FI
 | `--web` | Launch the FastAPI web server |
 | `--benchmark` | Run the ground-truth benchmark evaluation |
 
+#### Log Ingestion (Wazuh / Suricata / AMiner / generic JSON)
+
+Convert raw log exports into a canonical telemetry `.db` without hand-writing a schema:
+
+```bash
+# Wazuh JSON export (array, JSONL or API affected_items wrapper)
+python -m a1.cli ingest wazuh-alerts.json -o wazuh.db
+
+# Suricata eve.json / eve.jsonl / fast.log
+python -m a1.cli ingest eve.jsonl -o suricata.db
+python -m a1.cli ingest fast.log
+
+# Force a parser or overwrite an existing output
+python -m a1.cli ingest alerts.log --source wazuh --format text -o wazuh.db --force
+```
+
+The ingester auto-detects JSON, JSONL/NDJSON and text, recognises Wazuh rule/agent records, Suricata EVE/fast.log alerts and AMiner anomaly JSONL (including `.json` files containing one object per line), writes the standard `events` table plus `ingest_meta` (source, format, row count and inferred leaf-field schema), and preserves each original record in `raw_json`. Use `-o/--out` to choose the output path (default: input name with `.db`), `--source auto|wazuh|suricata|aminer|generic`, `--format auto|json|jsonl|text`, and `--force` to overwrite. The same pipeline runs from the web upload button; plain text without a recognised format is stored as generic log events.
+
 ---
 
-### 3. Benchmark Runner & Evaluation
+### 4. Benchmark Runner & Evaluation
 
 Evaluate agent accuracy and reasoning across all 10 shipped scenarios covering malicious intrusions, benign operations, ambiguous tasks, and incomplete telemetry:
 
@@ -213,9 +231,11 @@ python -m a1.cli --benchmark --limit 5
 
 The benchmark switches telemetry databases automatically per scenario, validates verdicts against ground truth, measures False Positive Rate (FPR) and False Negative Rate (FNR), audits evidence grounding against SQLite tables, and computes composite 100-point scores.
 
+Rubric v2 weights verdict/boundary **20**, graded evidence recall **25**, grounding/anti-hallucination **20**, Brier confidence calibration **10**, investigation efficiency **10**, and report actionability **15**. It also reports evidence precision/F1 so over-citing cannot mask weak recall.
+
 ---
 
-### 4. Baseline Comparison & Ablation Experiments
+### 5. Baseline Comparison & Ablation Experiments
 
 Run empirical ablation experiments (`src/a1/experiment.py`) comparing system configurations:
 
@@ -238,9 +258,9 @@ When run with `--live`, each scenario executes through the compiled LangGraph st
 
 ---
 
-### 5. Running Tests
+### 6. Running Tests
 
-Run the full pytest suite (102 tests passed) and standalone smoke tests:
+Run the full pytest suite (124 tests passed) and standalone smoke tests:
 
 ```bash
 # Run pytest suite

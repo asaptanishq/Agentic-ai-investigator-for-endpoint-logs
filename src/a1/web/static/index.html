@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>A1 DFIR Investigator</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='3' fill='%230a0b0c'/%3E%3Cpath d='M8 23V9h7l3 5h6v9z' fill='none' stroke='%23e6e9eb' stroke-width='1.6'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/static/style.css?v=wsb_20261119l" />
+  <link rel="stylesheet" href="/static/style.css?v=wsb_20261121b" />
 </head>
 <body>
   <a class="skip-link" href="#promptInput">Skip to prompt</a>
@@ -41,8 +41,6 @@
             </div>
             <div class="menu-foot">
               <span class="status" id="railStatus"><i class="dot"></i><span>local workspace</span></span>
-              <button id="uploadDbBtn" class="text-btn" type="button" title="Upload a .db SQLite telemetry database">upload .db</button>
-              <input id="uploadDbInput" type="file" accept=".db" hidden />
             </div>
           </div>
         </div>
@@ -83,6 +81,11 @@
               <input id="customModelInput" type="text" placeholder="custom model id" aria-label="Custom model id" autocomplete="off" />
               <button id="applyCustomModelBtn" class="ghost-btn">Use</button>
             </div>
+            <div class="menu-foot api-key-row">
+              <input id="apiKeyInput" type="password" placeholder="API key" aria-label="Provider API key" autocomplete="off" />
+              <button id="saveApiKeyBtn" class="ghost-btn">Save key</button>
+            </div>
+            <p class="menu-note api-key-status" id="apiKeyStatus"></p>
           </div>
         </div>
 
@@ -116,6 +119,8 @@
               <textarea id="promptInput" rows="1" placeholder="Ask about this dataset…" autocomplete="off" spellcheck="false"></textarea>
               <div class="composer-bar">
                 <span class="composer-meta" id="composerMeta"><span id="composerModel">model</span><span class="sep">·</span><span id="composerDb">dataset</span></span>
+                <button id="uploadDbBtn" class="text-btn upload-btn" type="button" title="Upload a .db database or Wazuh/Suricata/AMiner logs">+ upload .db / logs</button>
+                <input id="uploadDbInput" type="file" accept=".db,.json,.jsonl,.ndjson,.log,.txt" multiple hidden />
                 <button id="sendBtn" class="send-btn" aria-label="Send investigation">
                   <svg class="i-send" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
                   <span class="i-stop" aria-hidden="true"></span>
@@ -127,7 +132,8 @@
         </div>
       </main>
 
-      <aside class="drawer" id="drawer" aria-label="Evidence drawer" hidden>
+      <div class="drawer-backdrop" id="drawerBackdrop"></div>
+      <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Evidence" aria-hidden="true">
         <div class="drawer-grip" id="drawerGrip" role="separator" aria-orientation="vertical" tabindex="0" aria-valuemin="380" aria-valuemax="900" aria-label="Resize evidence panel" title="Drag to resize (double-click to reset)"></div>
         <div class="drawer-head">
           <div class="tabs" role="tablist" aria-label="Evidence views">
@@ -145,7 +151,8 @@
             <div class="pane-tools">
               <input id="graphSearchInput" class="filter" type="search" placeholder="Filter entities or processes" aria-label="Filter entities" autocomplete="off" />
               <div class="seg" role="group" aria-label="Map layout">
-                <button type="button" class="seg-btn is-active" id="mapViewTree" aria-pressed="true">Tree</button>
+                <button type="button" class="seg-btn is-active" id="mapViewGraph" aria-pressed="true">Graph</button>
+                <button type="button" class="seg-btn" id="mapViewTree" aria-pressed="false">Tree</button>
                 <button type="button" class="seg-btn" id="mapViewLinks" aria-pressed="false">Links</button>
               </div>
               <button id="treeCollapseBtn" class="ghost-btn" title="Collapse all groups">Collapse</button>
@@ -155,7 +162,8 @@
               <span id="graphStats">0 entities</span>
               <button id="scopeClearBtn" class="text-btn" hidden>clear evidence scope</button>
             </div>
-            <div class="tree-wrap" id="graphCanvasContainer"></div>
+            <div class="graph-wrap" id="graphViewContainer"></div>
+            <div class="tree-wrap" id="graphCanvasContainer" hidden></div>
             <div class="links-wrap" id="processLinksContainer" hidden></div>
 
             <aside class="inspector" id="graphInspectorDrawer" aria-hidden="true" aria-label="Entity inspector">
@@ -214,9 +222,9 @@
 
   <script src="/static/vendor/marked.min.js?v=wsb_20261119h"></script>
   <script src="/static/vendor/purify.min.js?v=wsb_20261119h"></script>
-  <script src="/static/forensic-graph.js?v=wsb_20261119l"></script>
-  <script src="/static/evidence-tree.js?v=wsb_20261119l"></script>
-  <script src="/static/process-links.js?v=wsb_20261119l"></script>
-  <script src="/static/app.js?v=wsb_20261119l"></script>
+  <script src="/static/forensic-graph.js?v=wsb_20261121b"></script>
+  <script src="/static/evidence-tree.js?v=wsb_20261120a"></script>
+  <script src="/static/process-links.js?v=wsb_20261120a"></script>
+  <script src="/static/app.js?v=wsb_20261121b"></script>
 </body>
 </html>

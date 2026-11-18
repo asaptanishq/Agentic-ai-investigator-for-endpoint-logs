@@ -260,66 +260,140 @@ def _extract_report_text_from_state(final_state: dict) -> str:
     return ""
 
 
+_EVIDENCE_STOPWORDS = {
+    "the", "and", "for", "with", "from", "that", "this", "via", "was", "were",
+    "into", "then", "than", "after", "before", "same", "host", "event", "process",
+    "activity", "execution", "sequence", "observed", "using", "used", "user",
+}
+
+
+def _stem(term: str) -> str:
+    term = term.strip(". _-").lower()
+    for suffix in ("ing", "ed", "es", "s"):
+        if len(term) > 4 and term.endswith(suffix):
+            return term[: -len(suffix)]
+    return term
+
+
+def _evidence_terms(item: Any) -> set:
+    """Extract distinctive indicators from a ground-truth evidence item."""
+    text = str(item or "")
+    terms = set()
+    for path in re.findall(r"[A-Za-z]:\\[^\s,;)\"']+|(?:[\w.-]+/)+[\w.-]+", text):
+        clean = path.rstrip(".,;:)").lower()
+        if len(clean) >= 5:
+            terms.add(clean)
+            base = clean.replace("\\", "/").rsplit("/", 1)[-1]
+            if len(base) >= 4:
+                terms.add(base)
+    for token in re.findall(r"\b[a-z0-9][a-z0-9_.-]{2,}\b", text.lower()):
+        if token in _EVIDENCE_STOPWORDS or token.isdigit():
+            continue
+        terms.add(_stem(token))
+    return terms
+
+
 def _score_evidence_recall(evidence_basis: list, combined_evidence_text: str) -> Tuple[float, float]:
+    """Graded indicator coverage: partial matches count, not just one token."""
     if not evidence_basis:
-        return 30.0, 1.0
-    matched_indicators = 0
-    stopwords = {"the", "and", "for", "with", "from", "that", "this", "via", "was"}
+        return 25.0, 1.0
+    coverage = 0.0
     for item in evidence_basis:
-        terms = [t.lower() for t in re.findall(r"\b[a-zA-Z0-9_.-]{3,}\b", str(item)) if t.lower() not in stopwords]
-        if terms and any(term in combined_evidence_text for term in terms):
-            matched_indicators += 1
-    recall_pct = matched_indicators / len(evidence_basis)
-    return round(30.0 * recall_pct, 1), recall_pct
+        terms = _evidence_terms(item)
+        if not terms:
+            continue
+        matched = sum(1 for term in terms if term in combined_evidence_text)
+        coverage += matched / len(terms)
+    recall_pct = coverage / len(evidence_basis)
+    return round(25.0 * recall_pct, 1), recall_pct
 
 
-def _score_evidence_grounding(report_text: str) -> Tuple[float, int, int]:
+_CITATION_RE = re.compile(r"\b(?:evt|proc|suri)-[A-Za-z0-9_.:-]*[A-Za-z0-9_]\b")
+
+
+def _score_evidence_grounding(report_text: str) -> Tuple[float, int, int, int]:
     from a1.db import EndpointDatabase
-    cited_eids = list(dict.fromkeys(re.findall(r"\bevt-[a-zA-Z0-9_-]+\b", report_text)))
-    cited_pids = list(dict.fromkeys(re.findall(r"\bproc-[a-zA-Z0-9_-]+\b", report_text)))
+    citations = list(dict.fromkeys(_CITATION_RE.findall(report_text)))
+    cited_eids = [c for c in citations if not c.startswith("proc-")]
+    cited_pids = [c for c in citations if c.startswith("proc-")]
     total_cited = len(cited_eids) + len(cited_pids)
     if total_cited == 0:
-        return 15.0, 0, 0
+        return 0.0, 0, 0, 0
+
+    def _exists(db, table: str, column: str, identifier: str) -> bool:
+        candidates = [identifier]
+        if identifier.startswith("evt-"):
+            candidates.append(identifier[4:])
+        for candidate in candidates:
+            rows = db.execute_query(
+                f"SELECT count(*) as c FROM {table} WHERE {column} = ?", (candidate,)
+            )
+            if rows and rows[0].get("c", 0) > 0:
+                return True
+        return False
 
     hallucinated = 0
+    unverified = 0
     db = EndpointDatabase()
     for eid in cited_eids:
         try:
-            cnt = db.execute_query("SELECT count(*) as c FROM events WHERE event_id = ?", (eid,))
-            if not cnt or cnt[0].get("c", 0) == 0:
+            if not _exists(db, "events", "event_id", eid):
                 hallucinated += 1
         except Exception:
-            pass
+            unverified += 1
     for pid in cited_pids:
         try:
-            cnt = db.execute_query("SELECT count(*) as c FROM processes WHERE process_entity_id = ?", (pid,))
-            if not cnt or cnt[0].get("c", 0) == 0:
+            if not _exists(db, "processes", "process_entity_id", pid):
                 hallucinated += 1
         except Exception:
-            pass
-    grounding_ratio = max(0.0, 1.0 - (hallucinated / total_cited))
-    return round(25.0 * grounding_ratio, 1), hallucinated, total_cited
+            unverified += 1
+    valid = max(0, total_cited - hallucinated - unverified)
+    return round(20.0 * valid / total_cited, 1), hallucinated, total_cited, unverified
+
+
+def _score_confidence_calibration(final_state: dict, verdict_match: bool, boundary_match: bool, fallback_used: bool) -> Tuple[float, float, float]:
+    confidence = final_state.get("confidence")
+    try:
+        confidence = float(confidence)
+        if confidence > 1.0:
+            confidence /= 100.0
+    except (TypeError, ValueError):
+        confidence = 0.5
+    confidence = max(0.0, min(1.0, confidence))
+    outcome = 1.0 if verdict_match and boundary_match and not fallback_used else 0.0
+    brier = (confidence - outcome) ** 2
+    return round(10.0 * (1.0 - brier), 1), round(brier, 3), confidence
 
 
 def _score_investigation_efficiency(final_state: dict, fallback_used: bool) -> float:
     repeat_nudges = final_state.get("repeat_nudges", 0)
-    rep_pts = max(0.0, 5.0 - (repeat_nudges * 2.5))
+    rep_pts = max(0.0, 3.0 - (repeat_nudges * 1.2))
     iter_count = final_state.get("iteration_count", 0)
     if iter_count <= 4:
-        step_pts = 5.0
-    elif iter_count == 5:
         step_pts = 3.0
+    elif iter_count <= 6:
+        step_pts = 2.0
     else:
         step_pts = 1.0
-    retry_pts = 5.0 if not fallback_used and not final_state.get("report_retry_used") else 2.0
-    return round(rep_pts + step_pts + retry_pts, 1)
+    retry_pts = 2.0 if not fallback_used and not final_state.get("report_retry_used") else 0.5
+    metrics = final_state.get("quality_metrics") or {}
+    duplicates = int(metrics.get("duplicate_calls", 0) or 0)
+    query_pts = 2.0 if duplicates == 0 else 1.0 if duplicates <= 2 else 0.0
+    return round(rep_pts + step_pts + retry_pts + query_pts, 1)
 
 
 def _score_report_quality(report_text: str) -> float:
-    timeline_pts = 4.0 if ("Forensic Timeline Matrix" in report_text or "| Timestamp" in report_text) else 1.0
-    ioc_pts = 3.0 if ("Indicator" in report_text or "IOC" in report_text) else 1.0
-    action_pts = 3.0 if ("Next Steps" in report_text or "Remediation" in report_text or "Playbook" in report_text) else 1.0
-    return round(timeline_pts + ioc_pts + action_pts, 1)
+    """Score report usefulness: timeline, grounded citations, caveats, actions."""
+    has_timeline = "| Timestamp" in report_text or "Forensic Timeline Matrix" in report_text
+    timeline_rows = len(re.findall(r"(?m)^\|\s*\d{4}-\d{2}-\d{2}", report_text))
+    timeline_pts = 4.0 if has_timeline and timeline_rows >= 2 else 1.0 if has_timeline else 0.0
+    citations = len(set(re.findall(r"\b(?:evt|proc)-[a-zA-Z0-9_-]+\b", report_text)))
+    citation_pts = 3.0 if citations >= 2 else 1.0 if citations == 1 else 0.0
+    caveat_pts = 2.0 if ("Benign Explanation" in report_text or "Evidence Gap" in report_text) else 0.0
+    action_pts = 3.0 if ("Next Steps" in report_text or "Remediation" in report_text or "Playbook" in report_text) else 0.0
+    headings = len(re.findall(r"(?m)^#{2,3}\s+", report_text))
+    structure_pts = 3.0 if len(report_text) >= 1000 and headings >= 3 else 1.0 if headings >= 2 else 0.0
+    return round(timeline_pts + citation_pts + caveat_pts + action_pts + structure_pts, 1)
 
 
 def _score_to_grade(score: float) -> str:
@@ -349,18 +423,25 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
     memory = final_state.get("investigation_memory") or {}
     combined_evidence_text = (report_text + " " + json.dumps(memory, default=str)).lower()
 
+    verdict_match = (agent_verdict == expected_label) and not fallback_used
+    boundary_match = (_normalize_boundary(agent_boundary) == _normalize_boundary(expected_boundary)) and not fallback_used
     recall_pts, recall_pct = _score_evidence_recall(evidence_basis, combined_evidence_text)
-    grounding_pts, hallucinated, total_cited = _score_evidence_grounding(report_text)
+    grounding_pts, hallucinated, total_cited, unverified = _score_evidence_grounding(report_text)
+    calibration_pts, brier_score, confidence = _score_confidence_calibration(
+        final_state, verdict_match, boundary_match, fallback_used
+    )
     efficiency_pts = _score_investigation_efficiency(final_state, fallback_used)
     report_quality_pts = _score_report_quality(report_text)
 
-    composite_score = round(verdict_pts + recall_pts + grounding_pts + efficiency_pts + report_quality_pts, 1)
+    composite_score = round(verdict_pts + recall_pts + grounding_pts + calibration_pts + efficiency_pts + report_quality_pts, 1)
     grade = _score_to_grade(composite_score)
 
     is_fp = (expected_label in ("benign", "inconclusive")) and (agent_verdict in ("malicious", "suspicious"))
     is_fn = (expected_label == "malicious") and (agent_verdict in ("benign", "inconclusive"))
-    ev_precision = round((total_cited - hallucinated) / total_cited, 3) if total_cited > 0 else 1.0
+    supported = max(0, total_cited - hallucinated - unverified)
+    ev_precision = round(supported / total_cited, 3) if total_cited > 0 else 0.0
     ev_recall = round(recall_pct, 3) if evidence_basis else 1.0
+    ev_f1 = round((2 * ev_precision * ev_recall) / (ev_precision + ev_recall), 3) if (ev_precision + ev_recall) else 0.0
     iter_count = final_state.get("iteration_count", 0)
     repeat_nudges = final_state.get("repeat_nudges", 0)
     dup_query_rate = round(repeat_nudges / max(1, iter_count), 3)
@@ -394,6 +475,9 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
         "verdict_score": verdict_pts,
         "recall_score": recall_pts,
         "grounding_score": grounding_pts,
+        "calibration_score": calibration_pts,
+        "brier_score": brier_score,
+        "confidence": confidence,
         "efficiency_score": efficiency_pts,
         "report_score": report_quality_pts,
         "composite_score": composite_score,
@@ -404,6 +488,8 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
         "is_false_negative": is_fn,
         "evidence_precision": ev_precision,
         "evidence_recall": ev_recall,
+        "evidence_f1": ev_f1,
+        "unverified_citations": unverified,
         "duplicate_query_rate": dup_query_rate,
         "unsupported_claims_count": hallucinated,
         "validation_status": val_status,
@@ -468,10 +554,11 @@ def _execute_benchmark_case(app, case_id: str, case: dict, db_path: Optional[str
     print(f"  Agent: {agent_verdict} / {agent_boundary} -> {status}")
     print(f"  Scorecard: {rubric['composite_score']}/100 [{rubric['grade']}]")
     print(f"    * Verdict & Boundary: {rubric['verdict_score']}/20")
-    print(f"    * Evidence Recall:    {rubric['recall_score']}/30")
-    print(f"    * Grounding/Anti-Hal: {rubric['grounding_score']}/25 (Hallucinations: {rubric['hallucinated_citations']}/{rubric['total_citations']})")
-    print(f"    * Investigation Eff:  {rubric['efficiency_score']}/15")
-    print(f"    * Report Quality:     {rubric['report_score']}/10")
+    print(f"    * Evidence Recall:    {rubric['recall_score']}/25 (F1: {rubric['evidence_f1']:.1%})")
+    print(f"    * Grounding/Anti-Hal: {rubric['grounding_score']}/20 (Hallucinations: {rubric['hallucinated_citations']}/{rubric['total_citations']}, Unverified: {rubric['unverified_citations']})")
+    print(f"    * Confidence Calib:   {rubric['calibration_score']}/10 (Brier: {rubric['brier_score']:.3f})")
+    print(f"    * Investigation Eff:  {rubric['efficiency_score']}/10")
+    print(f"    * Report Quality:     {rubric['report_score']}/15")
     print(f"    * Validation Status:  {rubric['validation_status']} (Unverified: {rubric['unverified_evidence_count']})")
     print(f"    * Relationship Corr:  {rubric['relationship_correctness']:.1%} | Completeness: {rubric['investigation_completeness']:.1%} (Dynamic: {rubric['dynamic_hypotheses_created']})")
 
@@ -502,8 +589,10 @@ def _compute_and_print_benchmark_summary(results: list) -> dict:
     total_malicious = sum(1 for r in results if r["expected_label"].lower() == "malicious")
     fpr = (fps / total_benign_inconclusive) if total_benign_inconclusive else 0.0
     fnr = (fns / total_malicious) if total_malicious else 0.0
-    avg_ev_precision = sum(r["rubric"].get("evidence_precision", 1.0) for r in results) / total if total else 1.0
+    avg_ev_precision = sum(r["rubric"].get("evidence_precision", 0.0) for r in results) / total if total else 0.0
     avg_ev_recall = sum(r["rubric"].get("evidence_recall", 1.0) for r in results) / total if total else 1.0
+    avg_ev_f1 = sum(r["rubric"].get("evidence_f1", 0.0) for r in results) / total if total else 0.0
+    avg_brier = sum(r["rubric"].get("brier_score", 0.25) for r in results) / total if total else 0.25
     avg_rel_correctness = sum(r["rubric"].get("relationship_correctness", 1.0) for r in results) / total if total else 1.0
     avg_completeness = sum(r["rubric"].get("investigation_completeness", 1.0) for r in results) / total if total else 1.0
     total_dynamic_hypos = sum(r["rubric"].get("dynamic_hypotheses_created", 0) for r in results)
@@ -516,6 +605,8 @@ def _compute_and_print_benchmark_summary(results: list) -> dict:
     print(f"False-Negative Rate:       {fnr:.1%}")
     print(f"Avg Evidence Precision:    {avg_ev_precision:.1%}")
     print(f"Avg Evidence Recall:       {avg_ev_recall:.1%}")
+    print(f"Avg Evidence F1:           {avg_ev_f1:.1%}")
+    print(f"Avg Confidence Brier:      {avg_brier:.3f}")
     print(f"Avg Relationship Corr:     {avg_rel_correctness:.1%}")
     print(f"Avg Inv. Completeness:     {avg_completeness:.1%}")
     print(f"Total Dynamic Hypotheses:  {total_dynamic_hypos}")
@@ -530,6 +621,8 @@ def _compute_and_print_benchmark_summary(results: list) -> dict:
         "false_negative_rate": fnr,
         "avg_evidence_precision": avg_ev_precision,
         "avg_evidence_recall": avg_ev_recall,
+        "avg_evidence_f1": avg_ev_f1,
+        "avg_confidence_brier": avg_brier,
         "avg_relationship_correctness": avg_rel_correctness,
         "avg_investigation_completeness": avg_completeness,
         "total_dynamic_hypotheses": total_dynamic_hypos,

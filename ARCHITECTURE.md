@@ -1,6 +1,6 @@
 # `a1`: Autonomous DFIR Investigation Agent
 
-`a1` is an autonomous Digital Forensics and Incident Response (DFIR) investigation agent built with **LangGraph**, **LangChain**, and **SQLite**. It ingests raw security alerts (e.g. suspicious process execution, network beaconing, registry persistence), formulates competing investigation hypotheses, autonomously navigates an endpoint security telemetry database using dedicated forensic tools, constructs an explicit evidence graph, correlates findings, deterministically validates evidence against raw database tables, and synthesizes structured, audit-ready forensic incident reports with verdicts and confidence scores.
+`a1` is an autonomous Digital Forensics and Incident Response (DFIR) investigation agent built with **LangGraph**, **LangChain**, and **SQLite**. It ingests raw security alerts and Wazuh/Suricata/AMiner log exports (e.g. suspicious process execution, network beaconing, registry persistence), formulates competing investigation hypotheses, autonomously navigates an endpoint security telemetry database using dedicated forensic tools, constructs an explicit evidence graph, correlates findings, deterministically validates evidence against raw database tables, and synthesizes structured, audit-ready forensic incident reports with verdicts and confidence scores.
 
 ---
 
@@ -35,10 +35,10 @@ flowchart TD
     end
 
     subgraph Subsystems["Core Investigation Engines"]
-        PLANNER["Adaptive Planner\n(a1/nodes/planner_node.py)"]
+        PLANNER["Adaptive Action Ranking\n(a1/nodes/planner_node.py)"]
         EVID_GRAPH["Evidence Graph\n(a1/evidence_graph.py)"]
         HYPO_TRACKER["Hypothesis Tracker\n(a1/hypothesis.py)"]
-        TRACE_LEDGER["Trace Ledger\n(a1/investigation_trace.py)"]
+        INGEST["Log Ingestion\n(a1/ingest.py)"]
     end
 
     subgraph DFIR_Tools["Forensic Tools (a1/tools)"]
@@ -65,7 +65,7 @@ flowchart TD
     INVESTIGATOR -.-> PLANNER
     INVESTIGATOR -.-> EVID_GRAPH
     INVESTIGATOR -.-> HYPO_TRACKER
-    INVESTIGATOR -.-> TRACE_LEDGER
+    INGEST --> DB
     VALIDATE --> DB
     INVESTIGATOR -.-> LLM
     TRIAGE -.-> LLM
@@ -106,11 +106,11 @@ ai-musefix/
 |   |-- state.py                       [Agent State]          InvestigationState TypedDict shared across the graph
 |   |-- graph.py                       [Graph Assembly]       StateGraph 8-node pipeline, edges, and conditional routing
 |   |-- llm.py                         [Model Factory]        OpenCode / Ollama / OpenAI chat-model factory + invoke_with_network_retry
-|   |-- cli.py                         [CLI Interface]        Single investigations, --web, --benchmark, --db
+|   |-- cli.py                         [CLI Interface]        Single investigations, --web, --benchmark, ingest, --db
+|   |-- ingest.py                      [Log Ingestion]        Wazuh/Suricata/AMiner/generic logs -> canonical telemetry .db
 |   |-- benchmark.py                   [Benchmark Harness]    10-case evaluation (ATK-A..G, BEN-A, AMB-A, INC-A)
-|   |-- evidence_graph.py              [Evidence Graph]       Explicit entity-relationship DAG and Cytoscape/D3 serializer
+|   |-- evidence_graph.py              [Evidence Graph]       Explicit entity-relationship DAG with JSON serialization for the canvas graph
 |   |-- hypothesis.py                  [Hypothesis Engine]    Hypothesis state tracker (UNTESTED, SUPPORTED, REFUTED, INCONCLUSIVE)
-|   |-- investigation_trace.py         [Trace Ledger]         Structured investigation trace capturing tools, latency, and entity delta
 |   |-- experiment.py                  [Ablation Runner]      Baseline comparison and ablation study framework
 |   |-- baseline_context.py            [Baseline Context]     Standard administrative baseline behavior profiles
 |   |
@@ -119,7 +119,7 @@ ai-musefix/
 |   |   |-- alert_prep_node.py         [Input Reflection 1]   Regex extraction, hostname resolution, time window clamping
 |   |   |-- triage_node.py             [Triage]               Structured TriagePlan: hypotheses + priority entities
 |   |   |-- investigator_node.py       [Investigator]         Tool-calling loop, schema hints, repetition guard, planner hook
-|   |   |-- planner_node.py            [Adaptive Planner]     Information-gain action generation & scoring
+|   |   |-- planner_node.py            [Planner Helper]       Information-gain candidate action generation & scoring (not a graph node)
 |   |   |-- evidence_packing_node.py   [Input Reflection 2]   Compact structured pack for correlation and report
 |   |   |-- correlation_node.py        [Correlation]          Confirmed correlations, gaps, inconsistencies
 |   |   |-- validator_node.py          [Evidence Validator]   Deterministic database grounding auditing cited IDs vs SQLite
@@ -148,7 +148,7 @@ ai-musefix/
 |       |-- server.py                  [Web Server]           FastAPI app, SSE stream, DB/LLM switch endpoints
 |       |-- static/index.html          [Web UI]               Responsive DFIR workbench frontend
 |       |-- static/app.js              [Web Client]           SSE rendering, ChatGPT-style stream (collapsible thought disclosure, tool activity chips, streaming assistant reply), DB/model selectors, graph orchestration
-|       |-- static/forensic-graph.js   [Forensic DAG]         Interactive SVG DAG and Process Tree rendering engine
+|       |-- static/forensic-graph.js   [Forensic Graph]       Canvas entity graph with force relaxation, pan/zoom, risk traces, and Process Tree rendering
 |       |-- static/evidence-tree.js   [Evidence Tree]        Hierarchical, filterable evidence browser with inline event detail
 |       |-- static/process-links.js   [Process Links]        Process ancestry/relationship visualization helpers
 |       |-- static/vendor/            [Vendored Assets]      Third-party browser libraries served locally
@@ -167,7 +167,7 @@ ai-musefix/
 |   |-- README.md                         Dataset provenance and surface boundary
 |   |-- schema.md                         Telemetry schema specification
 |
-|-- tests/                             [Test Suite (102 Tests)]
+|-- tests/                             [Test Suite (124 Tests)]
     |-- conftest.py                    [Test Config]          Points ENDPOINT_DB_PATH at a shipped DB
     |-- test_db.py                     [Test: DB]             Read-only guardrails, schema inspection
     |-- test_tools.py                  [Test: Tools]          Each forensic tool (fixtures discovered at runtime)
@@ -194,16 +194,16 @@ ai-musefix/
 | ----------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/a1/__init__.py`          | `[Package Root]`      | Package initialization.                                                                                                                                                                                                                                                                               |
 | `src/a1/__main__.py`          | `[Entrypoint]`        | `python -m a1` module execution handler.                                                                                                                                                                                                                                                              |
-| `src/a1/config.py`            | `[Configuration]`     | `discover_default_db()`, `set_active_database()` shared across CLI, web, and benchmark; env parsing (`LLM_PROVIDER`, `OPENCODE_*`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12).                                                                                                   |
+| `src/a1/config.py`            | `[Configuration]`     | `discover_default_db()`, `set_active_database()`, `set_api_key()` for `.env` key persistence shared across CLI, web, and benchmark; env parsing (`LLM_PROVIDER`, `OPENCODE_*`, `OLLAMA_*`, `OPENAI_*`, `ENDPOINT_DB_PATH`, `MAX_INVESTIGATION_STEPS` = 12).                                                                                                   |
 | `src/a1/db.py`                | `[Database Layer]`    | `EndpointDatabase`: read-only SQLite access (URI `mode=ro`), thread-safe mutex locking, quote-aware single-statement `SELECT`/`PRAGMA`/`WITH` guard, `get_schema()`, in-memory virtual adapter temp views over `events`, centralized `get_active_db()`.                                             |
-| `src/a1/state.py`             | `[Agent State]`       | `InvestigationState` TypedDict: messages, hypotheses, `iteration_count`, `repeat_nudges`, `enriched_alert`, `evidence_pack`, `evidence_graph`, `hypothesis_tracker`, `investigation_trace`, `validation_results`, verdict fields, `report_fallback_used`.                                         |
+| `src/a1/state.py`             | `[Agent State]`       | `InvestigationState` TypedDict: messages, hypotheses, `iteration_count`, `repeat_nudges`, `enriched_alert`, `evidence_pack`, `evidence_graph`, `hypothesis_tracker`, inline `investigation_trace`, `validation_results`, verdict fields, `report_fallback_used`.                                         |
 | `src/a1/graph.py`             | `[Graph Assembly]`    | Eight nodes (`alert_prep`, `triage`, `investigator`, `tools`, `evidence_packing`, `correlate`, `validate`, `report`); entry at `alert_prep`; conditional edges from `investigator` (`tools` / `investigator` self-loop / `evidence_packing`).                                                    |
-| `src/a1/llm.py`               | `[Model Factory]`     | `get_llm()` (`ChatOpenAI` / `ChatOllama`), `opencode_session()`, `set_active_llm()` / `get_active_llm_info()` runtime override, `check_llm_status()`, centralized `invoke_with_network_retry()`.                                                                                             |
-| `src/a1/cli.py`               | `[CLI Interface]`     | `run_investigation()` streaming display; `main()` flags: positional alert, `--web`, `--benchmark`, `--limit`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--db`, `--port`, `--no-browser`.                                                                                        |
+| `src/a1/llm.py`               | `[Model Factory]`     | `get_llm()` (`ChatOpenAI` / `ChatOllama`), `opencode_session()`, `set_active_llm()` / `get_active_llm_info()` runtime override, `set_provider_api_key()` runtime key update, `check_llm_status()`, centralized `invoke_with_network_retry()`.                                                                                             |
+| `src/a1/cli.py`               | `[CLI Interface]`     | `run_investigation()` streaming display; `main()` flags: positional alert or `ingest <file...>`, `--web`, `--benchmark`, `--limit`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--db`, `--out/-o`, `--source`, `--format`, `--force`, `--port`, `--no-browser`.                                                                                        |
 | `src/a1/benchmark.py`         | `[Benchmark Harness]` | 10 evaluation cases (`ATK-A`..`G`, `BEN-A`, `AMB-A`, `INC-A`), per-case DB switching, ground truth loading, fallback tracking, normalized boundary scoring, and multi-dimensional rubric scoring including relationship correctness, completeness, dynamic hypotheses, and unverified evidence counts. |
 | `src/a1/evidence_graph.py`    | `[Evidence Graph]`    | Directed graph modeling entities (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) and evidentiary relations (`SPAWNED`, `CONNECTED_TO`, `TOUCHED_FILE`, etc.) with `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`); JSON serialization for DAG UI.                                  |
 | `src/a1/hypothesis.py`        | `[Hypothesis Engine]` | Hypothesis lifecycle state machine tracking status (`ACTIVE`, `SUPPORTED`, `WEAKLY_SUPPORTED`, `CONTRADICTED`, `UNRESOLVED`), dynamic hypothesis generation, provenance, triggering evidence, source tagging (`triage` vs `dynamic`), keyword deduplication, and active hypothesis capping (`MAX_ACTIVE_HYPOTHESES = 8`). |
-| `src/a1/investigation_trace.py`| `[Trace Ledger]`     | Structured chronological log of all tool executions, parameters, latency, rows returned, and newly observed entities.                                                                                                                                                                                |
+| `src/a1/ingest.py`            | `[Log Ingestion]`     | Parses Wazuh/Suricata EVE/fast.log/AMiner/generic JSON and text, detects the source, infers a leaf-field schema, normalizes events, and atomically builds a canonical `.db` with `events`, indexes, and `ingest_meta`; supports multi-file scenario merges. |
 | `src/a1/experiment.py`        | `[Ablation Runner]`   | Baseline comparison and ablation framework measuring performance impact when toggling evidence graph, adaptive planner, evidence validator, or baseline context.                                                                                                                                   |
 | `src/a1/baseline_context.py`  | `[Baseline Context]`  | Enterprise baseline profiles (expected parentage, routine scripts, standard scheduled tasks) to reduce false positives on administrative operations.                                                                                                                                                 |
 
@@ -215,7 +215,7 @@ ai-musefix/
 | `src/a1/nodes/alert_prep_node.py`       | `[Input Reflection 1]` | Deterministic alert enrichment: regex entity extraction, hostname-to-ID resolution against `hosts`, UTC time-window parsing clamped to DB bounds.                                                                                                                      |
 | `src/a1/nodes/triage_node.py`           | `[Triage]`             | Structured `TriagePlan` (2–4 hypotheses, initial entities, investigation strategy) via `TRIAGE_SYSTEM_PROMPT`; schema validation with retry-once-then-fail.                                                                                                           |
 | `src/a1/nodes/investigator_node.py`     | `[Investigator]`       | Tool-calling ReAct loop; dynamic hypothesis discovery (`_check_for_dynamic_hypotheses`) for persistence, credential dumping, lateral movement, and data staging; schema hints; planner hook; repetition guard (`MAX_REPEAT_NUDGES` = 2); `MIN_INVESTIGATION_STEPS` = 2 gate. |
-| `src/a1/nodes/planner_node.py`          | `[Adaptive Planner]`   | Generates candidate forensic actions from current entity frontiers and unresolved hypotheses; ranks actions by expected information gain.                                                                                                                              |
+| `src/a1/nodes/planner_node.py`          | `[Planner Helper]`     | Generates candidate forensic actions from current entity frontiers and unresolved hypotheses and ranks them by expected information gain; invoked by the investigator, not wired as a graph node.                                                                       |
 | `src/a1/nodes/evidence_packing_node.py` | `[Input Reflection 2]` | Merges tool outputs into a compact structured pack (dedup by event ID, hypothesis coverage, hostname/time sanity) for downstream nodes.                                                                                                                                |
 | `src/a1/nodes/correlation_node.py`      | `[Correlation]`        | Structured `CorrelationAndGapAnalysis` via `CORRELATION_SYSTEM_PROMPT`: confirms/refutes hypotheses, defines relationship types, surfaces missing evidence gaps; conservative fallback on failure without fabricated suspicious claims.                               |
 | `src/a1/nodes/validator_node.py`        | `[Evidence Validator]` | Deterministic DB verification: queries raw SQLite tables for every cited ID and validates causal relationships (parent-child, network links); classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (exceptions produce `UNVERIFIED`, never valid).            |
@@ -339,13 +339,18 @@ python -m a1.experiment --live --limit 3
 | `/api/status`             | `GET`  | Readiness, active LLM, current DB.                     |
 | `/api/models`             | `GET`  | Model catalog (OpenCode, live Ollama tags, OpenAI options).     |
 | `/api/models/set`         | `POST` | Switch active LLM (`provider`, `model`).               |
+| `/api/models/api-key`     | `POST` | Save a provider API key to `.env` and apply it at runtime. |
 | `/api/databases`          | `GET`  | Available `.db` catalog with sizes and active status.  |
 | `/api/databases/set`      | `POST` | Switch active telemetry database (clears tool caches). |
-| `/api/databases/upload`   | `POST` | Validate + store a raw `.db` upload in `custom_databases/`.|
+| `/api/databases`          | `DELETE` | Delete an inactive dataset (active datasets return 409). |
+| `/api/databases/upload`   | `POST` | Store a raw `.db`, or ingest Wazuh/Suricata/AMiner logs into `custom_databases/`.|
 | `/api/events`             | `GET`  | Raw events for the active database (graph + events table).|
+| `/api/events/lookup`      | `POST` | Resolve specific event ids (including rows outside the UI window) for evidence scoping.|
 | `/api/chat`               | `POST` | Conversational follow-up over the stored session, SSE.   |
 | `/api/investigate`        | `POST` | Run investigation streamed as Server-Sent Events (SSE).|
 | `/api/cancel`             | `POST` | Cancel in-flight investigation.                        |
+
+The case menu supports uploading raw `.db`/log files, switching datasets, and deleting inactive datasets (the active one is protected). The model menu supports provider/model switching and saving provider API keys to `.env` at runtime.
 
 **SSE Event Types:**
 `start`, `alert_prep`, `triage`, `loop`, `thought`, `reasoning`, `tool_call`, `tool_result`, `graph_update`, `trace_update`, `evidence_pack`, `validation_update`, `complete`, `cancelled`, `error`.
@@ -369,12 +374,13 @@ python -m a1.experiment --live --limit 3
 | `AMB-A` | Ambiguous | `attack_lotl_fileless.db` | Dual-use developer utility invocations (certutil, powershell flags) requiring intent analysis | `groundtruth/groundtruth_ambiguous_A_dev_activity.json` |
 | `INC-A` | Inconclusive | `attack_lateral_movement.db` | Missing parent process and network connection telemetry requiring `inconclusive` verdict | `groundtruth/groundtruth_incomplete_A_missing_telemetry.json` |
 
-### Key Evaluation Metrics
+### Key Evaluation Metrics (Rubric v2)
 * **Verdict Accuracy & Boundary Precision (20 Pts):** Discrimination across malicious, benign, suspicious, and inconclusive cases.
-* **IOC Recall & Attack-Chain Reconstruction (30 Pts):** Identification of critical processes, parentage, network egress, and persistence.
-* **Evidence Grounding & Zero-Hallucination Rate (25 Pts):** Deterministic SQL verification of all cited event IDs, process IDs, and hashes.
-* **Investigation Efficiency & Step Economy (15 Pts):** Suppression of redundant tool calls, avoidance of repetition loops, and step optimization.
-* **Report Actionability (10 Pts):** Generation of structured timeline matrices, IOC tables, and remediation playbooks.
+* **Graded Evidence Recall (25 Pts):** Per-indicator coverage of critical processes, parentage, network egress, and persistence, with evidence precision/F1 reported alongside.
+* **Evidence Grounding / Zero-Hallucination Rate (20 Pts):** Deterministic SQL verification of all cited event IDs, process IDs, and hashes; unverified or hallucinated citations reduce the score.
+* **Confidence Calibration (10 Pts):** Brier score for verdict/boundary confidence, rewarding calibrated certainty.
+* **Investigation Efficiency & Step Economy (10 Pts):** Suppression of repetition nudges, duplicate queries, retries, and excess steps.
+* **Report Actionability (15 Pts):** Timeline matrix, citations, benign explanations, gaps, and concrete next steps.
 
 ---
 
@@ -395,7 +401,7 @@ python -m a1.experiment --live --limit 3
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (102 unit and integration tests passing):
+The repository maintains full automated test coverage (124 unit and integration tests passing):
 
 ```powershell
 # Run the full test suite:

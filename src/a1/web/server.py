@@ -1,5 +1,7 @@
 """FastAPI Web Server for A1 DFIR Agent with SSE streaming."""
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import re
@@ -18,9 +20,11 @@ from pydantic import BaseModel
 
 import a1.config as cfg
 from a1.graph import create_investigation_graph
+from a1.ingest import IngestError, ingest_bytes, ingest_merged, scenario_stem
 from a1.llm import (
     get_active_llm_info,
     set_active_llm,
+    set_provider_api_key,
     get_llm,
     llm_request_context,
     opencode_session,
@@ -64,7 +68,7 @@ def get_available_databases() -> List[Dict[str, Any]]:
     """Scan the repository for SQLite database files."""
     dbs = []
     base = PROJECT_ROOT / "endpoint_security_dataset_expanded_corrected"
-    search_dirs = [base, PROJECT_ROOT]
+    search_dirs = [base, PROJECT_ROOT, CUSTOM_DB_DIR]
 
     found_paths = set()
     for sdir in search_dirs:
@@ -116,6 +120,26 @@ def _safe_upload_name(raw: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid database filename.")
     stem, dot, ext = name.rpartition(".")
     return f"{stem[:115]}.{ext}"
+
+
+_LOG_SUFFIXES = {".json", ".jsonl", ".ndjson", ".log", ".txt"}
+
+
+def _safe_log_name(raw: str) -> str:
+    """Return a flat log filename for ingestion; strips client-supplied paths."""
+    name = Path(raw or "").name.strip()
+    if not name or Path(name).suffix.lower() not in _LOG_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail="Only .db SQLite files or .json/.jsonl/.ndjson/.log/.txt logs are supported.",
+        )
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    if name.startswith("."):
+        raise HTTPException(status_code=400, detail="Invalid log filename.")
+    stem, dot, ext = name.rpartition(".")
+    if not stem:
+        raise HTTPException(status_code=400, detail="Invalid log filename.")
+    return f"{stem[:110]}.{ext.lower()}"
 
 
 def _unique_db_path(name: str) -> Path:
@@ -237,8 +261,15 @@ class ModelConfigRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
 
+class ApiKeyRequest(BaseModel):
+    provider: str
+    api_key: str
+
 class DatabaseConfigRequest(BaseModel):
     db_path: str
+
+class EventLookupRequest(BaseModel):
+    ids: List[str]
 
 class InvestigateRequest(BaseModel):
     query: str
@@ -727,6 +758,15 @@ async def list_models():
     return get_model_catalog()
 
 
+@router.post("/api/models/api-key")
+async def update_api_key(req: ApiKeyRequest):
+    try:
+        result = set_provider_api_key(req.provider, req.api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "updated", **result, "models": get_model_catalog()}
+
+
 @router.post("/api/models/set")
 async def update_model(req: ModelConfigRequest):
     if req.provider or req.model:
@@ -739,14 +779,39 @@ async def list_databases():
     return {"databases": get_available_databases()}
 
 
+@router.delete("/api/databases")
+async def delete_database(path: str = Query(..., min_length=1)):
+    """Delete a dataset from the local library; the active dataset is protected."""
+    target = None
+    clean = str(path).strip()
+    for item in get_available_databases():
+        if clean in (item["path"], item["name"], item["display"]):
+            target = Path(item["path"]).resolve()
+            break
+    if target is None:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+    if target == Path(cfg.get_db_path()).resolve():
+        raise HTTPException(
+            status_code=409,
+            detail="This dataset is active. Switch to another dataset before deleting it.",
+        )
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Dataset file not found.")
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not delete dataset: {exc}")
+    return {"status": "deleted", "name": target.name, "path": str(target)}
+
+
 @router.post("/api/databases/upload")
 async def upload_database(request: Request, filename: str = Query(..., min_length=1)):
-    """Accept a raw SQLite file, validate it, and add it to the dataset catalog."""
+    """Store a raw SQLite database, or ingest Wazuh/Suricata/AMiner JSON/text exports into one."""
     length = request.headers.get("content-length")
     if length:
         try:
             if int(length) > MAX_UPLOAD_BYTES:
-                raise HTTPException(status_code=413, detail="Database exceeds the 256 MB upload limit.")
+                raise HTTPException(status_code=413, detail="File exceeds the 256 MB upload limit.")
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid Content-Length.")
 
@@ -754,9 +819,26 @@ async def upload_database(request: Request, filename: str = Query(..., min_lengt
     if not body:
         raise HTTPException(status_code=400, detail="Empty upload.")
     if len(body) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Database exceeds the 256 MB upload limit.")
+        raise HTTPException(status_code=413, detail="File exceeds the 256 MB upload limit.")
     if not body.startswith(b"SQLite format 3\x00"):
-        raise HTTPException(status_code=400, detail="File is not a SQLite database.")
+        if Path(filename).suffix.lower() == ".db":
+            raise HTTPException(status_code=400, detail="File is not a SQLite database.")
+        log_name = _safe_log_name(filename)
+        dest = _unique_db_path(f"{Path(log_name).stem}.db")
+        try:
+            result = await asyncio.to_thread(
+                ingest_bytes, body, filename=log_name, output_path=dest
+            )
+        except IngestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {
+            "status": "ingested",
+            "name": result["name"],
+            "path": result["path"],
+            "rows": result["rows"],
+            "source": result["source"],
+            "format": result["format"],
+        }
 
     name = _safe_upload_name(filename)
     CUSTOM_DB_DIR.mkdir(parents=True, exist_ok=True)
@@ -790,6 +872,50 @@ async def upload_database(request: Request, filename: str = Query(..., min_lengt
             tmp_path.unlink(missing_ok=True)
 
 
+class MultiIngestFile(BaseModel):
+    filename: str
+    data_base64: str
+
+
+class MultiIngestRequest(BaseModel):
+    files: List[MultiIngestFile]
+
+
+@router.post("/api/databases/ingest-multi")
+async def ingest_multi(request: MultiIngestRequest):
+    """Ingest related log files (e.g. *_wazuh.json + *_aminer.json) into one database."""
+    if not request.files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+    entries: List[Tuple[bytes, str]] = []
+    total = 0
+    for item in request.files:
+        _safe_log_name(item.filename)
+        try:
+            data = base64.b64decode(item.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=400, detail=f"Invalid base64 payload for {item.filename}.")
+        if not data:
+            raise HTTPException(status_code=400, detail=f"Empty upload: {item.filename}.")
+        total += len(data)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Files exceed the 256 MB upload limit.")
+        entries.append((data, item.filename))
+    dest = _unique_db_path(f"{scenario_stem(entries[0][1])}.db")
+    try:
+        result = await asyncio.to_thread(ingest_merged, entries, dest)
+    except IngestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": "ingested",
+        "name": result["name"],
+        "path": result["path"],
+        "rows": result["rows"],
+        "source": result["source"],
+        "format": result["format"],
+        "files": result["files"],
+    }
+
+
 @router.post(
     "/api/databases/set",
     responses={
@@ -805,6 +931,39 @@ async def update_database(req: DatabaseConfigRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/api/events/lookup")
+async def lookup_events(req: EventLookupRequest):
+    """Return specific telemetry events by id, including older rows outside the UI window."""
+    active_db_path = cfg.get_db_path()
+    ids = list(dict.fromkeys(str(i) for i in req.ids if str(i).strip()))[:5000]
+    if not ids:
+        return {"db_name": Path(active_db_path).name, "events": []}
+    try:
+        from a1.db import get_active_db
+        db = get_active_db(active_db_path)
+        events = []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = db.execute_query(
+                f"SELECT event_id, timestamp, host_id, action, raw_json FROM events "
+                f"WHERE event_id IN ({placeholders}) ORDER BY timestamp",
+                params=tuple(chunk),
+                max_rows=len(chunk),
+            )
+            for r in rows:
+                ev = dict(r)
+                if ev.get("raw_json"):
+                    try:
+                        ev["details"] = json.loads(ev["raw_json"])
+                    except Exception:
+                        pass
+                events.append(ev)
+        return {"db_name": Path(active_db_path).name, "events": events}
+    except Exception as e:
+        return {"db_name": Path(active_db_path).name, "events": [], "error": str(e)}
 
 
 @router.get("/api/events")

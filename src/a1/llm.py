@@ -3,6 +3,7 @@ from contextvars import ContextVar
 from typing import Any, Dict, Iterator, Optional
 from uuid import uuid4
 
+import a1.config as cfg
 from a1.config import (
     LLM_PROVIDER,
     OPENCODE_API_KEY,
@@ -59,6 +60,15 @@ def set_active_llm(provider: Optional[str] = None, model: Optional[str] = None) 
         _ACTIVE_PROVIDER = provider.strip().lower()
     if model:
         _ACTIVE_MODEL = model.strip()
+
+
+def set_provider_api_key(provider: str, api_key: str) -> Dict[str, Any]:
+    """Set one provider key for this process and persist it to .env."""
+    global OPENCODE_API_KEY, OLLAMA_API_KEY, OPENAI_API_KEY
+    name = cfg.set_api_key(provider, api_key)
+    value = getattr(cfg, name)
+    globals()[name] = value
+    return {"provider": str(provider).strip().lower(), "api_key_set": bool(value)}
 
 
 @contextmanager

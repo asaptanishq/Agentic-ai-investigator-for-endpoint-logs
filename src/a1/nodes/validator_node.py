@@ -254,7 +254,7 @@ def validator_node(state: InvestigationState) -> Dict[str, Any]:
     if cited_hostnames:
         try:
             db_hosts_res = db.execute_query(
-                "SELECT DISTINCT LOWER(hostname) AS hname FROM hosts UNION SELECT DISTINCT LOWER(hostname) AS hname FROM events WHERE hostname IS NOT NULL",
+                "SELECT DISTINCT LOWER(hostname) AS hname FROM hosts UNION SELECT DISTINCT LOWER(host_id) AS hname FROM events WHERE host_id IS NOT NULL",
                 max_rows=200,
             )
             db_host_set = {r["hname"] for r in db_hosts_res if r.get("hname")}

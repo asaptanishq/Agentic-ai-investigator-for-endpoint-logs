@@ -608,6 +608,36 @@ def _build_telemetry_catalog(evidence_pack: dict, state: dict) -> Dict[str, Dict
     return catalog
 
 
+_EMPTY_VALUES = {"", "none", "null", "n/a", "na", "unknown", "undefined", "-"}
+
+
+def _clean_text(value: Any) -> str:
+    """Normalize null-ish values that otherwise render as empty report cells."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in _EMPTY_VALUES else text
+
+
+def _first_clean(*values: Any) -> str:
+    for value in values:
+        text = _clean_text(value)
+        if text:
+            return text
+    return ""
+
+
+def _display_process(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    return text.replace("\\", "/").rsplit("/", 1)[-1] or text
+
+
+def _cell(value: Any) -> str:
+    return _clean_text(value).replace("|", "\\|")
+
+
 def _enrich_telemetry_step(step_text: str, catalog: Dict[str, Dict[str, Any]]) -> str:
     """Transform bare event or process IDs into clear, forensically descriptive sentences."""
     step_clean = str(step_text).strip()
@@ -626,16 +656,16 @@ def _enrich_telemetry_step(step_text: str, catalog: Dict[str, Dict[str, Any]]) -
         friendly_label = slug.replace("_", " ").replace("-", " ").title()
         return f"{friendly_label} ({cid})"
 
-    ts = info.get("timestamp") or ""
-    time_prefix = f"[{ts}] " if ts and ts != "N/A" else ""
-    hid = info.get("host_id")
-    host_str = f"[{hid}] " if hid and hid != "N/A" else ""
-    proc = info.get("process_name") or info.get("process_entity_id") or ""
-    act = info.get("action") or info.get("event_type") or "execution"
-    raw = info.get("raw", {})
-    cmd = str(info.get("command_line") or raw.get("command_line") or "")
-    fn = str(info.get("file_name") or raw.get("file_name") or info.get("file_path") or "")
-    dest = str(info.get("destination_ip") or raw.get("destination_ip") or "")
+    raw = info.get("raw", {}) if isinstance(info.get("raw"), dict) else {}
+    ts = _first_clean(info.get("timestamp"), raw.get("@timestamp"))
+    time_prefix = f"[{ts}] " if ts else ""
+    hid = _first_clean(info.get("host_id"), info.get("host_name"), raw.get("host_name"))
+    host_str = f"[{hid}] " if hid else ""
+    proc = _display_process(_first_clean(info.get("process_name"), info.get("process_entity_id"), raw.get("process_name")))
+    act = _first_clean(info.get("action"), info.get("event_type"), info.get("summary")) or "activity"
+    cmd = _clean_text(_first_clean(info.get("command_line"), raw.get("command_line")))
+    fn = _clean_text(_first_clean(info.get("file_name"), raw.get("file_name"), info.get("file_path")))
+    dest = _clean_text(_first_clean(info.get("destination_ip"), raw.get("destination_ip")))
 
     details = []
     if proc:
@@ -715,8 +745,15 @@ def _build_timeline_matrix_str(state: dict, evidence_pack: dict, catalog: Option
             seen_ids.add(eid)
             candidates.append(item)
 
+    by_id = {str(c.get("event_id") or ""): c for c in candidates}
     for item in pack_tl:
         eid = str(item.get("event_id") or "")
+        if eid and eid in by_id:
+            existing = by_id[eid]
+            for key, value in item.items():
+                if value not in (None, "", [], {}) and existing.get(key) in (None, "", [], {}, "unknown"):
+                    existing[key] = value
+            continue
         if eid and eid not in seen_ids:
             is_atk = any(k in eid.lower() for k in ("atk", "mal", "susp", "attack", "exploit"))
             act = str(item.get("action", "")).lower()
@@ -729,6 +766,7 @@ def _build_timeline_matrix_str(state: dict, evidence_pack: dict, catalog: Option
             if is_atk or is_susp:
                 seen_ids.add(eid)
                 candidates.append(item)
+                by_id[eid] = item
 
     if len(candidates) < 8:
         for item in pack_tl:
@@ -742,33 +780,47 @@ def _build_timeline_matrix_str(state: dict, evidence_pack: dict, catalog: Option
     candidates.sort(key=lambda x: str(x.get("timestamp") or "9999"))
 
     for c in candidates[:15]:
-        ts = str(c.get("timestamp") or "N/A")
-        eid = str(c.get("event_id") or "N/A")
-        hid = str(c.get("host_id") or "unknown")
-        proc = str(c.get("process_name") or c.get("process_entity_id") or "unknown").replace("|", "\\|")
-        host_proc = f"{hid}: {proc}"
-
-        act = str(c.get("action") or c.get("event_type") or "execution").replace("|", "\\|")
         raw = c.get("raw", {}) if isinstance(c.get("raw"), dict) else {}
-        cmd = str(c.get("command_line") or raw.get("command_line") or "")
-        fn = str(c.get("file_name") or raw.get("file_name") or c.get("file_path") or "")
-        dest = str(c.get("destination_ip") or raw.get("destination_ip") or "")
+        ts = _first_clean(c.get("timestamp"), raw.get("@timestamp")) or "—"
+        eid = _first_clean(c.get("event_id"), c.get("process_entity_id")) or "—"
+        hid = _first_clean(
+            c.get("host_id"), c.get("host_name"), c.get("hostname"),
+            raw.get("host_name"),
+            (raw.get("host") or {}).get("name") if isinstance(raw.get("host"), dict) else "",
+            (raw.get("agent") or {}).get("name") if isinstance(raw.get("agent"), dict) else "",
+        )
+        proc = _display_process(_first_clean(
+            c.get("process_name"), c.get("process_entity_id"),
+            raw.get("process_name"),
+            (raw.get("process") or {}).get("name") if isinstance(raw.get("process"), dict) else "",
+        ))
+        host_proc = " · ".join(part for part in (
+            f"**{_cell(hid)}**" if hid else "",
+            f"`{_cell(proc)}`" if proc else "",
+        ) if part) or "—"
 
-        details = [f"**{act}**"]
+        act = _first_clean(c.get("action"), c.get("event_type"), c.get("summary")) or "activity"
+        cmd = _clean_text(_first_clean(c.get("command_line"), raw.get("command_line")))
+        fn = _clean_text(_first_clean(
+            c.get("file_name"), raw.get("file_name"), c.get("file_path"),
+            (raw.get("file") or {}).get("name") if isinstance(raw.get("file"), dict) else "",
+        ))
+        dest = _clean_text(_first_clean(c.get("destination_ip"), raw.get("destination_ip")))
+        port = _clean_text(_first_clean(c.get("destination_port"), raw.get("destination_port")))
+
+        details = [f"**{_cell(act)}**"]
         if cmd:
             cmd_trunc = cmd[:65] + ("..." if len(cmd) > 65 else "")
-            details.append(f"`{cmd_trunc}`")
+            details.append(f"`{_cell(cmd_trunc)}`")
         elif fn:
-            details.append(f"file: `{fn[:50]}`")
+            details.append(f"file: `{_cell(fn[:60])}`")
         elif dest:
-            port = c.get("destination_port") or raw.get("destination_port") or ""
-            details.append(f"-> {dest}:{port}")
-        elif c.get("summary") and c.get("summary") != act:
-            details.append(str(c.get("summary"))[:65])
+            details.append(f"→ `{_cell(dest)}:{_cell(port)}`" if port else f"→ `{_cell(dest)}`")
+        elif _clean_text(c.get("summary")) and _clean_text(c.get("summary")) != act:
+            details.append(_cell(_clean_text(c.get("summary"))[:65]))
 
-        detail_str = " - ".join(details).replace("|", "\\|")
+        detail_str = " — ".join(details)
         timeline_table_lines.append(f"| {ts} | {eid} | {host_proc} | {detail_str} |")
-
     if len(timeline_table_lines) > 2:
         return "\n".join(timeline_table_lines)
     return "- No sequential events identified for timeline matrix."

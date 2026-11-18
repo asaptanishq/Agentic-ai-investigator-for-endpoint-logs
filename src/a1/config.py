@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ENV_PATH = BASE_DIR / ".env"
 DATASET_DIR = BASE_DIR / "endpoint_security_dataset_expanded_corrected"
 
 # Telemetry databases searched in order: the attack and benign databases that ship today.
@@ -59,6 +60,53 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", None)
 
 # DB Path setting
 _DB_PATH_OVERRIDE: ContextVar[str] = ContextVar("a1_db_path_override", default="")
+
+_API_KEY_NAMES = {
+    "opencode": "OPENCODE_API_KEY",
+    "ollama": "OLLAMA_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
+
+def _write_env_value(name: str, value: str) -> None:
+    """Persist one key in .env without disturbing the other settings."""
+    if "\n" in value or "\r" in value:
+        raise ValueError("API key must be a single line")
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    line = f'{name}="{escaped}"'
+    try:
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
+    except OSError as exc:
+        raise ValueError(f"Could not read {ENV_PATH.name}: {exc}") from exc
+    prefix = f"{name}="
+    replaced = False
+    for index, existing in enumerate(lines):
+        if existing.strip().startswith(prefix):
+            lines[index] = line
+            replaced = True
+            break
+    if not replaced:
+        lines.append(line)
+    tmp_path = ENV_PATH.with_name(f".{ENV_PATH.name}.tmp")
+    try:
+        tmp_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tmp_path.replace(ENV_PATH)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise ValueError(f"Could not save API key to {ENV_PATH.name}: {exc}") from exc
+
+
+def set_api_key(provider: str, api_key: str) -> str:
+    """Set a provider API key for this process and persist it to .env."""
+    provider = str(provider or "").strip().lower()
+    name = _API_KEY_NAMES.get(provider)
+    if not name:
+        raise ValueError("Unsupported provider. Use opencode, ollama, or openai.")
+    value = str(api_key or "").strip()
+    _write_env_value(name, value)
+    globals()[name] = value
+    os.environ[name] = value
+    return name
 
 
 def get_db_path() -> Path:
