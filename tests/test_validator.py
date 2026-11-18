@@ -105,6 +105,7 @@ def test_validator_exception_marks_unverified(monkeypatch):
     assert any("Unverified event IDs" in w for w in val["warnings"])
 
 
+@pytest.mark.requires_dataset
 def test_validator_malformed_or_empty_response():
     """Empty evidence passes vacuously with valid status."""
     state = {

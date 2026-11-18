@@ -66,6 +66,7 @@ def test_api_set_model(client):
     data = res.json()
     assert data["active_llm"]["model"] == "gemma4:31b"
 
+@pytest.mark.requires_dataset
 def test_api_databases(client):
     res = client.get("/api/databases")
     assert res.status_code == 200
@@ -74,6 +75,7 @@ def test_api_databases(client):
     assert all("scratch" not in d["path"].lower() for d in data["databases"])
 
 
+@pytest.mark.requires_dataset
 def test_api_event_lookup_returns_specific_ids(client):
     listed = client.get("/api/events?limit=100")
     assert listed.status_code == 200
@@ -88,6 +90,7 @@ def test_api_event_lookup_returns_specific_ids(client):
     assert "details" in data["events"][0]
 
 
+@pytest.mark.requires_dataset
 def test_api_set_database_valid(client):
     dbs = client.get("/api/databases").json()["databases"]
     target = dbs[0]["path"]
@@ -265,6 +268,7 @@ def test_api_ingest_multi_rejects_bad_base64(client, tmp_path, monkeypatch):
     assert res.status_code == 400
 
 
+@pytest.mark.requires_dataset
 def test_api_delete_database_and_protects_active(client, tmp_path, monkeypatch):
     import a1.web.server as server_mod
     custom = tmp_path / "custom"

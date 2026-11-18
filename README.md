@@ -265,13 +265,13 @@ When run with `--live`, each scenario executes through the compiled LangGraph st
 
 ### 5. Running Tests
 
-Run the full pytest suite (124 tests passed) and standalone smoke tests:
+Run the pytest suite and standalone smoke tests. With the local dataset: **136 passed**. On a fresh clone without it: **92 passed, 44 skipped** (dataset-backed tests are marked `requires_dataset`); the smoke test needs the local dataset.
 
 ```bash
 # Run pytest suite
 .venv\Scripts\python.exe -m pytest tests/
 
-# Run standalone smoke test (17 end-to-end checks)
+# Run standalone smoke test (17 checks; needs the local dataset)
 .venv\Scripts\python.exe scripts/smoke_test.py
 ```
 

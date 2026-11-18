@@ -1,6 +1,7 @@
 """Unit tests for Input-Reflection Nodes (Alert Prep & Evidence Packing),
 Report Recovery, and Data Retrieval Enhancements.
 """
+
 import json
 
 import pytest
@@ -24,6 +25,7 @@ from a1.nodes.report_node import IncidentVerdict, _format_bullet_points, _format
 from a1.llm import set_active_llm, get_active_llm_info
 from a1.tools.timeline import search_timeline
 from a1.db import EndpointDatabase
+pytestmark = pytest.mark.requires_dataset
 
 
 def test_alert_prep_regex_extraction():

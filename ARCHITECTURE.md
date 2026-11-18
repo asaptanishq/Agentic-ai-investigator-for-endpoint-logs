@@ -412,7 +412,7 @@ The eight `.db` files and the `groundtruth/*.json` labels are git-ignored and mu
 
 ### Test Suite Execution
 
-The repository maintains full automated test coverage (136 unit and integration tests passing):
+The repository maintains full automated test coverage (136 tests with the local dataset; dataset-backed tests are marked `requires_dataset` and skip on a fresh clone, leaving 92 passing):
 
 ```powershell
 # Run the full test suite:

@@ -12,6 +12,8 @@ from a1.tools import (
     get_entity_context,
 )
 
+pytestmark = pytest.mark.requires_dataset
+
 
 def _query(sql: str) -> list:
     """Run a read-only query through the tool and return the parsed rows."""

@@ -1,3 +1,5 @@
+import pytest
+
 from a1.nodes.report_node import (
     IncidentVerdict,
     _remove_contradicted_timestamp_gaps,
@@ -139,6 +141,7 @@ def test_incident_verdict_handles_leaked_control_tokens():
     assert "<channel|>" not in verdict2.evidence_basis[0]
 
 
+@pytest.mark.requires_dataset
 def test_evaluate_case_rubric_scoring():
     """Verify that evaluate_case_rubric calculates correct multi-dimensional points."""
     from a1.benchmark import evaluate_case_rubric

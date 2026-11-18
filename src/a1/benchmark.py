@@ -1080,7 +1080,9 @@ def run_benchmark(
         case_labels = load_case_labels()
     except FileNotFoundError as e:
         print(f"[!] {e}")
-        print("[!] Benchmark skipped: there are no labels to score against.")
+        print("[!] The built-in evaluation dataset is not bundled with this repository.")
+        print("[!] Place endpoint_security_dataset_expanded_corrected/ in the project root,")
+        print("[!] or investigate your own logs with the CLI/web app and a custom --db.")
         return empty_return
 
     scenario_ids, labels_by_id = _filter_benchmark_scenarios(case_labels, split, limit)

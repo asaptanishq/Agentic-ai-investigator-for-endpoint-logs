@@ -35,3 +35,4 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["requires_dataset: needs the optional local telemetry dataset"]

@@ -1,6 +1,8 @@
 import pytest
 from a1.db import EndpointDatabase, DatabaseAccessError
 
+pytestmark = pytest.mark.requires_dataset
+
 def test_db_schema_inspection():
     db = EndpointDatabase()
     schema = db.get_schema()

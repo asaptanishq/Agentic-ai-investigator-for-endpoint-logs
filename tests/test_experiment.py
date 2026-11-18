@@ -5,6 +5,7 @@ from pathlib import Path
 from a1.experiment import ExperimentRunner, ExperimentConfig
 
 
+@pytest.mark.requires_dataset
 def test_experiment_runner_ab_comparison_and_ablation(tmp_path):
     runner = ExperimentRunner(output_dir=tmp_path)
 
@@ -41,6 +42,7 @@ def test_experiment_runner_ab_comparison_and_ablation(tmp_path):
     assert (tmp_path / "ablation_study_results.json").exists()
 
 
+@pytest.mark.requires_dataset
 def test_experiment_runner_live_mode_execution(tmp_path, monkeypatch):
     runner = ExperimentRunner(output_dir=tmp_path)
     config = ExperimentConfig(name="LiveTest")
