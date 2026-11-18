@@ -17,7 +17,7 @@ graphify-out/
 # Scratch & local developer debug scripts
 scratch/
 docs/experiments/
-
+report/
 # User-uploaded telemetry databases
 custom_databases/
 
