@@ -7,7 +7,7 @@ A1 is an autonomous Digital Forensics and Incident Response (DFIR) investigation
 | **Language** | Python >= 3.12 |
 | **Interfaces** | Terminal CLI, Web UI (FastAPI + SSE + Interactive Forensic DAG), Scenario Benchmark, Experiment Runner |
 | **Agent Stack** | LangGraph cyclical state machine, LangChain |
-| **Telemetry Engine** | Safe, read-only SQLite endpoint security databases (8 shipped datasets) |
+| **Telemetry Engine** | Safe, read-only SQLite endpoint security databases (8 scenario datasets; `.db` files are git-ignored and supplied separately) |
 | **Model Providers** | OpenCode (default), Ollama (local or Cloud), and OpenAI, selectable at runtime |
 
 ## Quick Reference & Documentation
@@ -39,10 +39,10 @@ The investigator autonomously queries telemetry through 8 specialized DFIR tools
 
 ### Key Architectural Capabilities
 
-- **Explicit Evidence Graph (`a1/evidence_graph.py`):** Maintains a directed entity-relationship DAG (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) citing specific `event_id` anchors. Tracks `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`) to distinguish direct evidence from deduction. Serializes into the web UI canvas entity graph, with pan/zoom, search, filters, and post-investigation risk traces.
+- **Explicit Evidence Graph (`a1/evidence_graph.py`):** Maintains a directed entity-relationship DAG (`host`, `user`, `process`, `file`, `ip_address`, `domain`, `registry_artifact`, `service`, and other `EntityType` values) citing specific `event_id` anchors, with relations such as `parent_of`, `spawned`, `connected_to`, `created`, `accessed`, `modified`, and `persisted_via`. Tracks `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`) to distinguish direct evidence from deduction. Serializes into the web UI canvas entity graph, with pan/zoom, search, filters, and post-investigation risk traces.
 - **Dynamic Hypothesis Generation & Tracking (`a1/hypothesis.py`):** Formulates competing hypotheses during triage, and dynamically expands them during investigation when new persistence, credential access, lateral movement, or staging vectors emerge. Capped and deduplicated so initial hypotheses guide without constraining discovery.
 - **Adaptive Investigation Planner (`a1/nodes/planner_node.py`):** Dynamically ranks candidate forensic queries by expected information gain, avoiding redundant steps and prioritizing unresolved hypothesis gaps.
-- **Deterministic Evidence & Relationship Validation (`a1/nodes/validator_node.py`):** Queries SQLite directly to verify 100% of cited event IDs, process entities, hashes, and parent-child/network relationships before reports are finalized. Classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (exceptions produce `UNVERIFIED`, preventing false certainty).
+- **Deterministic Evidence & Relationship Validation (`a1/nodes/validator_node.py`):** Queries SQLite directly to verify cited event IDs, process entities, hostnames, and parent-child/network relationships before reports are finalized. Classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (query exceptions produce `UNVERIFIED`, preventing false certainty) and reports the results as audit metadata instead of rewriting report text.
 - **Conservative Failure States (`a1/nodes/report_node.py`, `correlation_node.py`):** When report synthesis or correlation encounters unrecoverable errors, the agent falls back conservatively to `SUSPICIOUS` or `INCONCLUSIVE` rather than fabricating confirmed malicious certainty.
 - **Forensic Guardrails:** Read-only SQLite access (`mode=ro`), strict single-query `SELECT`/`PRAGMA`/`WITH` enforcement, loop circuit breakers (`MAX_REPEAT_NUDGES = 2`), and minimum evidence gates (`MIN_INVESTIGATION_STEPS = 2`).
 
@@ -85,7 +85,7 @@ ai-musefix/
 ├── tests/                         # Pytest test suite (124 tests passed)
 └── endpoint_security_dataset_expanded_corrected/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
-    └── *.db                       # 8 SQLite forensic telemetry databases
+    └── *.db                       # 8 SQLite telemetry databases (git-ignored; place them here)
 ```
 
 ---
@@ -117,22 +117,22 @@ cp .env.example .env              # Windows: copy .env.example .env
 
 The default configuration supports OpenCode (`deepseek-v4.1-flash`), local Ollama (`llama3.1`), and OpenAI (`gpt-4o-mini`). Configure your API key and endpoint in `.env`.
 
-### 3. Shipped Telemetry Databases
+### 3. Telemetry Databases (supplied separately)
 
-The repository includes eight forensic telemetry databases with evaluator ground truth isolated in `endpoint_security_dataset_expanded_corrected/groundtruth/`:
+The benchmark and default config expect eight forensic telemetry databases in `endpoint_security_dataset_expanded_corrected/`. The binary `.db` files are git-ignored, so a fresh clone must place them in that directory; the evaluator ground truth remains tracked in `groundtruth/`:
 
 | Database | Scenario | Hosts | Users | Events | Ground Truth |
 | :--- | :--- | ---: | ---: | ---: | :--- |
 | `attack_lateral_movement.db` | **ATK-A**: Credential access & lateral movement<br/>**INC-A**: Missing telemetry / inconclusive | 2 | 3 | 127 | `groundtruth/groundtruth_attack_A_lateral_movement.json`<br/>`groundtruth/groundtruth_incomplete_A_missing_telemetry.json` |
 | `attack_data_exfiltration.db` | **ATK-B**: Data staging, persistence & exfiltration | 1 | 1 | 83 | `groundtruth/groundtruth_attack_B_data_exfiltration.json` |
-| `ransomware_attack_complete_ecs.db` | **ATK-C**: Ransomware file encryption (LockBit) | 1 | 1 | 1,004 | `groundtruth/groundtruth_attack_C_ransomware.json` |
-| `attack_lotl_fileless.db` | **ATK-D**: Living-off-the-Land & fileless in-memory C2<br/>**AMB-A**: Ambiguous developer activity | 2 | 2 | 708 | `groundtruth/groundtruth_attack_D_lotl_fileless.json`<br/>`groundtruth/groundtruth_ambiguous_A_dev_activity.json` |
-| `wazuh_lotl_attack_dataset.db` | **ATK-E**: Wazuh SIEM/EDR, LotL & SAM registry access | 2 | 2 | 612 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
-| `suricata_c2_intrusion.db` | **ATK-F**: Suricata NIDS CobaltStrike C2 beaconing & exfil | 3 | 1 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
+| `ransomware_attack_complete_ecs.db` | **ATK-C**: Ransomware file encryption (LockBit) | 4 | 5 | 1,004 | `groundtruth/groundtruth_attack_C_ransomware.json` |
+| `attack_lotl_fileless.db` | **ATK-D**: Living-off-the-Land & fileless in-memory C2<br/>**AMB-A**: Ambiguous developer activity | 4 | 4 | 708 | `groundtruth/groundtruth_attack_D_lotl_fileless.json`<br/>`groundtruth/groundtruth_ambiguous_A_dev_activity.json` |
+| `wazuh_lotl_attack_dataset.db` | **ATK-E**: Wazuh SIEM/EDR, LotL & SAM registry access | 5 | 5 | 612 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
+| `suricata_c2_intrusion.db` | **ATK-F**: Suricata NIDS CobaltStrike C2 beaconing & exfil | 3 | 2 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
 | `attack_supply_chain.db` | **ATK-G**: Enterprise Supply Chain software compromise | 32 | 32 | 1,890 | `groundtruth/groundtruth_attack_G_supply_chain.json` |
-| `benign_admin_activity.db` | **BEN-A**: Benign administrative backup verification script | 1 | 2 | 7 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
+| `benign_admin_activity.db` | **BEN-A**: Benign administrative backup verification script | 2 | 2 | 7 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
 
-`config.py` automatically discovers and mounts the first available database out of the box.
+Together the eight databases hold **4,490 events**. `config.py` auto-discovers the first available database (`attack_lateral_movement.db` first in preference order) at startup.
 
 ---
 
@@ -217,7 +217,7 @@ The ingester auto-detects JSON, JSONL/NDJSON and text, recognises Wazuh rule/age
 
 ---
 
-### 4. Benchmark Runner & Evaluation
+### 3. Benchmark Runner & Evaluation
 
 Evaluate agent accuracy and reasoning across all 10 shipped scenarios covering malicious intrusions, benign operations, ambiguous tasks, and incomplete telemetry:
 
@@ -235,7 +235,7 @@ Rubric v2 weights verdict/boundary **20**, graded evidence recall **25**, ground
 
 ---
 
-### 5. Baseline Comparison & Ablation Experiments
+### 4. Baseline Comparison & Ablation Experiments
 
 Run empirical ablation experiments (`src/a1/experiment.py`) comparing system configurations:
 
@@ -258,7 +258,7 @@ When run with `--live`, each scenario executes through the compiled LangGraph st
 
 ---
 
-### 6. Running Tests
+### 5. Running Tests
 
 Run the full pytest suite (124 tests passed) and standalone smoke tests:
 
@@ -291,3 +291,5 @@ Configure `a1` via `.env` or system environment variables:
 | `OPENAI_BASE_URL` | *(empty)* | Optional custom OpenAI base URL |
 | `ENDPOINT_DB_PATH` | Auto-discovered | Path to active SQLite telemetry database |
 | `MAX_INVESTIGATION_STEPS` | `12` | Investigator loop cap before forcing correlation |
+| `MIN_INVESTIGATION_STEPS` | `2` | Minimum tool-backed steps before the investigator may conclude |
+| `MAX_REPEAT_NUDGES` | `2` | Repetition nudges allowed before the circuit breaker forces correlation |

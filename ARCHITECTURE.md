@@ -51,7 +51,7 @@ flowchart TD
     end
 
     subgraph Data_Layer["Storage & Infrastructure"]
-        DB[("Safe Read-Only SQLite\n(a1/db.py)\n8 Shipped DBs")]
+        DB[("Safe Read-Only SQLite\n(a1/db.py)\n8 Scenario DBs (.db files git-ignored)")]
         CFG["Config & Env\n(a1/config.py)"]
         LLM["Model Factory: OpenCode / Ollama / OpenAI\n(a1/llm.py)"]
     end
@@ -110,7 +110,7 @@ ai-musefix/
 |   |-- ingest.py                      [Log Ingestion]        Wazuh/Suricata/AMiner/generic logs -> canonical telemetry .db
 |   |-- benchmark.py                   [Benchmark Harness]    10-case evaluation (ATK-A..G, BEN-A, AMB-A, INC-A)
 |   |-- evidence_graph.py              [Evidence Graph]       Explicit entity-relationship DAG with JSON serialization for the canvas graph
-|   |-- hypothesis.py                  [Hypothesis Engine]    Hypothesis state tracker (UNTESTED, SUPPORTED, REFUTED, INCONCLUSIVE)
+|   |-- hypothesis.py                  [Hypothesis Engine]    Hypothesis state tracker (ACTIVE, SUPPORTED, WEAKLY_SUPPORTED, CONTRADICTED, UNRESOLVED)
 |   |-- experiment.py                  [Ablation Runner]      Baseline comparison and ablation study framework
 |   |-- baseline_context.py            [Baseline Context]     Standard administrative baseline behavior profiles
 |   |
@@ -154,7 +154,7 @@ ai-musefix/
 |       |-- static/vendor/            [Vendored Assets]      Third-party browser libraries served locally
 |       |-- static/style.css           [Web Style]            Modern ChatGPT-style layout, clean upright typography, thinking blocks, tool chips, light/dark themes
 |
-|-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data]
+|-- endpoint_security_dataset_expanded_corrected/   [Telemetry Data (.db files are git-ignored)]
 |   |-- attack_lateral_movement.db        Telemetry for ATK-A (credentials + lateral move) and INC-A (incomplete telemetry)
 |   |-- attack_data_exfiltration.db       Telemetry for ATK-B (staging + persistence + exfiltration)
 |   |-- ransomware_attack_complete_ecs.db Telemetry for ATK-C (phishing + LockBit encryption)
@@ -181,6 +181,9 @@ ai-musefix/
     |-- test_validator.py              [Test: Validator]      Deterministic SQLite event ID & entity verification, UNVERIFIED status, link checking
     |-- test_adversarial.py            [Test: Robustness]     Prompt injection resilience, malicious telemetry handling
     |-- test_experiment.py             [Test: Experiment]     Ablation study runner and configuration evaluation
+    |-- test_baseline_context.py       [Test: Baseline]       Enterprise baseline context helpers
+    |-- test_ingest.py                 [Test: Ingestion]       Wazuh/Suricata/AMiner/generic log parsing and canonical DB builds
+    |-- test_llm.py                    [Test: LLM]             Provider/model selection and runtime override helpers
     |-- test_conservative_failures.py  [Test: Fallbacks]      Conservative non-malicious failure handling for correlation and report nodes
 ```
 
@@ -201,7 +204,7 @@ ai-musefix/
 | `src/a1/llm.py`               | `[Model Factory]`     | `get_llm()` (`ChatOpenAI` / `ChatOllama`), `opencode_session()`, `set_active_llm()` / `get_active_llm_info()` runtime override, `set_provider_api_key()` runtime key update, `check_llm_status()`, centralized `invoke_with_network_retry()`.                                                                                             |
 | `src/a1/cli.py`               | `[CLI Interface]`     | `run_investigation()` streaming display; `main()` flags: positional alert or `ingest <file...>`, `--web`, `--benchmark`, `--limit`, `--provider/-p`, `--model/-m`, `--select-llm`, `--verbose/-v`, `--db`, `--out/-o`, `--source`, `--format`, `--force`, `--port`, `--no-browser`.                                                                                        |
 | `src/a1/benchmark.py`         | `[Benchmark Harness]` | 10 evaluation cases (`ATK-A`..`G`, `BEN-A`, `AMB-A`, `INC-A`), per-case DB switching, ground truth loading, fallback tracking, normalized boundary scoring, and multi-dimensional rubric scoring including relationship correctness, completeness, dynamic hypotheses, and unverified evidence counts. |
-| `src/a1/evidence_graph.py`    | `[Evidence Graph]`    | Directed graph modeling entities (`Host`, `User`, `Process`, `File`, `IP`, `Domain`, `RegistryKey`) and evidentiary relations (`SPAWNED`, `CONNECTED_TO`, `TOUCHED_FILE`, etc.) with `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`); JSON serialization for DAG UI.                                  |
+| `src/a1/evidence_graph.py`    | `[Evidence Graph]`    | Directed graph modeling entities (`host`, `user`, `process`, `file`, `ip_address`, `domain`, `registry_artifact`, `service`, etc.) and evidentiary relations (`parent_of`, `spawned`, `connected_to`, `created`, `accessed`, `modified`, `persisted_via`, etc.) with `EvidenceStatus` (`OBSERVED`, `INFERRED`, `UNVERIFIED`, `CONTRADICTED`); JSON serialization for DAG UI.                                  |
 | `src/a1/hypothesis.py`        | `[Hypothesis Engine]` | Hypothesis lifecycle state machine tracking status (`ACTIVE`, `SUPPORTED`, `WEAKLY_SUPPORTED`, `CONTRADICTED`, `UNRESOLVED`), dynamic hypothesis generation, provenance, triggering evidence, source tagging (`triage` vs `dynamic`), keyword deduplication, and active hypothesis capping (`MAX_ACTIVE_HYPOTHESES = 8`). |
 | `src/a1/ingest.py`            | `[Log Ingestion]`     | Parses Wazuh/Suricata EVE/fast.log/AMiner/generic JSON and text, detects the source, infers a leaf-field schema, normalizes events, and atomically builds a canonical `.db` with `events`, indexes, and `ingest_meta`; supports multi-file scenario merges. |
 | `src/a1/experiment.py`        | `[Ablation Runner]`   | Baseline comparison and ablation framework measuring performance impact when toggling evidence graph, adaptive planner, evidence validator, or baseline context.                                                                                                                                   |
@@ -218,7 +221,7 @@ ai-musefix/
 | `src/a1/nodes/planner_node.py`          | `[Planner Helper]`     | Generates candidate forensic actions from current entity frontiers and unresolved hypotheses and ranks them by expected information gain; invoked by the investigator, not wired as a graph node.                                                                       |
 | `src/a1/nodes/evidence_packing_node.py` | `[Input Reflection 2]` | Merges tool outputs into a compact structured pack (dedup by event ID, hypothesis coverage, hostname/time sanity) for downstream nodes.                                                                                                                                |
 | `src/a1/nodes/correlation_node.py`      | `[Correlation]`        | Structured `CorrelationAndGapAnalysis` via `CORRELATION_SYSTEM_PROMPT`: confirms/refutes hypotheses, defines relationship types, surfaces missing evidence gaps; conservative fallback on failure without fabricated suspicious claims.                               |
-| `src/a1/nodes/validator_node.py`        | `[Evidence Validator]` | Deterministic DB verification: queries raw SQLite tables for every cited ID and validates causal relationships (parent-child, network links); classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (exceptions produce `UNVERIFIED`, never valid).            |
+| `src/a1/nodes/validator_node.py`        | `[Evidence Validator]` | Deterministic DB verification: queries raw SQLite tables for every cited event ID, process entity, and hostname and validates causal relationships (parent-child, network links); classifies citations into `VALID`, `INVALID`, and `UNVERIFIED` (exceptions produce `UNVERIFIED`, never valid).            |
 | `src/a1/nodes/report_node.py`           | `[Report]`             | Structured `IncidentVerdict` (verdict, boundary, confidence, executive summary, attack chain, timeline matrix, IOC table, playbook); conservative failure fallbacks (`suspicious` or `inconclusive`, never claiming false malicious certainty); fallback tracked in `report_fallback_used`. |
 | `src/a1/nodes/structured_output.py`     | `[LLM Helper]`         | `invoke_structured_with_retry()`: one retry, then raises `StructuredOutputRetryError` for explicit fallback tracking.                                                                                                                                                  |
 
@@ -237,7 +240,7 @@ ai-musefix/
              v
       [2. Triage Node]
              |  - Emits structured TriagePlan (2-4 competing hypotheses, entities, plan)
-             |  - Initializes HypothesisTracker (all hypotheses marked UNTESTED)
+             |  - Initializes HypothesisTracker (new hypotheses start ACTIVE)
              v
     [3. Investigator Node] <----------------------+
              |                                    |
@@ -267,9 +270,9 @@ ai-musefix/
              |  - Identifies evidentiary inconsistencies and telemetry gaps
              v
       [6. Evidence Validator Node]
-             |  - Queries SQLite to verify every cited event_id and entity_id
-             |  - Strips/penalizes hallucinated identifiers
-             |  - Audits verdict boundary adherence
+             |  - Queries SQLite to verify cited event_id, process_entity_id, and hostname
+             |  - Flags invalid/unverified citations and relationship claims
+             |  - Records validation status and audit metrics for the report and benchmark
              v
       [7. Report Node]
              |  - Synthesizes IncidentVerdict (verdict, boundary, confidence)
@@ -283,14 +286,14 @@ ai-musefix/
 ## 5. Guardrails & Forensic Determinism
 
 * **Read-Only Telemetry:** `EndpointDatabase` opens SQLite exclusively with URI `mode=ro`; `execute_query()` permits only single `SELECT`/`PRAGMA`/`WITH` statements. Data modification operations and multi-statement queries raise `DatabaseAccessError`. In-memory virtual views project timestamps and hosts without disk alteration.
-* **Deterministic Evidence & Relationship Validation:** The `validator_node` queries raw SQLite tables for every cited `event_id`, `process_entity_id`, IP address, and hash. Causal links (process ancestry, network connections) are verified against database relationships, categorizing citations into `VALID`, `INVALID`, and `UNVERIFIED` (query exceptions produce `UNVERIFIED`, never valid). Edge states in `EvidenceGraph` are marked `OBSERVED`, `INFERRED`, or `UNVERIFIED`.
+* **Deterministic Evidence & Relationship Validation:** The `validator_node` queries raw SQLite tables for every cited `event_id`, `process_entity_id`, and hostname. Causal links (process ancestry, network connections) are verified against database relationships, categorizing citations into `VALID`, `INVALID`, and `UNVERIFIED` (query exceptions produce `UNVERIFIED`, never valid). Edge states in `EvidenceGraph` are marked `OBSERVED`, `INFERRED`, or `UNVERIFIED`.
 * **Dynamic Hypothesis Expansion:** Initial triage hypotheses guide initial queries but never constrain discovery. When newly gathered telemetry reveals persistence mechanisms (Run/RunOnce/TaskCache), credential dumping (`lsass`, `procdump`, `mimikatz`), lateral movement (SMB, WinRM, ports 445/5985/135), or data staging (`.zip`, `.7z`, `.dmp`), the system automatically formulates new testable hypotheses with explicit triggering evidence and provenance, bounded by `MAX_ACTIVE_HYPOTHESES = 8` and keyword deduplication.
 * **Conservative Failure Fallbacks:** If structured report synthesis or correlation encounters fatal output errors or missing evidence, the system refuses to fabricate certainty. Fallbacks assign conservative determinations (`suspicious` with `unconfirmed_malicious` or `inconclusive`), penalizing confidence and logging explicit telemetry gaps.
 * **Adaptive Investigation Planning:** The planner computes remaining hypothesis uncertainty and information gain, guiding the agent toward high-value pivoting queries and preventing blind, brute-force table dumps.
 * **Minimum-Evidence Gate:** The agent cannot conclude without querying forensic tools (`MIN_INVESTIGATION_STEPS` = 2); `should_continue` enforces a self-loop if a zero-tool conclusion is attempted prematurely.
 * **Repetition Circuit Breaker:** Identical tool calls (normalized by argument structure) trigger a `[SYSTEM-NOTE: repeated tool call]` nudge; after `MAX_REPEAT_NUDGES` (2), execution is forced onward to correlation.
 * **Schema Discipline:** Real per-database schemas are cached and injected directly into the investigator system prompt. Filter queries on `category` and `event_type` are auto-rewritten to `LIKE` syntax to handle JSON-array storage.
-* **Structured-Output Integrity:** Triage, correlation, validation, and report nodes use `invoke_structured_with_retry()`. If a model fails schema validation twice, a fallback is triggered and flagged (`report_fallback_used = True`), which is penalized as an automatic failure in benchmark scoring.
+* **Structured-Output Integrity:** Triage, correlation, and report nodes use `invoke_structured_with_retry()`. If a model fails schema validation twice, a fallback is triggered and flagged (`report_fallback_used = True`), which is penalized as an automatic failure in benchmark scoring.
 
 ---
 
@@ -377,7 +380,8 @@ The case menu supports uploading raw `.db`/log files, switching datasets, and de
 ### Key Evaluation Metrics (Rubric v2)
 * **Verdict Accuracy & Boundary Precision (20 Pts):** Discrimination across malicious, benign, suspicious, and inconclusive cases.
 * **Graded Evidence Recall (25 Pts):** Per-indicator coverage of critical processes, parentage, network egress, and persistence, with evidence precision/F1 reported alongside.
-* **Evidence Grounding / Zero-Hallucination Rate (20 Pts):** Deterministic SQL verification of all cited event IDs, process IDs, and hashes; unverified or hallucinated citations reduce the score.
+* **Evidence Grounding / Zero-Hallucination Rate (20 Pts):** Deterministic SQL verification of all cited event IDs, process IDs, and `suri-*` event IDs; unverified or hallucinated citations reduce the score. Relationship and hostname validation results are reported separately as diagnostics.
+
 * **Confidence Calibration (10 Pts):** Brier score for verdict/boundary confidence, rewarding calibrated certainty.
 * **Investigation Efficiency & Step Economy (10 Pts):** Suppression of repetition nudges, duplicate queries, retries, and excess steps.
 * **Report Actionability (15 Pts):** Timeline matrix, citations, benign explanations, gaps, and concrete next steps.
@@ -392,12 +396,14 @@ The case menu supports uploading raw `.db`/log files, switching datasets, and de
 | :--- | :--- | ---: | ---: | ---: | :--- |
 | `attack_lateral_movement.db` | `ATK-A` & `INC-A` | 2 | 3 | 127 | `groundtruth/groundtruth_attack_A_lateral_movement.json` |
 | `attack_data_exfiltration.db` | `ATK-B` | 1 | 1 | 83 | `groundtruth/groundtruth_attack_B_data_exfiltration.json` |
-| `ransomware_attack_complete_ecs.db` | `ATK-C` | 1 | 1 | 1,450 | `groundtruth/groundtruth_attack_C_ransomware.json` |
-| `attack_lotl_fileless.db` | `ATK-D` & `AMB-A` | 2 | 2 | 240 | `groundtruth/groundtruth_attack_D_lotl_fileless.json` |
-| `wazuh_lotl_attack_dataset.db` | `ATK-E` | 2 | 2 | 320 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
-| `suricata_c2_intrusion.db` | `ATK-F` | 3 | 1 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
+| `ransomware_attack_complete_ecs.db` | `ATK-C` | 4 | 5 | 1,004 | `groundtruth/groundtruth_attack_C_ransomware.json` |
+| `attack_lotl_fileless.db` | `ATK-D` & `AMB-A` | 4 | 4 | 708 | `groundtruth/groundtruth_attack_D_lotl_fileless.json` |
+| `wazuh_lotl_attack_dataset.db` | `ATK-E` | 5 | 5 | 612 | `groundtruth/groundtruth_attack_E_wazuh_lotl.json` |
+| `suricata_c2_intrusion.db` | `ATK-F` | 3 | 2 | 59 | `groundtruth/groundtruth_attack_F_suricata.json` |
 | `attack_supply_chain.db` | `ATK-G` | 32 | 32 | 1,890 | `groundtruth/groundtruth_attack_G_supply_chain.json` |
-| `benign_admin_activity.db` | `BEN-A` | 1 | 2 | 75 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
+| `benign_admin_activity.db` | `BEN-A` | 2 | 2 | 7 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
+
+The eight `.db` files are git-ignored and must be placed in `endpoint_security_dataset_expanded_corrected/` before running the benchmark; together they hold 4,490 events. The `groundtruth/*.json` labels remain tracked.
 
 ### Test Suite Execution
 
