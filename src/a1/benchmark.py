@@ -296,7 +296,7 @@ def _evidence_terms(item: Any) -> set:
 def _score_evidence_recall(evidence_basis: list, combined_evidence_text: str) -> Tuple[float, float]:
     """Graded indicator coverage: partial matches count, not just one token."""
     if not evidence_basis:
-        return 25.0, 1.0
+        return 0.0, 0.0
     coverage = 0.0
     for item in evidence_basis:
         terms = _evidence_terms(item)
@@ -308,7 +308,7 @@ def _score_evidence_recall(evidence_basis: list, combined_evidence_text: str) ->
     return round(25.0 * recall_pct, 1), recall_pct
 
 
-_CITATION_RE = re.compile(r"\b(?:evt|proc|suri)-[A-Za-z0-9_.:-]*[A-Za-z0-9_]\b")
+_CITATION_RE = re.compile(r"\b(?:evt|proc|suri)-(?=[A-Za-z0-9_.:-]*\d)[A-Za-z0-9_.:-]*[A-Za-z0-9_]\b")
 
 
 def _score_evidence_grounding(report_text: str) -> Tuple[float, int, int, int]:
@@ -343,7 +343,11 @@ def _score_evidence_grounding(report_text: str) -> Tuple[float, int, int, int]:
             unverified += 1
     for pid in cited_pids:
         try:
-            if not _exists(db, "processes", "process_entity_id", pid):
+            # Process rows are materialized only for process-bearing events; a cited
+            # process_entity_id that appears solely on events.* is still real telemetry.
+            if not _exists(db, "processes", "process_entity_id", pid) and not _exists(
+                db, "events", "process_entity_id", pid
+            ):
                 hallucinated += 1
         except Exception:
             unverified += 1
@@ -360,7 +364,7 @@ def _score_confidence_calibration(final_state: dict, verdict_match: bool, bounda
     except (TypeError, ValueError):
         confidence = 0.5
     confidence = max(0.0, min(1.0, confidence))
-    outcome = 1.0 if verdict_match and boundary_match and not fallback_used else 0.0
+    outcome = 1.0 if verdict_match and not fallback_used else 0.0
     brier = (confidence - outcome) ** 2
     return round(10.0 * (1.0 - brier), 1), round(brier, 3), confidence
 
@@ -387,7 +391,7 @@ def _score_report_quality(report_text: str) -> float:
     has_timeline = "| Timestamp" in report_text or "Forensic Timeline Matrix" in report_text
     timeline_rows = len(re.findall(r"(?m)^\|\s*\d{4}-\d{2}-\d{2}", report_text))
     timeline_pts = 4.0 if has_timeline and timeline_rows >= 2 else 1.0 if has_timeline else 0.0
-    citations = len(set(re.findall(r"\b(?:evt|proc)-[a-zA-Z0-9_-]+\b", report_text)))
+    citations = len(set(_CITATION_RE.findall(report_text)))
     citation_pts = 3.0 if citations >= 2 else 1.0 if citations == 1 else 0.0
     caveat_pts = 2.0 if ("Benign Explanation" in report_text or "Evidence Gap" in report_text) else 0.0
     action_pts = 3.0 if ("Next Steps" in report_text or "Remediation" in report_text or "Playbook" in report_text) else 0.0
@@ -440,7 +444,7 @@ def evaluate_case_rubric(case: dict, final_state: dict) -> dict:
     is_fn = (expected_label == "malicious") and (agent_verdict in ("benign", "inconclusive"))
     supported = max(0, total_cited - hallucinated - unverified)
     ev_precision = round(supported / total_cited, 3) if total_cited > 0 else 0.0
-    ev_recall = round(recall_pct, 3) if evidence_basis else 1.0
+    ev_recall = round(recall_pct, 3) if evidence_basis else 0.0
     ev_f1 = round((2 * ev_precision * ev_recall) / (ev_precision + ev_recall), 3) if (ev_precision + ev_recall) else 0.0
     iter_count = final_state.get("iteration_count", 0)
     repeat_nudges = final_state.get("repeat_nudges", 0)
@@ -550,6 +554,7 @@ def _execute_benchmark_case(app, case_id: str, case: dict, db_path: Optional[str
         print("  [!] Report generated via structured-output fallback -- counted as FAIL")
 
     rubric = evaluate_case_rubric(case, final_state)
+    report_text = _extract_report_text_from_state(final_state)
     status = "PASS" if (verdict_match and boundary_match) else "FAIL"
     print(f"  Agent: {agent_verdict} / {agent_boundary} -> {status}")
     print(f"  Scorecard: {rubric['composite_score']}/100 [{rubric['grade']}]")
@@ -572,6 +577,7 @@ def _execute_benchmark_case(app, case_id: str, case: dict, db_path: Optional[str
         "boundary_match": boundary_match,
         "fallback_used": fallback_used,
         "confidence": final_state.get("confidence"),
+        "report_text": report_text,
         "rubric": rubric,
     }
 
@@ -636,6 +642,7 @@ def run_benchmark(
     model: str = None,
     db_path: str = None,
     split: str = None,
+    out_path: str = None,
 ) -> Dict[str, Any]:
     """Evaluate the LangGraph investigator agent against the shipped attack scenarios.
 
@@ -672,7 +679,11 @@ def run_benchmark(
 
     app = create_investigation_graph()
     results = [_execute_benchmark_case(app, cid, labels_by_id[cid], db_path) for cid in scenario_ids]
-    return _compute_and_print_benchmark_summary(results)
+    summary = _compute_and_print_benchmark_summary(results)
+    if out_path:
+        Path(out_path).write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        print(f"Results written to: {out_path}")
+    return summary
 
 if __name__ == "__main__":
     import argparse
@@ -684,5 +695,6 @@ if __name__ == "__main__":
     parser.add_argument("--model", "-m", type=str, default=None, help="LLM model name")
     parser.add_argument("--db", type=str, default=None,
                         help="Pin every case to one SQLite telemetry database instead of switching per scenario")
+    parser.add_argument("--out", type=str, default=None, help="Write full results (including reports) as JSON")
     args = parser.parse_args()
-    run_benchmark(limit=args.limit, provider=args.provider, model=args.model, db_path=args.db, split=args.split)
+    run_benchmark(limit=args.limit, provider=args.provider, model=args.model, db_path=args.db, split=args.split, out_path=args.out)

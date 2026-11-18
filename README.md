@@ -229,7 +229,9 @@ python -m a1.benchmark
 python -m a1.cli --benchmark --limit 5
 ```
 
-The benchmark switches telemetry databases automatically per scenario, validates verdicts against ground truth, measures False Positive Rate (FPR) and False Negative Rate (FNR), audits evidence grounding against SQLite tables, and computes composite 100-point scores.
+The benchmark switches telemetry databases automatically per scenario, validates verdicts against ground truth, measures False Positive Rate (FPR) and False Negative Rate (FNR), audits evidence grounding against SQLite tables, and computes composite 100-point scores. Add `--out results.json` to persist per-case rubrics and full report text.
+
+**Latest dev-split check (2 cases):** ATK-A **98.0/100**, ATK-B **91.2/100** (mean **94.6**, verdict/boundary 2/2, evidence precision 98.8%, evidence F1 88.9%, Brier 0.008, FPR/FNR 0%). One run with the configured opencode model; see `docs/EVALUATION_SCORING_RUBRICS.md` for the per-dimension table and scoring-fix notes.
 
 Rubric v2 weights verdict/boundary **20**, graded evidence recall **25**, grounding/anti-hallucination **20**, Brier confidence calibration **10**, investigation efficiency **10**, and report actionability **15**. It also reports evidence precision/F1 so over-citing cannot mask weak recall.
 

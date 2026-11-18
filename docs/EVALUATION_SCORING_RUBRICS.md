@@ -54,8 +54,8 @@ Measures the agent's ability to accurately discriminate between genuine threats,
   - Automatic deduction of all 20 points if the report was produced via structured output recovery fallback (`report_fallback_used = True`).
 
 #### False Positive (FP) and False Negative (FN) Tracking:
-- **False Positive (FP)**: Marking a benign or incomplete scenario as `malicious`.
-- **False Negative (FN)**: Marking a confirmed intrusion scenario as `benign` or failing to detect critical attack indicators.
+- **False Positive (FP)**: Marking a benign or incomplete scenario as `malicious` or `suspicious`.
+- **False Negative (FN)**: Marking a confirmed intrusion scenario as `benign` or `inconclusive`.
 
 ---
 
@@ -67,11 +67,11 @@ $$\text{Coverage}_i = \frac{\text{matched indicators}_i}{\text{total indicators}
 
 $$\text{Evidence Recall Score} = 25 \times \text{Recall}$$
 
-`benchmark.py` also reports **evidence precision** (supported citations / total citations) and **evidence F1**, so mentioning many incidental tokens does not automatically earn full recall.
+`benchmark.py` also reports **evidence precision** (supported citations / total citations) and **evidence F1**, so mentioning many incidental tokens does not automatically earn full recall. A label with an empty `evidence_basis` scores 0 (there is nothing to verify), not full credit.
 
 ### Dimension 3: Evidence Grounding & Zero-Hallucination Integrity (20 Points)
 
-Citing an event ID or process ID that does not exist in the active telemetry is a severe evidentiary breach. Every cited `evt-*` and `proc-*` identifier is queried against SQLite:
+Citing an event ID or process ID that does not exist in the active telemetry is a severe evidentiary breach. Every cited `evt-*`, `proc-*`, and `suri-*` identifier is queried against SQLite (process IDs may resolve through `processes` or through `events.process_entity_id`, since not every event-spawned process gets its own process row):
 
 $$\text{Grounding Score} = 20 \times \frac{\text{verified citations}}{\text{total citations}}$$
 
@@ -83,7 +83,7 @@ The validator separately checks claimed relationships (parentage, network flows,
 
 ### Dimension 4: Confidence Calibration (10 Points)
 
-An accurate verdict with unjustified certainty is operationally unsafe. Calibration uses the Brier score against binary correctness of verdict **and** boundary:
+An accurate verdict with unjustified certainty is operationally unsafe. Calibration uses the Brier score against binary correctness of the **verdict** (boundary precision is scored separately, so a near-miss boundary is not double-penalized):
 
 $$\text{Brier} = (c - o)^2, \qquad o \in \{0,1\}$$
 
@@ -101,7 +101,7 @@ Missing confidence defaults to 0.5. A correct verdict at 90% confidence scores 9
 ### Dimension 6: Executive Report Completeness & Actionability (15 Points)
 
 - **Forensic timeline (4 pts)**: Markdown table with at least two dated rows (1 pt if only a header/heading).
-- **Grounded citations (3 pts)**: 3 for ≥2 distinct event/process IDs, 1 for one, 0 for none.
+- **Grounded citations (3 pts)**: 3 for ≥2 distinct `evt-*`/`proc-*`/`suri-*` IDs, 1 for one, 0 for none.
 - **Benign explanations / evidence gaps (2 pts)**: present and substantive.
 - **Containment & remediation (3 pts)**: Next Steps, Remediation, or Playbook section.
 - **Structure (3 pts)**: ≥1,000 characters and ≥3 level-2/3 headings (1 pt for ≥2 headings).
@@ -158,3 +158,25 @@ To empirically evaluate system contributions, the repository includes an experim
 # Run baseline comparison and ablation experiments:
 .venv\Scripts\python.exe -m a1.experiment
 ```
+
+## 5. Latest Measured Results (Dev Split)
+
+Command: `python -m a1.benchmark --split dev --limit 2 --out bench_after.json`
+Provider/model: opencode `glm-5.3-flash`. One run per case; LLM output is non-deterministic, so treat these as a snapshot rather than a stable leaderboard.
+
+| Case | Database | Verdict / Boundary | Verdict | Recall | Grounding | Calibration | Efficiency | Report | Composite |
+|---|---|---|---|---|---|---|---|---|---|
+| ATK-A | `attack_lateral_movement.db` | malicious / confirmed_malicious (match) | 20/20 | 23.6/25 | 19.5/20 (1/43) | 9.9/10 | 10/10 | 15/15 | **98.0 (A+)** |
+| ATK-B | `attack_data_exfiltration.db` | malicious / confirmed_malicious (match) | 20/20 | 17.3/25 | 20/20 (0/47) | 9.9/10 | 9/10 | 15/15 | **91.2 (A+)** |
+| **Mean** | | 100% verdict/boundary | 20/20 | 20.5/25 | 19.75/20 | 9.9/10 | 9.5/10 | 15/15 | **94.6** |
+
+Aggregate: evidence precision 98.8%, evidence recall 81.8%, evidence F1 88.9%, average Brier 0.008, FPR 0%, FNR 0%, structured-output fallbacks 0/2. The held-out eval split (ATK-F, ATK-G, BEN-A, AMB-A, INC-A) was not run in this pass.
+
+Scoring fixes applied before this run:
+
+- `proc-*` citations now resolve through `processes` **or** `events.process_entity_id`; noise processes that only appear on events are real telemetry. Re-scoring the same ATK-A report moved grounding from 17.2 to 19.5 (6 → 1 citations flagged).
+- Citation regex ignores truncated fragments such as `proc-atk`, and report-quality citation credit includes `suri-*`.
+- Brier calibration now measures correctness of the verdict only, so a near-miss boundary is not double-penalized.
+- A label with an empty `evidence_basis` now scores 0 recall instead of free full credit.
+
+`investigation_completeness` remains a diagnostic and reads 0% on these runs because hypotheses stay `active`/`unresolved`; it is not part of the composite score.

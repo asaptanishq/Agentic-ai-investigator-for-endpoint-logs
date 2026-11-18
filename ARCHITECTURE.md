@@ -378,11 +378,12 @@ The case menu supports uploading raw `.db`/log files, switching datasets, and de
 | `INC-A` | Inconclusive | `attack_lateral_movement.db` | Missing parent process and network connection telemetry requiring `inconclusive` verdict | `groundtruth/groundtruth_incomplete_A_missing_telemetry.json` |
 
 ### Key Evaluation Metrics (Rubric v2)
+**Latest dev snapshot** (`--split dev --limit 2`, opencode `glm-5.3-flash`): ATK-A **98.0**, ATK-B **91.2**, mean **94.6/100**; verdict/boundary 2/2, evidence precision 98.8%, evidence F1 88.9%, Brier 0.008, FPR/FNR 0%. Single run; full per-dimension table and scoring-fix notes live in `docs/EVALUATION_SCORING_RUBRICS.md`.
 * **Verdict Accuracy & Boundary Precision (20 Pts):** Discrimination across malicious, benign, suspicious, and inconclusive cases.
 * **Graded Evidence Recall (25 Pts):** Per-indicator coverage of critical processes, parentage, network egress, and persistence, with evidence precision/F1 reported alongside.
-* **Evidence Grounding / Zero-Hallucination Rate (20 Pts):** Deterministic SQL verification of all cited event IDs, process IDs, and `suri-*` event IDs; unverified or hallucinated citations reduce the score. Relationship and hostname validation results are reported separately as diagnostics.
+* **Evidence Grounding / Zero-Hallucination Rate (20 Pts):** Deterministic SQL verification of all cited event IDs, process IDs (resolved through `processes` or `events.process_entity_id`), and `suri-*` event IDs; unverified or hallucinated citations reduce the score. Relationship and hostname validation results are reported separately as diagnostics.
 
-* **Confidence Calibration (10 Pts):** Brier score for verdict/boundary confidence, rewarding calibrated certainty.
+* **Confidence Calibration (10 Pts):** Brier score against verdict correctness, rewarding calibrated certainty; boundary precision is scored separately.
 * **Investigation Efficiency & Step Economy (10 Pts):** Suppression of repetition nudges, duplicate queries, retries, and excess steps.
 * **Report Actionability (15 Pts):** Timeline matrix, citations, benign explanations, gaps, and concrete next steps.
 
