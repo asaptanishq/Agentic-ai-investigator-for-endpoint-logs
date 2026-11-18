@@ -91,7 +91,6 @@ ai-musefix/
 |-- .env.example                       [Environment Template] Default LLM and telemetry database configuration
 |-- README.md                          [Project Overview]     Quickstart, usage instructions, and executive summary
 |-- ARCHITECTURE.md                    [Architecture Guide]   Complete system visualization & file catalog
-|-- ui.md                              [UI Guide]             Web workbench layout, interaction model, and views
 |-- docs/
 |   |-- EVALUATION_SCORING_RUBRICS.md  [Evaluation Rubrics]   100-point multi-dimensional scoring and benchmark specification
 |

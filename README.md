@@ -13,7 +13,6 @@ A1 is an autonomous Digital Forensics and Incident Response (DFIR) investigation
 ## Quick Reference & Documentation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete architectural diagrams, routing contracts, file catalog, and internal guardrails.
-- **[ui.md](ui.md)** — Web workbench layout, views, controls, and interaction contract.
 - **[docs/EVALUATION_SCORING_RUBRICS.md](docs/EVALUATION_SCORING_RUBRICS.md)** — 100-point multi-dimensional evaluation rubric, scoring criteria, and ablation study guidelines.
 - **`endpoint_security_dataset_expanded_corrected/README.md`** — dataset provenance and evaluator boundary (available only when the dataset is supplied locally; not in the repo).
 - **`endpoint_security_dataset_expanded_corrected/schema.md`** — telemetry database schema specification (local dataset only).
@@ -58,7 +57,6 @@ ai-musefix/
 ├── .python-version                # Pinned interpreter (>= 3.12)
 ├── .env.example                   # Environment variable template
 ├── README.md / ARCHITECTURE.md    # Project overview / full architecture guide
-├── ui.md                          # Web workbench layout and interaction contract
 ├── docs/
 │   └── EVALUATION_SCORING_RUBRICS.md # 100-point multi-dimensional benchmark rubrics
 ├── src/a1/
