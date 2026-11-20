@@ -1,7 +1,7 @@
 """Shared pytest configuration for the a1 test suite.
 
 The original five-scenario agent bundle
-(``endpoint_security_dataset_expanded_corrected/agent_bundle/agent_endpoint_security.db``)
+(``dataset/agent_bundle/agent_endpoint_security.db``)
 is no longer part of this repository, so the default database path resolved by
 ``a1.config.get_db_path()`` would not exist and every database-backed test would
 fail at connection time.
@@ -15,7 +15,7 @@ import os
 import pytest
 from pathlib import Path
 
-DATASET_DIR = Path(__file__).resolve().parents[1] / "endpoint_security_dataset_expanded_corrected"
+DATASET_DIR = Path(__file__).resolve().parents[1] / "dataset"
 
 # Preferred first, then any other attack database shipped with the repository.
 _PREFERRED_DBS = ("attack_lateral_movement.db", "attack_data_exfiltration.db")

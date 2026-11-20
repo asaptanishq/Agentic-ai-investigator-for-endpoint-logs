@@ -1081,7 +1081,7 @@ def run_benchmark(
     except FileNotFoundError as e:
         print(f"[!] {e}")
         print("[!] The built-in evaluation dataset is not bundled with this repository.")
-        print("[!] Place endpoint_security_dataset_expanded_corrected/ in the project root,")
+        print("[!] Place dataset/ in the project root,")
         print("[!] or investigate your own logs with the CLI/web app and a custom --db.")
         return empty_return
 

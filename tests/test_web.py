@@ -110,7 +110,7 @@ def test_api_set_database_rejects_non_db(client):
 
 
 def test_api_set_database_not_found(client):
-    res = client.post("/api/databases/set", json={"db_path": "endpoint_security_dataset_expanded_corrected/non_existent.db"})
+    res = client.post("/api/databases/set", json={"db_path": "dataset/non_existent.db"})
     assert res.status_code == 404
 
 

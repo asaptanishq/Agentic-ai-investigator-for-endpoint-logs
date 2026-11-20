@@ -22,59 +22,6 @@
     ["verdict", "verdict"],
   ];
 
-  var SCENARIOS = [
-    {
-      db: "attack_lateral_movement.db", code: "ATK-A", host: "WS-OPS-01", category: "attack",
-      title: "LSASS access, SMB recon, remote service install",
-      query: "Investigate suspicious activity on WS-OPS-01: a process accessed lsass.exe memory and a dump file appeared in a user Temp directory, the same session then opened SMB connections to SRV-FILE-01, and repeated failed network logons for one account were followed by a successful one and a new Windows service installation. Determine whether this is credential dumping and lateral movement or benign administrative activity.",
-    },
-    {
-      db: "attack_lateral_movement.db", code: "INC-A", host: "SRV-FILE-01", category: "ambiguous",
-      title: "Unauthorized execution alert with missing telemetry",
-      query: "Investigate an alert claiming unauthorized execution on SRV-FILE-01. Examine telemetry for the parent process, network flows, and authentication. If essential telemetry is absent to prove or disprove malicious activity, render an inconclusive outcome citing the specific missing telemetry.",
-    },
-    {
-      db: "attack_data_exfiltration.db", code: "ATK-B", host: "WS-DEV-02", category: "attack",
-      title: "PowerShell archiving, scheduled task, outbound HTTPS",
-      query: "Investigate suspicious activity on WS-DEV-02: PowerShell spawned an archiver that staged the user's spreadsheets into a password-protected archive in Temp, then dropped a script and created a logon scheduled task, made repeated outbound HTTPS connections to an external address, and the archive was later deleted. Determine whether this is data exfiltration or benign software activity.",
-    },
-    {
-      db: "ransomware_attack_complete_ecs.db", code: "ATK-C", host: "WS-ACCT-01", category: "attack",
-      title: "Word document, vssadmin shadow copy deletion, LockBit",
-      query: "Investigate suspicious ransomware activity on WS-ACCT-01: Microsoft Word opened invoice_2026-Q3.docx, hidden PowerShell invoked vssadmin.exe to delete shadow copies, and LockBit executed encrypting user documents with .locked extensions. Determine whether this is ransomware or benign activity.",
-    },
-    {
-      db: "attack_lotl_fileless.db", code: "ATK-D", host: "WS-EXEC-02", category: "attack",
-      title: "mshta encoded PowerShell, discovery, certutil staging, WMI",
-      query: "Investigate suspicious Living-off-the-Land and fileless execution on WS-EXEC-02: mshta.exe spawned hidden encoded PowerShell establishing outbound C2, discovery LOLBins executed, certutil staged payloads, and remote WMI execution occurred against DC-AUTH-01. Determine whether this is a fileless intrusion or benign administrative activity.",
-    },
-    {
-      db: "attack_lotl_fileless.db", code: "AMB-A", host: "WS-EXEC-02", category: "ambiguous",
-      title: "certutil and flagged PowerShell during business hours",
-      query: "Investigate command-line and utility activity on WS-EXEC-02: certutil.exe and PowerShell with flags were invoked during business hours. Evaluate whether this represents malicious C2 staging, dual-use developer activity, or benign administration, noting any ambiguity in intent.",
-    },
-    {
-      db: "wazuh_lotl_attack_dataset.db", code: "ATK-E", host: "WS-DEV-01", category: "attack",
-      title: "LOL PowerShell, SAM hive access, C2 beaconing",
-      query: "Investigate suspicious Living-off-the-Land PowerShell execution and SAM registry access on WS-DEV-01 on 2026-10-15. Trace discovery commands, persistence tasks, and C2 exfiltration in Wazuh telemetry.",
-    },
-    {
-      db: "suricata_c2_intrusion.db", code: "ATK-F", host: "WS-FINANCE-01", category: "attack",
-      title: "CobaltStrike C2 beaconing to 203.0.113.88:8443",
-      query: "Investigate critical Suricata NIDS alerts on WS-FINANCE-01:multiple ET MALWARE CobaltStrike C2 beaconing alerts to 203.0.113.88:8443 between 2026-10-16T14:00:00Z and 2026-10-16T16:02:00Z",
-    },
-    {
-      db: "attack_supply_chain.db", code: "ATK-G", host: "WS-DEV-07", category: "attack",
-      title: "CorpTools update, rogue local admin, Kerberos tickets",
-      query: "Investigate a potential supply chain compromise on WS-DEV-07: the CorpTools application auto-updated and shortly after, discovery commands were executed, a new local administrator account appeared, Kerberos ticket requests targeted SQL service accounts, and WinRM sessions were established to WS-DBA-03 and DC-CORP-01. Determine whether this is a supply chain attack or legitimate software activity.",
-    },
-    {
-      db: "benign_admin_activity.db", code: "BEN-A", host: "WS-ADMIN-05", category: "benign",
-      title: "Backup verification script, SMB, W32Time check",
-      query: "Investigate scheduled activity on WS-ADMIN-05: svchost.exe spawned PowerShell running backup_verification.ps1 under CORP\\sysadmin, which opened SMB connections to SRV-FILE-02, wrote to backup_audit_20260915.log, and checked W32Time registry settings. Determine whether this is an attack or benign administrative activity.",
-    },
-  ];
-
   var state = {
     provider: "",
     model: "",
@@ -457,24 +404,8 @@
   }
 
   function renderExamples() {
-    var name = dbLabel(state.dbPath);
-    var items = SCENARIOS.filter(function (s) {
-      return s.db === name;
-    });
-    els.examplesEmpty.hidden = items.length > 0;
-    els.suggestionsList.innerHTML = items
-      .map(function (s, i) {
-        return (
-          '<button class="example" data-example="' + i + '">' +
-          '<span class="ex-code">' + escapeHtml(s.code) + "</span>" +
-          '<span class="ex-body"><span class="ex-title">' + escapeHtml(s.title) + "</span>" +
-          '<span class="ex-meta">' + escapeHtml(s.host) + " · " + escapeHtml(s.category) + "</span></span>" +
-          "</button>"
-        );
-      })
-      .join("");
-    els.suggestionsList.dataset.db = name;
-    state.exampleItems = items;
+    if (els.suggestionsList) els.suggestionsList.innerHTML = "";
+    state.exampleItems = [];
   }
 
   async function loadEvents() {
@@ -1788,31 +1719,6 @@
       else submitPrompt(els.promptInput.value);
     });
 
-    els.suggestionsList.addEventListener("click", async function (e) {
-      var b = e.target.closest("[data-example]");
-      if (!b) return;
-      if (state.generating) {
-        toast("An investigation is running — stop it first", "error");
-        return;
-      }
-      var s = (state.exampleItems || [])[Number(b.dataset.example)];
-      if (!s) return;
-      if (dbLabel(state.dbPath) !== s.db) {
-        var db = state.databases.find(function (d) {
-          return (d.name || dbLabel(d.path || d)) === s.db;
-        });
-        if (!db) {
-          toast("Dataset " + s.db + " is not available", "error");
-          return;
-        }
-        var ok = await switchDatabase(db.path || db);
-        if (!ok) return;
-      }
-      els.promptInput.value = s.query;
-      autosize();
-      submitPrompt(s.query);
-    });
-
     els.evidenceBtn.addEventListener("click", toggleDrawer);
     els.mapCloseBtn.addEventListener("click", closeDrawer);
     els.scopeClearBtn.addEventListener("click", function () {
@@ -2058,7 +1964,7 @@
       "evidenceBtn", "evidenceBadge", "modelDropdownContainer", "modelSelectorPill", "activeModelName",
       "activeProviderBadge", "modelMenu", "providerTabs", "modelSearchInput", "modelList", "customModelInput",
       "applyCustomModelBtn", "saveApiKeyBtn", "apiKeyInput", "apiKeyStatus", "shortcutsBtn", "stream", "welcomeScreen", "emptyTitle", "emptyMeta",
-      "suggestionsList", "examplesEmpty", "messagesContainer", "promptInput", "inputCapsule", "composerModel",
+      "suggestionsList", "messagesContainer", "promptInput", "inputCapsule", "composerModel",
       "composerDb", "composerHint", "sendBtn", "drawer", "drawerGrip", "tabViewGraph", "graphNodeCountBadge",
       "tabViewTelemetry", "tabViewReport", "mapCloseBtn", "graphStage", "graphSearchInput", "treeCollapseBtn",
       "graphLegend", "graphStats", "scopeClearBtn", "graphViewContainer", "graphCanvasContainer", "processLinksContainer",

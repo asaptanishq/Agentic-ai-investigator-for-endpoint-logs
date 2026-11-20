@@ -14,8 +14,8 @@ A1 is an autonomous Digital Forensics and Incident Response (DFIR) investigation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — Complete architectural diagrams, routing contracts, file catalog, and internal guardrails.
 - **[docs/EVALUATION_SCORING_RUBRICS.md](docs/EVALUATION_SCORING_RUBRICS.md)** — 100-point multi-dimensional evaluation rubric, scoring criteria, and ablation study guidelines.
-- **`endpoint_security_dataset_expanded_corrected/README.md`** — dataset provenance and evaluator boundary (available only when the dataset is supplied locally; not in the repo).
-- **`endpoint_security_dataset_expanded_corrected/schema.md`** — telemetry database schema specification (local dataset only).
+- **`dataset/README.md`** — dataset provenance and evaluator boundary (available only when the dataset is supplied locally; not in the repo).
+- **`dataset/schema.md`** — telemetry database schema specification (local dataset only).
 
 ---
 
@@ -81,7 +81,7 @@ ai-musefix/
 ├── scripts/
 │   └── smoke_test.py              # Standalone 17-point end-to-end verification script
 ├── tests/                         # Pytest test suite (124 tests passed)
-└── endpoint_security_dataset_expanded_corrected/
+└── dataset/
     ├── groundtruth/               # Ground truth JSON files (ATK-A..G, BEN-A, AMB-A, INC-A)
     └── *.db                       # 8 SQLite telemetry databases (git-ignored; place them here)
 ```
@@ -99,11 +99,15 @@ Using **`uv`**:
 uv sync
 ```
 
-Or using standard `pip`:
+Or using standard `pip` (no `uv` executable required):
 ```bash
-python -m venv .venv
-.\.venv\Scripts\activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+On Windows, run the app with the environment's Python, for example:
+```powershell
+.\.venv\Scripts\python.exe -m a1.cli --web
 ```
 
 ### 2. Configure Environment
@@ -117,7 +121,7 @@ The default configuration supports OpenCode (`deepseek-v4.1-flash`), local Ollam
 
 ### 3. Local Evaluation Dataset (not in the repo)
 
-The benchmark expects the optional `endpoint_security_dataset_expanded_corrected/` folder locally: eight forensic telemetry databases plus `groundtruth/*.json` labels. The entire folder is git-ignored, so a fresh clone has no dataset and users supply their own logs or place this folder in the project root before running the built-in benchmark:
+The benchmark expects the optional `dataset/` folder locally: eight forensic telemetry databases plus `groundtruth/*.json` labels. The entire folder is git-ignored, so a fresh clone has no dataset and users supply their own logs or place this folder in the project root before running the built-in benchmark:
 
 | Database | Scenario | Hosts | Users | Events | Ground Truth |
 | :--- | :--- | ---: | ---: | ---: | :--- |
@@ -167,19 +171,19 @@ Run targeted forensic investigations from the command line using the `--db` flag
 #### Malicious Intrusion: Credential Access & Lateral Movement (`ATK-A`)
 
 ```bash
-python -m a1.cli "Investigate suspicious PowerShell activity on WS-OPS-01 on 2026-09-10. Determine whether there is evidence of credential access or movement to another host. Trace relevant process, file, authentication, network, and service activity; distinguish confirmed evidence from gaps and do not assume maliciousness." --db endpoint_security_dataset_expanded_corrected/attack_lateral_movement.db
+python -m a1.cli "Investigate suspicious PowerShell activity on WS-OPS-01 on 2026-09-10. Determine whether there is evidence of credential access or movement to another host. Trace relevant process, file, authentication, network, and service activity; distinguish confirmed evidence from gaps and do not assume maliciousness." --db dataset/attack_lateral_movement.db
 ```
 
 #### Benign Administrative Operation: Backup Verification (`BEN-A`)
 
 ```bash
-python -m a1.cli "Investigate scheduled activity on WS-ADMIN-05: svchost.exe spawned PowerShell running backup_verification.ps1 under CORP\\sysadmin, which opened SMB connections to SRV-FILE-02, wrote to backup_audit_20260915.log, and checked W32Time registry settings. Determine whether this is an attack or benign administrative activity." --db endpoint_security_dataset_expanded_corrected/benign_admin_activity.db
+python -m a1.cli "Investigate scheduled activity on WS-ADMIN-05: svchost.exe spawned PowerShell running backup_verification.ps1 under CORP\\sysadmin, which opened SMB connections to SRV-FILE-02, wrote to backup_audit_20260915.log, and checked W32Time registry settings. Determine whether this is an attack or benign administrative activity." --db dataset/benign_admin_activity.db
 ```
 
 #### Incomplete Telemetry: Missing Ancestry & Flows (`INC-A`)
 
 ```bash
-python -m a1.cli "Investigate an alert claiming unauthorized execution on SRV-FILE-01. Examine telemetry for the parent process, network flows, and authentication. If essential telemetry is absent to prove or disprove malicious activity, render an inconclusive outcome citing the specific missing telemetry." --db endpoint_security_dataset_expanded_corrected/attack_lateral_movement.db
+python -m a1.cli "Investigate an alert claiming unauthorized execution on SRV-FILE-01. Examine telemetry for the parent process, network flows, and authentication. If essential telemetry is absent to prove or disprove malicious activity, render an inconclusive outcome citing the specific missing telemetry." --db dataset/attack_lateral_movement.db
 ```
 
 #### Common CLI Flags

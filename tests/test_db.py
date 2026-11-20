@@ -242,7 +242,7 @@ def test_db_attack_lotl_fileless_shipped_dataset():
     import sqlite3
     from pathlib import Path
 
-    db_path = Path("endpoint_security_dataset_expanded_corrected/attack_lotl_fileless.db")
+    db_path = Path("dataset/attack_lotl_fileless.db")
     assert db_path.exists(), "attack_lotl_fileless.db must exist"
 
     # 1. Verify physical on-disk tables: ONLY 'events'

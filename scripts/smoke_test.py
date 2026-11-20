@@ -4,7 +4,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATASET_DIR = PROJECT_ROOT / "endpoint_security_dataset_expanded_corrected"
+DATASET_DIR = PROJECT_ROOT / "dataset"
 
 # The original five-scenario agent bundle
 # (agent_bundle/agent_endpoint_security.db) is no longer part of the repository,

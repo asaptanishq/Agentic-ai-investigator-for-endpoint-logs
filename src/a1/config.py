@@ -10,7 +10,7 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = BASE_DIR / ".env"
-DATASET_DIR = BASE_DIR / "endpoint_security_dataset_expanded_corrected"
+DATASET_DIR = BASE_DIR / "dataset"
 
 # Telemetry databases searched in order: the attack and benign databases that ship today.
 _DB_PREFERENCE = (

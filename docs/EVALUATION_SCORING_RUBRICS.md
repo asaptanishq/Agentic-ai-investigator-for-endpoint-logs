@@ -1,4 +1,4 @@
-# DFIR Agentic Investigator: 100-Point Multi-Dimensional Evaluation Rubrics
+DFIR Agentic Investigator: 100-Point Multi-Dimensional Evaluation Rubrics
 
 ## 1. Executive Summary & Objective
 
@@ -17,15 +17,15 @@ The suite covers 10 built-in scenarios (7 malicious, 1 benign, 1 ambiguous, 1 in
 
 ## 2. Multi-Dimensional Scoring Breakdown
 
-| Dimension | Weight | What it measures |
-|---|---:|---|
-| 1. Verdict & boundary | 20 | Correct label and operational boundary |
-| 2. Evidence retrieval | 25 | Weighted checklist coverage (20) + key-IOC coverage (5) |
-| 3. Grounding & claim support | 20 | Cited IDs exist **and** support the surrounding claim |
-| 4. Confidence calibration | 10 | Brier score, rescaled so a 0.5 guess earns zero |
-| 5. Investigation efficiency | 10 | Work done, loops, retries, duplicate queries |
-| 6. Report quality | 15 | Case-specific timeline, attribution, rationale, actions, caveats |
-| **Total** | **100** | |
+| Dimension                    |        Weight | What it measures                                                 |
+| ---------------------------- | ------------: | ---------------------------------------------------------------- |
+| 1. Verdict & boundary        |            20 | Correct label and operational boundary                           |
+| 2. Evidence retrieval        |            25 | Weighted checklist coverage (20) + key-IOC coverage (5)          |
+| 3. Grounding & claim support |            20 | Cited IDs exist **and** support the surrounding claim      |
+| 4. Confidence calibration    |            10 | Brier score, rescaled so a 0.5 guess earns zero                  |
+| 5. Investigation efficiency  |            10 | Work done, loops, retries, duplicate queries                     |
+| 6. Report quality            |            15 | Case-specific timeline, attribution, rationale, actions, caveats |
+| **Total**              | **100** |                                                                  |
 
 ### Dimension 1 — Incident Verdict & Boundary (20 Points)
 
@@ -34,6 +34,7 @@ The suite covers 10 built-in scenarios (7 malicious, 1 benign, 1 ambiguous, 1 in
 - **Fallback penalty**: a report recovered through the structured-output fallback receives 0 for this dimension.
 
 **FP/FN**:
+
 - **FP**: expected benign/inconclusive, agent says malicious/suspicious.
 - **FN**: expected malicious, agent says anything other than malicious (this now includes `suspicious`).
 - Ambiguous-case errors are counted separately via `is_ambiguous_error`.
@@ -97,13 +98,13 @@ Headings and a table alone cannot reach 15/15.
 
 ### Scorecard Grade Scale
 
-| Composite | Grade | Meaning |
-|---:|:---:|---|
-| 90–100 | **A+** | Forensic-grade: correct verdict, strong checklist/IOC coverage, supported citations |
-| 80–89 | **A** | Strong, with minor evidence or reporting gaps |
-| 70–79 | **B** | Actionable but incomplete |
-| 60–69 | **C** | Premature conclusion or significant gaps |
-| <60 | **F** | Wrong verdict, fabricated evidence, or no usable report |
+| Composite |    Grade    | Meaning                                                                             |
+| --------: | :----------: | ----------------------------------------------------------------------------------- |
+|   90–100 | **A+** | Forensic-grade: correct verdict, strong checklist/IOC coverage, supported citations |
+|    80–89 | **A** | Strong, with minor evidence or reporting gaps                                       |
+|    70–79 | **B** | Actionable but incomplete                                                           |
+|    60–69 | **C** | Premature conclusion or significant gaps                                            |
+|       <60 | **F** | Wrong verdict, fabricated evidence, or no usable report                             |
 
 ---
 
@@ -120,20 +121,20 @@ Headings and a table alone cannot reach 15/15.
 
 ## 4. Benchmark Scenarios
 
-| ID | Class | Database | Focus |
-|:---|:---|:---|:---|
-| **ATK-A** | Malicious | `attack_lateral_movement.db` | LSASS dump, SMB, NTLM logon, service persistence |
-| **ATK-B** | Malicious | `attack_data_exfiltration.db` | Staged archive, scheduled task, outbound HTTPS, cleanup |
-| **ATK-C** | Malicious | `ransomware_attack_complete_ecs.db` | Phishing, shadow-copy deletion, LockBit encryption |
-| **ATK-D** | Malicious | `attack_lotl_fileless.db` | LOLBins, encoded PowerShell, in-memory activity |
-| **ATK-E** | Malicious | `wazuh_lotl_attack_dataset.db` | Wazuh SIEM/EDR, LotL commands, SAM access |
-| **ATK-F** | Malicious | `suricata_c2_intrusion.db` | Suricata alerts, CobaltStrike beaconing, SMB recon |
-| **ATK-G** | Malicious | `attack_supply_chain.db` | 32-endpoint supply-chain compromise |
-| **BEN-A** | Benign | `benign_admin_activity.db` | Backup script, SMB flows, registry checks |
-| **AMB-A** | Ambiguous | `attack_lotl_fileless.db` | Dual-use developer tooling |
-| **INC-A** | Inconclusive | `attack_lateral_movement.db` | Missing parent/network telemetry |
-| **AIT-FOX** | Malicious (external) | `benchmark_ait/ait_fox.db` | AMiner anomaly alerts around a multi-step attack |
-| **AIT-HARRISON** | Malicious (external) | `benchmark_ait/ait_harrison.db` | Same adapter, different environment |
+| ID                     | Class                | Database                              | Focus                                                   |
+| :--------------------- | :------------------- | :------------------------------------ | :------------------------------------------------------ |
+| **ATK-A**        | Malicious            | `attack_lateral_movement.db`        | LSASS dump, SMB, NTLM logon, service persistence        |
+| **ATK-B**        | Malicious            | `attack_data_exfiltration.db`       | Staged archive, scheduled task, outbound HTTPS, cleanup |
+| **ATK-C**        | Malicious            | `ransomware_attack_complete_ecs.db` | Phishing, shadow-copy deletion, LockBit encryption      |
+| **ATK-D**        | Malicious            | `attack_lotl_fileless.db`           | LOLBins, encoded PowerShell, in-memory activity         |
+| **ATK-E**        | Malicious            | `wazuh_lotl_attack_dataset.db`      | Wazuh SIEM/EDR, LotL commands, SAM access               |
+| **ATK-F**        | Malicious            | `suricata_c2_intrusion.db`          | Suricata alerts, CobaltStrike beaconing, SMB recon      |
+| **ATK-G**        | Malicious            | `attack_supply_chain.db`            | 32-endpoint supply-chain compromise                     |
+| **BEN-A**        | Benign               | `benign_admin_activity.db`          | Backup script, SMB flows, registry checks               |
+| **AMB-A**        | Ambiguous            | `attack_lotl_fileless.db`           | Dual-use developer tooling                              |
+| **INC-A**        | Inconclusive         | `attack_lateral_movement.db`        | Missing parent/network telemetry                        |
+| **AIT-FOX**      | Malicious (external) | `benchmark_ait/ait_fox.db`          | AMiner anomaly alerts around a multi-step attack        |
+| **AIT-HARRISON** | Malicious (external) | `benchmark_ait/ait_harrison.db`     | Same adapter, different environment                     |
 
 AIT-ADS source files are not redistributed. Point the runner at a local extract of `ait_ads`:
 
@@ -183,13 +184,13 @@ Command:
 
 Provider/model: opencode `glm-5.3-flash`; one run per case, temperature-controlled but not deterministic. Snapshot date: 2026-11-18.
 
-| Case | Verdict / Boundary | Verdict | Recall | Grounding | Calib. | Effic. | Report | Composite |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| ATK-A | malicious / confirmed (match) | 20 | 25.0 | 17.6 (1/48) | 9.4 | 8.0 | 15.0 | **95.0 (A+)** |
-| ATK-B | malicious / confirmed (match) | 20 | 25.0 | 20.0 (0/51) | 9.7 | 10.0 | 15.0 | **99.7 (A+)** |
-| AIT-FOX | malicious / confirmed (match) | 20 | 21.5 | 20.0 (0/34) | 9.7 | 10.0 | 15.0 | **96.2 (A+)** |
-| AIT-HARRISON | inconclusive / inconclusive (miss) | 0 | 13.3 | 19.4 (0/34) | 0.0 | 6.8 | 13.5 | **53.0 (F)** |
-| **Mean** | 3/4 verdict & boundary | 15.0 | 21.2 | 19.3 | 7.2 | 8.7 | 14.6 | **86.0** |
+| Case           | Verdict / Boundary                 | Verdict | Recall |   Grounding | Calib. | Effic. | Report |           Composite |
+| -------------- | ---------------------------------- | ------: | -----: | ----------: | -----: | -----: | -----: | ------------------: |
+| ATK-A          | malicious / confirmed (match)      |      20 |   25.0 | 17.6 (1/48) |    9.4 |    8.0 |   15.0 | **95.0 (A+)** |
+| ATK-B          | malicious / confirmed (match)      |      20 |   25.0 | 20.0 (0/51) |    9.7 |   10.0 |   15.0 | **99.7 (A+)** |
+| AIT-FOX        | malicious / confirmed (match)      |      20 |   21.5 | 20.0 (0/34) |    9.7 |   10.0 |   15.0 | **96.2 (A+)** |
+| AIT-HARRISON   | inconclusive / inconclusive (miss) |       0 |   13.3 | 19.4 (0/34) |    0.0 |    6.8 |   13.5 |  **53.0 (F)** |
+| **Mean** | 3/4 verdict & boundary             |    15.0 |   21.2 |        19.3 |    7.2 |    8.7 |   14.6 |      **86.0** |
 
 Descriptive aggregates across the four cases: evidence precision **98.8%**, evidence recall **84.8%**, evidence F1 **90.0%**, checklist coverage **85.2%**, key-IOC coverage **83.4%**, citation support **98.8%**, mean Brier **0.136**, structured-output fallbacks **0/4**.
 

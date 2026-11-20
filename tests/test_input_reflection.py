@@ -70,7 +70,7 @@ def test_alert_prep_time_window_fallback():
 def test_default_time_window_covers_full_database_range():
     database_path = (
         Path(__file__).resolve().parents[1]
-        / "endpoint_security_dataset_expanded_corrected"
+        / "dataset"
         / "attack_data_exfiltration.db"
     )
     db = EndpointDatabase(database_path)
@@ -105,7 +105,7 @@ def test_date_only_alert_is_full_day_and_not_a_hostname():
 def test_lateral_movement_database_attack_chain_is_inside_date_scope():
     database_path = (
         Path(__file__).resolve().parents[1]
-        / "endpoint_security_dataset_expanded_corrected"
+        / "dataset"
         / "attack_lateral_movement.db"
     )
     db = EndpointDatabase(database_path)

@@ -67,7 +67,7 @@ def _append_chat_messages(session_id: str, *messages: Dict[str, str]) -> None:
 def get_available_databases() -> List[Dict[str, Any]]:
     """Scan the repository for SQLite database files."""
     dbs = []
-    base = PROJECT_ROOT / "endpoint_security_dataset_expanded_corrected"
+    base = PROJECT_ROOT / "dataset"
     search_dirs = [base, PROJECT_ROOT, CUSTOM_DB_DIR]
 
     found_paths = set()

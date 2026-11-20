@@ -153,7 +153,7 @@ ai-musefix/
 |       |-- static/vendor/            [Vendored Assets]      Third-party browser libraries served locally
 |       |-- static/style.css           [Web Style]            Modern ChatGPT-style layout, clean upright typography, thinking blocks, tool chips, light/dark themes
 |
-|-- endpoint_security_dataset_expanded_corrected/   [Local dataset, git-ignored; not in repo]
+|-- dataset/   [Local dataset, git-ignored; not in repo]
 |   |-- attack_lateral_movement.db        Telemetry for ATK-A (credentials + lateral move) and INC-A (incomplete telemetry)
 |   |-- attack_data_exfiltration.db       Telemetry for ATK-B (staging + persistence + exfiltration)
 |   |-- ransomware_attack_complete_ecs.db Telemetry for ATK-C (phishing + LockBit encryption)
@@ -319,7 +319,7 @@ ai-musefix/
 
 ```powershell
 # Run a single investigation:
-python -m a1.cli "Investigate suspicious PowerShell activity on WS-OPS-01" --db endpoint_security_dataset_expanded_corrected/attack_lateral_movement.db
+python -m a1.cli "Investigate suspicious PowerShell activity on WS-OPS-01" --db dataset/attack_lateral_movement.db
 
 # Launch the FastAPI Web UI:
 python -m a1.cli --web
@@ -407,7 +407,7 @@ The case menu supports uploading raw `.db`/log files, switching datasets, and de
 | `attack_supply_chain.db` | `ATK-G` | 32 | 32 | 1,890 | `groundtruth/groundtruth_attack_G_supply_chain.json` |
 | `benign_admin_activity.db` | `BEN-A` | 2 | 2 | 7 | `groundtruth/groundtruth_benign_A_admin_activity.json` |
 
-The eight `.db` files and the `groundtruth/*.json` labels are git-ignored and must be supplied locally in `endpoint_security_dataset_expanded_corrected/` before running the built-in benchmark; together the databases hold 4,490 events. The repository itself contains no telemetry or evaluation dataset.
+The eight `.db` files and the `groundtruth/*.json` labels are git-ignored and must be supplied locally in `dataset/` before running the built-in benchmark; together the databases hold 4,490 events. The repository itself contains no telemetry or evaluation dataset.
 
 ### Test Suite Execution
 
