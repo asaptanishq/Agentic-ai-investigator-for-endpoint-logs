@@ -26,3 +26,7 @@ dataset/
 
 # Generated AIT-ADS benchmark databases
 benchmark_ait/
+
+# documentation site
+site/node_modules/
+site/dist/
